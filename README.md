@@ -4,7 +4,7 @@
 
 Stevo Ledbetter (Independent Researcher) — March 2026
 
-**[Download Paper (PDF)](structure-beats-scale.pdf?raw=true)**  |  [LaTeX Source](structure-beats-scale.tex)
+**[Download Paper (PDF)](https://raw.githubusercontent.com/smledbetter/structure-beats-scale/main/structure-beats-scale.pdf)**  |  [LaTeX Source](structure-beats-scale.tex)
 
 ## Abstract
 
