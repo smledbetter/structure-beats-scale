@@ -166,8 +166,9 @@ def fig1_pareto_frontier():
     ax.set_title('')
 
     fig.savefig(os.path.join(FIGURES, 'pareto_frontier.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'pareto_frontier.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [1/8] pareto_frontier.pdf')
+    print('  [1/8] pareto_frontier.pdf + png')
 
 
 def fig2_difficulty_stratification():
@@ -204,8 +205,9 @@ def fig2_difficulty_stratification():
     ax.grid(True, axis='y', alpha=0.15)
 
     fig.savefig(os.path.join(FIGURES, 'difficulty_stratification.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'difficulty_stratification.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [2/8] difficulty_stratification.pdf')
+    print('  [2/8] difficulty_stratification.pdf + png')
 
 
 def fig3_cross_model():
@@ -250,8 +252,9 @@ def fig3_cross_model():
     ax.grid(True, axis='y', alpha=0.15)
 
     fig.savefig(os.path.join(FIGURES, 'cross_model.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'cross_model.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [3/8] cross_model.pdf')
+    print('  [3/8] cross_model.pdf + png')
 
 
 def fig4_pass_at_1():
@@ -293,8 +296,9 @@ def fig4_pass_at_1():
     ax.grid(True, axis='y', alpha=0.15)
 
     fig.savefig(os.path.join(FIGURES, 'pass_at_1.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'pass_at_1.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [4/8] pass_at_1.pdf')
+    print('  [4/8] pass_at_1.pdf + png')
 
 
 def fig5_bootstrap_stability():
@@ -329,8 +333,9 @@ def fig5_bootstrap_stability():
     ax.legend(handles=legend_elements, loc='lower right', fontsize=7, framealpha=0.9)
 
     fig.savefig(os.path.join(FIGURES, 'bootstrap_stability.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'bootstrap_stability.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [5/8] bootstrap_stability.pdf')
+    print('  [5/8] bootstrap_stability.pdf + png')
 
 
 def fig6_gen_only_scaling():
@@ -404,8 +409,9 @@ def fig6_gen_only_scaling():
 
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURES, 'gen_only_scaling.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'gen_only_scaling.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [6/8] gen_only_scaling.pdf')
+    print('  [6/8] gen_only_scaling.pdf + png')
 
 
 def fig7_latency():
@@ -467,8 +473,9 @@ def fig7_latency():
 
     fig.tight_layout()
     fig.savefig(os.path.join(FIGURES, 'latency.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'latency.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [7/8] latency.pdf')
+    print('  [7/8] latency.pdf + png')
 
 
 def fig8_cross_domain():
@@ -514,8 +521,9 @@ def fig8_cross_domain():
     ax.grid(True, axis='y', alpha=0.15)
 
     fig.savefig(os.path.join(FIGURES, 'cross_domain.pdf'), format='pdf')
+    fig.savefig(os.path.join(FIGURES, 'cross_domain.png'), format='png', dpi=200)
     plt.close(fig)
-    print('  [8/8] cross_domain.pdf')
+    print('  [8/8] cross_domain.pdf + png')
 
 
 if __name__ == '__main__':
