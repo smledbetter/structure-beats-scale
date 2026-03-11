@@ -1,0 +1,950 @@
+{
+  "study": "C",
+  "condition": "C0",
+  "task_id": "cc_032",
+  "replica": 0,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "This is a DP problem. Let me think about it as: we have positions 0 to n-m (call it L = n-m+1 positions total). We want to choose exactly k of them to \"match\" b, and the rest to \"not match\" b.\n\nThe tricky part is overlapping positions. Let me use DP where:\n- dp[i][j][last] = minimum cost considering positions 0..i, having j occurrences so far, where `last` is the last position that was forced to match (or -1).\n\nActually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n1. For each active position, we need a[pos:pos+m] to match b.\n2. For each inactive position, at least one character must differ from b.\n\nThe interaction between positions is complex. Let me use DP over positions:\n\ndp[i][j] = minimum cost to handle positions 0..i with exactly j occurrences among positions 0..i, considering the actual characters set.\n\nBut the state needs to track what changes were made to overlapping region. The overlap between consecutive positions is m-1 characters. \n\nLet me define dp[i][j] = min cost where position i is the rightmost \"decided\" position, j occurrences so far, and we've committed to certain changes in the window ending at position i+m-1.\n\nActually, since positions can overlap by up to m-1, I need to track the \"tail\" of the last active segment. This gets complex.\n\nLet me think of a cleaner DP: process positions left to right. For each position p, decide if it matches or not. The cost depends on the current state of characters in a.\n\nLet me define dp[p][k][mask] where mask represents the changes made to the last m-1 characters... but m can be 500, making this infeasible.\n\nAlternative: Since overlapping segments share characters, let me think of the problem as: select a subset S of positions to be \"on\" (match b). The cost is the minimum number of character changes such that all positions in S match b, and no position outside S matches b.\n\nFor non-overlapping cases this decomposes nicely. For overlapping, we need to be careful.\n\nLet me use DP where I process positions and track the \"current string\" in the overlap region. But with m up to 500, this is too large for a bitmask.\n\nKey insight: The overlap between position i and i+1 is m-1 characters. If we fix which positions are \"on\", the minimum cost can be computed greedily. But we need to handle conflicts (two adjacent \"on\" positions sharing characters that must both match b - this is only possible if b[1:] == b[:m-1], i.e., b has a period-1 overlap).\n\nLet me use DP: dp[i][j] = min cost where we've processed positions 0..i, exactly j are \"on\", and position i is \"on\". Also dp2[i][j] = min cost where position i is \"off\".\n\nFor transitions, I need to compute the cost of making position i match/not-match given the previous position's state. The overlap means characters i to i+m-2 are shared.\n\nLet me implement this with careful cost computation for each pair of consecutive decisions.\n\nAfter research, I'll implement a DP where I track whether each position is on/off, and compute costs considering overlaps by tracking what the previous window committed to.\n\nGiven complexity constraints (n=500, m=500), I'll implement O(n^3) DP.\n\nLet me implement: for each pair (i, decision_i), (i+1, decision_{i+1}), compute the incremental cost. I'll precompute costs using the string matching costs.\n\n```python\nimport sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    a = input_data[2]\n    b = input_data[3]\n    \n    L = n - m + 1  # number of positions\n    \n    # cost[i] = cost to make position i match b\n    cost = [sum(1 for j in range(m) if a[i+j] != b[j]) for i in range(L)]\n    \n    INF = float('inf')\n    # dp[i][k][on] = min cost, processed positions 0..i, k occurrences, position i is on(1) or off(0)\n    # We need to track what changes were made to overlapping characters\n    # This requires knowing the actual characters in the overlap\n    \n    # Since m can be 500, tracking the full overlap state is infeasible\n    # Let's use a different approach: DP with states (position, count, last_on_position)\n    # But that's O(L^2 * L) states\n    \n    # Actually for two positions i < j with j - i >= m, they don't overlap, so independent\n    # For j - i < m, they overlap and share characters a[j..i+m-1]\n    \n    # Let me try: dp[i][k] for position i being the current position, k occurrences\n    # and we process greedily\n    \n    # I'll implement the DP tracking the last position that was set to \"on\"\n    # dp[i][k][last] but last can be up to i, so O(L^3) states... too much\n    \n    # Let me think about a cleaner formulation\n    # \n    # Key: if we decide positions are on/off, the cost is:\n    # For each character position p in a:\n    #   - If p is covered by some \"on\" window, it must equal b[p - window_start]\n    #   - If p is covered by some \"off\" window (and no \"on\" window), we need at least one change in that window\n    #   - Actually the \"off\" constraint is per-window: each off window must have at least one mismatch\n    #\n    # The \"on\" constraints are character-level (hard constraints)\n    # The \"off\" constraints are window-level (soft constraints - at least one mismatch)\n    #\n    # Let's separate: first compute the cost to satisfy all \"on\" constraints (fix characters to match b),\n    # then check if \"off\" constraints are automatically satisfied; if not, add cost to break them.\n    \n    # For a set S of \"on\" positions:\n    # 1. For each position i in S, characters a[i..i+m-1] must all match b\n    #    - But if two \"on\" positions overlap, the overlapping characters must match b in both windows\n    #    - This is only consistent if b[offset1] == b[offset2] for all shared characters\n    #    - If inconsistent, this set S is infeasible (cost = INF)\n    # 2. After fixing characters for \"on\" positions, some \"off\" positions might accidentally match b\n    #    - For each \"off\" position j, check if the window j..j+m-1 matches b after all fixes\n    #    - If it does match, we need to change at least one character in that window (cost += 1)\n    #    - But changing that character might affect other windows...\n    \n    # This is getting complex. Let me look for a DP that works within time limits.\n    \n    # DP approach:\n    # Process positions left to right. \n    # State: (position i, count k, \"committed string for overlap\")\n    # The overlap is at most m-1 characters, but m can be 500...\n    \n    # Alternative: since n <= 500, total characters <= 500\n    # Maybe DP on characters of a, not positions of b?\n    \n    # Let me try a different DP:\n    # dp[i][k] = min cost to handle the first i positions (0..i-1) of a, with k occurrences of b,\n    # where we've optimally decided everything up to position i-1 in a.\n    # But we need to know what the string looks like at position i to handle future windows.\n    \n    # Hmm, let me look at this more carefully.\n    # \n    # Since n, m <= 500, and L = n-m+1 <= 500,\n    # Maybe I can do DP over positions with state being the \"current window content\"\n    # But that's 2^m states for the window, way too large.\n    \n    # Let me think about the structure differently.\n    # \n    # The key insight: consecutive positions overlap by m-1. So if I process positions\n    # one by one and decide on/off, the \"new\" character added at each step is just 1 character.\n    # \n    # DP state: dp[i][k][s] where:\n    # - i = current position (0 to L-1)\n    # - k = number of occurrences so far\n    # - s = the current \"window\" string of length m (what a[i..i+m-1] looks like after changes)\n    # \n    # But s has 2^m possibilities, too large.\n    \n    # I think the right approach is:\n    # dp[i][k] = min cost considering positions 0..i-1, with k occurrences,\n    # AND we store the \"tail\" of what we've committed to.\n    # \n    # But the tail affects future costs...\n    \n    # Let me look at this from a different angle.\n    # Since m <= n <= 500, maybe O(n^3) or O(n^2 * m) is acceptable.\n    \n    # Here's an approach I've seen for similar problems:\n    # \n    # Precompute for each position i and each \"previous match position\" p < i (or -infinity),\n    # the cost to make position i match b, given that position p was the last match.\n    # \n    # If i - p >= m (no overlap), cost is just cost[i] (mismatches in window i).\n    # If i - p < m (overlap), the overlap region [i..p+m-1] must match both b and b shifted,\n    # which might be inconsistent (INF) or have a reduced cost.\n    \n    # Let me formalize:\n    # If position p is \"on\" and position i is \"on\" with i > p:\n    # - Characters a[p..p+m-1] must all match b[0..m-1]\n    # - Characters a[i..i+m-1] must all match b[0..m-1]\n    # - Overlap is a[i..p+m-1] (length = p+m-i = m - (i-p))\n    # - For overlap character at position q (i <= q <= p+m-1):\n    #   b[q-p] must equal b[q-i]\n    # - This is a consistency check: b[j] == b[j-(i-p)] for j = i-p..m-1\n    #   i.e., b[d..m-1] == b[0..m-1-d] where d = i-p\n    #   i.e., b has period d (at least for the suffix/prefix of length m-d)\n    \n    # So two \"on\" positions with gap d = i-p are consistent iff b[d:] == b[:m-d].\n    \n    # This is related to the failure function of KMP!\n    \n    # Let me precompute: for each gap d (1 <= d <= m-1), is it consistent for two \"on\" positions\n    # with gap d? consistent[d] = (b[d:] == b[:m-d])\n    \n    # Now the DP:\n    # dp[i][k] = min cost to have exactly k occurrences among positions 0..i, with position i being \"on\"\n    # dp2[i][k] = min cost to have exactly k occurrences among positions 0..i, with position i being \"off\"\n    # (and positions i+1..L-1 not yet considered)\n    \n    # Transition for dp[i][k] (position i is \"on\"):\n    # We need to pay cost[i] for the new characters in window i.\n    # But if the previous \"on\" position was p with gap d = i-p < m:\n    #   - The overlap characters are already fixed by position p's \"on\" constraint\n    #   - We only pay for the new characters: a[p+m..i+m-1], which are m-d new characters\n    #     Wait, no. If p is \"on\", characters a[p..p+m-1] are fixed to b[0..m-1].\n    #     If i is also \"on\", characters a[i..i+m-1] must be fixed to b[0..m-1].\n    #     The overlap a[i..p+m-1] is already fixed to b[i-p..m-1] by position p.\n    #     For position i, we need a[i..p+m-1] = b[0..m-1-(i-p)] = b[0..m-d-1].\n    #     Consistency: b[i-p..m-1] == b[0..m-d-1], i.e., b[d:] == b[:m-d].\n    #     If consistent, the overlap is already satisfied, we only pay for a[p+m..i+m-1] = b[m-d..m-1].\n    #     Cost of new chars: sum(a[p+m+j] != b[m-d+j] for j in 0..d-1)\n    #                      = sum(a[i+m-d+j] != b[m-d+j] for j in 0..d-1)  [since p+m = i+m-d]\n    #                      = sum(a[i+j] != b[j] for j in m-d..m-1)  [substituting j' = m-d+j]\n    #                      Hmm wait: p+m = p+m, i = p+d, so p+m = i + (m-d).\n    #                      New chars: a[i+m-d .. i+m-1] vs b[m-d .. m-1]\n    #                      Cost_new = sum(a[i+m-d+j] != b[m-d+j] for j in 0..d-1)\n    \n    # Actually wait. If position p is \"on\", we've already paid to fix a[p..p+m-1] = b[0..m-1].\n    # So a[p+m-d..p+m-1] = b[m-d..m-1] is already done (paid for).\n    # p+m-d = i (since d = i-p), so a[i..p+m-1] = b[m-d..m-1] is fixed.\n    # But for position i to be \"on\", we need a[i..i+m-1] = b[0..m-1].\n    # The overlap a[i..p+m-1] must satisfy both b[0..m-d-1] and b[m-d..m-1].\n    # Consistency: b[0..m-d-1] == b[m-d..m-1]? No wait:\n    # From position p: a[i+j] = b[d+j] for j=0..m-d-1\n    # From position i: a[i+j] = b[j] for j=0..m-d-1\n    # So consistency: b[d+j] == b[j] for j=0..m-d-1, i.e., b[d:] == b[:m-d]. \u2713\n    \n    # If consistent, the overlap is already paid. New chars for position i: a[i+m-d..i+m-1] vs b[m-d..m-1].\n    # But wait, these might already be fixed by position p! p covers a[p..p+m-1] = a[i-d..i+m-d-1].\n    # The new chars for position i are a[i+m-d..i+m-1], which are beyond p's window (p+m-1 = i+m-d-1).\n    # So these are truly new chars, costing: sum(a[i+m-d+j] != b[m-d+j] for j=0..d-1).\n    \n    # This is getting complex. Let me just implement a DP where I track the last \"on\" position.\n    \n    # dp[i][k] = min cost, position i is \"on\", k occurrences total (0..i), \n    #            assuming characters in window i are optimally set.\n    # \n    # But I also need to handle \"off\" positions between the last \"on\" and current \"on\".\n    \n    # This is getting really complex. Let me look for a simpler formulation.\n    \n    # Actually, let me think about it differently using the concept of \"segments\".\n    # A maximal run of consecutive \"on\" positions forms a segment.\n    # Within a segment, positions i, i+1, ..., i+t are all \"on\".\n    # The consistency requirement must hold for all consecutive pairs.\n    # The cost of a segment is the cost to fix all characters covered by the segment.\n    \n    # Between segments, \"off\" positions must be broken (at least one char changed from b).\n    \n    # Hmm, but \"off\" positions between segments might accidentally match b due to the fixed chars.\n    \n    # OK let me just try to implement the DP with state (position, count, last_on_position).\n    # With n=500, this is O(L^3) = O(500^3) = 125M operations, might be too slow.\n    # But maybe with pruning it's OK.\n    \n    # Actually wait. Let me reconsider. The positions are 0..L-1 where L <= 500.\n    # dp[i][k][j] where j is the last \"on\" position before i, with j < i.\n    # States: L * L * L = 500^3 = 125M. Too much memory and time.\n    \n    # Let me think of a smarter DP.\n    \n    # Key observation: if position i is \"on\", the cost depends only on the PREVIOUS \"on\" position\n    # (not all previous ones), because the overlap is only with the immediately previous window.\n    # Wait, actually it depends on ALL previous \"on\" positions that overlap with i.\n    # Position j overlaps with i if i - j < m, i.e., j > i - m.\n    # So there can be up to m-1 overlapping \"on\" positions.\n    \n    # But within a \"run\" of consecutive \"on\" positions, the consistency must hold pairwise.\n    # Actually, if positions p and p+d1 are both \"on\", and p+d1 and p+d1+d2 are both \"on\",\n    # we need b[d1:] == b[:m-d1] and b[d2:] == b[:m-d2].\n    # But we also need consistency between p and p+d1+d2: b[d1+d2:] == b[:m-d1-d2].\n    # This might not follow from the pairwise conditions.\n    # So we need to check all pairs within the run.\n    \n    # Actually, for a run of consecutive \"on\" positions (i, i+1, i+2, ..., i+t),\n    # we need b[d:] == b[:m-d] for d=1,2,...,t (all gaps from 1 to t).\n    # And the total cost of the run is the cost to fix a[i..i+t+m-1] to match\n    # the pattern imposed by b repeated with period 1 (if all d=1..t are consistent).\n    # Wait, not exactly. The pattern is determined by b and the period.\n    \n    # This is getting very complex. Let me just implement a simpler O(L^2 * L) DP\n    # and see if it passes within the time limit.\n    \n    # Actually, I think there's a cleaner way. Let me define:\n    # \n    # For a subset S of positions that are \"on\", the minimum cost is:\n    # 1. Fix all characters covered by S to match b (pay for mismatches).\n    #    This is feasible only if the constraints are consistent.\n    # 2. For each \"off\" position j not in S, if the window j still matches b after step 1,\n    #    pay 1 to break it (and this doesn't affect other windows because we can choose\n    #    which character to change carefully).\n    #    But wait, breaking window j might affect other windows!\n    \n    # Hmm, this is really complex. Let me look at the problem from a high level.\n    \n    # I think the right approach is interval DP or some form of DP that avoids tracking\n    # the full overlap state.\n    \n    # Let me try a different DP formulation:\n    # \n    # Process positions 0 to L-1. At each position, decide if it's \"on\" or \"off\".\n    # State: dp[i][k] = min cost to handle positions 0..i with exactly k \"on\" positions,\n    #        given that we've optimally set the characters a[0..i+m-1].\n    # \n    # But we need to know what a[i+1..i+m-1] looks like to compute future costs.\n    # This is the \"tail\" state problem.\n    \n    # Alternatively, since the overlap between position i and i+1 is m-1 characters,\n    # and we're deciding character by character, maybe we can do DP over characters of a:\n    # \n    # dp[p][k] = min cost to set a[0..p-1] such that:\n    # - There are exactly k complete occurrences of b ending at or before position p-1.\n    # - a[0..p-1] is optimally set.\n    # \n    # But we need to know the \"current match state\" (like KMP state) to handle future matches.\n    # \n    # dp[p][k][q] where q is the KMP state (longest proper prefix of b that is a suffix of a[0..p-1]).\n    # States: n * n * m = 500 * 500 * 500 = 125M. Too much.\n    \n    # Hmm. Let me think about what's special about this problem.\n    \n    # n, m <= 500. The answer array has n-m+2 entries.\n    # \n    # I think the intended solution might be O(n^3) or O(n^2 * m) with careful implementation.\n    \n    # Let me try the following DP:\n    # dp[i][k] = min cost, where i is the current position (0..L-1), k is the number of\n    #            \"on\" positions so far (0..i), and position i is \"on\".\n    # dp2[i][k] = same but position i is \"off\".\n    # \n    # For dp[i][k] (position i is \"on\"):\n    # Option 1: Previous position i-1 was \"off\" (or i=0).\n    #   - Cost of making position i match b: cost[i] (mismatches in a[i..i+m-1])\n    #   - But wait, some of these characters might have been changed for previous windows.\n    #   - This is the crux of the difficulty.\n    \n    # I think the key insight I'm missing is:\n    # When we make position i \"on\", we fix a[i..i+m-1] = b.\n    # When we make position j \"off\" (and j < i, j+m > i, so they overlap),\n    # the overlap characters are fixed by position i's \"on\" constraint.\n    # The \"off\" constraint for j just needs at least one mismatch in a[j..j+m-1] from b.\n    # Since we're fixing a[i..j+m-1] = b[i-j..m-1], the only characters that could differ\n    # from b for window j are a[j..i-1] = b[0..i-j-1] (from position j's perspective).\n    # Wait, but we haven't fixed a[j..i-1] for position i's \"on\" constraint (those are before window i).\n    \n    # Let me re-examine. Suppose position i is \"on\" and position j < i is \"off\", with j+m > i (overlap).\n    # - Position i being \"on\" fixes a[i..i+m-1] = b[0..m-1].\n    # - For position j to be \"off\", we need a[j..j+m-1] \u2260 b (as a string).\n    #   The overlap part a[i..j+m-1] is fixed to b[i-j..m-1].\n    #   The non-overlap part a[j..i-1] is b[0..i-j-1] (from position j's perspective).\n    #   For position j to be \"off\", we need a[j..i-1] \u2260 b[0..i-j-1] (since overlap is already b[i-j..m-1]).\n    #   If a[j..i-1] = b[0..i-j-1] (i.e., the non-overlap part matches), then position j is accidentally \"on\",\n    #   which is bad. We'd need to change one of a[j..i-1].\n    \n    # This shows that the problem is indeed complex due to overlaps.\n    \n    # Let me look for a cleaner solution structure.\n    \n    # I'll try to implement the DP where I track the last \"on\" position explicitly.\n    # dp[last_on][k] = min cost having processed all positions up to some point,\n    #                  with k \"on\" positions, and the last \"on\" position is `last_on`.\n    # \n    # But I also need to know the current position being processed.\n    # \n    # Let me define:\n    # dp[i][j][k] = min cost, positions 0..i processed, j = last \"on\" position (or -1), k = count.\n    # This is O(L^3) states, too much.\n    \n    # Alternative: dp[i][k] = min cost, positions 0..i processed, k \"on\" positions,\n    #              and position i is the LAST \"on\" position (i.e., position i is \"on\").\n    # \n    # Transition: dp[i][k] = min over j < i of (dp[j][k-1] + cost_to_add_position_i_given_last_on_is_j + cost_to_ensure_positions_j+1..i-1_are_off)\n    # \n    # The \"cost_to_ensure_positions_j+1..i-1_are_off\" is the tricky part.\n    # Given that position j is \"on\" (fixing a[j..j+m-1] = b) and position i is \"on\" (fixing a[i..i+m-1] = b),\n    # we need to ensure positions j+1..i-1 are all \"off\".\n    # For position p in j+1..i-1:\n    #   a[p..p+m-1] must not equal b.\n    #   The characters a[j..j+m-1] = b (from position j's constraint).\n    #   The characters a[i..i+m-1] = b (from position i's constraint).\n    #   Characters in a[p..p+m-1] that are covered by j's window: a[p..j+m-1] = b[p-j..m-1].\n    #   Characters in a[p..p+m-1] that are covered by i's window: a[i..p+m-1] = b[0..p+m-1-i].\n    #   Characters not covered by either: a[j+m..i-1] (if any).\n    \n    # This is getting very complicated. Let me just try to implement a simpler version\n    # and see if it gives correct answers on the example.\n    \n    # Simplification: Assume positions don't overlap (m=1 or positions are far apart).\n    # Then cost[i] = mismatches in window i.\n    # To make position i \"off\" costs 0 if it already doesn't match, or 1 if it does.\n    # This gives a simple knapsack-like DP.\n    \n    # For the general case with overlaps, I'll use a DP where I track the \"last on\" position.\n    \n    # Let me define:\n    # For a given assignment of on/off to all L positions, the minimum cost is:\n    # (This is what we want to compute for each assignment, then minimize over assignments with k \"on\"s.)\n    \n    # The minimum cost for a given assignment:\n    # 1. For each \"on\" position i, fix a[i..i+m-1] = b. The cost is the number of characters\n    #    that need to change (mismatches), but we don't double-count shared characters.\n    # 2. For each \"off\" position j, ensure a[j..j+m-1] \u2260 b. If it already doesn't match (due to\n    #    the original a or changes made in step 1), cost is 0. Otherwise, cost is 1.\n    #    But changing one character for position j might affect other positions.\n    \n    # The problem is that step 2 can cascade. Let me ignore this for now and assume\n    # that we can always fix \"off\" positions for cost 1 each without affecting other positions.\n    # (This might not be true in general, but let's see.)\n    \n    # Under this assumption:\n    # Total cost = cost_to_fix_on_positions + cost_to_break_off_positions_that_accidentally_match\n    \n    # For the \"on\" positions, the cost is the number of character changes needed.\n    # Characters shared between two \"on\" positions must be consistent (or cost is INF).\n    \n    # For \"off\" positions, after fixing \"on\" characters, check if the window matches b.\n    # If yes, add 1 (but this change might affect an \"on\" window... so we need to be careful).\n    \n    # Actually, if the \"off\" position j overlaps with an \"on\" position i (i > j, i < j+m),\n    # then a[i..j+m-1] = b[i-j..m-1] (fixed by position i).\n    # For window j to be \"off\", we need a[j..j+m-1] \u2260 b.\n    # The overlap part matches b[i-j..m-1]. The non-overlap part a[j..i-1] is not fixed by position i.\n    # If a[j..i-1] = b[0..i-j-1] (original), then window j would match b, so we need to change one\n    # character in a[j..i-1]. This change doesn't affect position i's window. Cost = 1.\n    # If a[j..i-1] \u2260 b[0..i-j-1] (original or after other changes), window j already doesn't match. Cost = 0.\n    \n    # But what if the \"off\" position j overlaps with an \"on\" position i (i < j, i+m > j)?\n    # Then a[j..i+m-1] = b[j-i..m-1] (fixed by position i).\n    # For window j to be \"off\", we need a[j..j+m-1] \u2260 b.\n    # The overlap part a[j..i+m-1] = b[j-i..m-1]. For this to cause a mismatch with b[0..m-1],\n    # we need b[j-i..m-1] \u2260 b[0..m-1-(j-i)], i.e., b is NOT consistent with period j-i.\n    # If b IS consistent (b[j-i:] == b[:m-(j-i)]), then the overlap part matches b[0..m-1-(j-i)],\n    # and we need a[i+m..j+m-1] \u2260 b[m-(j-i)..m-1] (the non-overlap part).\n    # This is getting really complex.\n    \n    # I think for a competitive programming problem at this level (2200 rating),\n    # there must be a cleaner DP formulation. Let me think harder.\n    \n    # Let me re-read the problem. We want exactly k occurrences of b as substrings in a.\n    # We can change characters of a.\n    \n    #",
+      "input_tokens": 516,
+      "output_tokens": 8192,
+      "cost_usd": 0.124428,
+      "latency_ms": 136256
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "This is a DP problem. Let me think about it as: we have positions 0 to n-m (call it L = n-m+1 positions total). We want to choose exactly k of them to \"match\" b, and the rest to \"not match\" b.\n\nThe tricky part is overlapping positions. Let me use DP where:\n- dp[i][j][last] = minimum cost considering positions 0..i, having j occurrences so far, where `last` is the last position that was forced to match (or -1).\n\nActually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n1. For each active position, we need a[pos:pos+m] to match b.\n2. For each inactive position, at least one character must differ from b.\n\nThe interaction between positions is complex. Let me use DP over positions:\n\ndp[i][j] = minimum cost to handle positions 0..i with exactly j occurrences among positions 0..i, considering the actual characters set.\n\nBut the state needs to track what changes were made to overlapping region. The overlap between consecutive positions is m-1 characters. \n\nLet me define dp[i][j] = min cost where position i is the rightmost \"decided\" position, j occurrences so far, and we've committed to certain changes in the window ending at position i+m-1.\n\nActually, since positions can overlap by up to m-1, I need to track the \"tail\" of the last active segment. This gets complex.\n\nLet me think of a cleaner DP: process positions left to right. For each position p, decide if it matches or not. The cost depends on the current state of characters in a.\n\nLet me define dp[p][k][mask] where mask represents the changes made to the last m-1 characters... but m can be 500, making this infeasible.\n\nAlternative: Since overlapping segments share characters, let me think of the problem as: select a subset S of positions to be \"on\" (match b). The cost is the minimum number of character changes such that all positions in S match b, and no position outside S matches b.\n\nFor non-overlapping cases this decomposes nicely. For overlapping, we need to be careful.\n\nLet me use DP where I process positions and track the \"current string\" in the overlap region. But with m up to 500, this is too large for a bitmask.\n\nKey insight: The overlap between position i and i+1 is m-1 characters. If we fix which positions are \"on\", the minimum cost can be computed greedily. But we need to handle conflicts (two adjacent \"on\" positions sharing characters that must both match b - this is only possible if b[1:] == b[:m-1], i.e., b has a period-1 overlap).\n\nLet me use DP: dp[i][j] = min cost where we've processed positions 0..i, exactly j are \"on\", and position i is \"on\". Also dp2[i][j] = min cost where position i is \"off\".\n\nFor transitions, I need to compute the cost of making position i match/not-match given the previous position's state. The overlap means characters i to i+m-2 are shared.\n\nLet me implement this with careful cost computation for each pair of consecutive decisions.\n\nAfter research, I'll implement a DP where I track whether each position is on/off, and compute costs considering overlaps by tracking what the previous window committed to.\n\nGiven complexity constraints (n=500, m=500), I'll implement O(n^3) DP.\n\nLet me implement: for each pair (i, decision_i), (i+1, decision_{i+1}), compute the incremental cost. I'll precompute costs using the string matching costs.\n\n```python\nimport sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    a = input_data[2]\n    b = input_data[3]\n    \n    L = n - m + 1  # number of positions\n    \n    # cost[i] = cost to make position i match b\n    cost = [sum(1 for j in range(m) if a[i+j] != b[j]) for i in range(L)]\n    \n    INF = float('inf')\n    # dp[i][k][on] = min cost, processed positions 0..i, k occurrences, position i is on(1) or off(0)\n    # We need to track what changes were made to overlapping characters\n    # This requires knowing the actual characters in the overlap\n    \n    # Since m can be 500, tracking the full overlap state is infeasible\n    # Let's use a different approach: DP with states (position, count, last_on_position)\n    # But that's O(L^2 * L) states\n    \n    # Actually for two positions i < j with j - i >= m, they don't overlap, so independent\n    # For j - i < m, they overlap and share characters a[j..i+m-1]\n    \n    # Let me try: dp[i][k] for position i being the current position, k occurrences\n    # and we process greedily\n    \n    # I'll implement the DP tracking the last position that was set to \"on\"\n    # dp[i][k][last] but last can be up to i, so O(L^3) states... too much\n    \n    # Let me think about a cleaner formulation\n    # \n    # Key: if we decide positions are on/off, the cost is:\n    # For each character position p in a:\n    #   - If p is covered by some \"on\" window, it must equal b[p - window_start]\n    #   - If p is covered by some \"off\" window (and no \"on\" window), we need at least one change in that window\n    #   - Actually the \"off\" constraint is per-window: each off window must have at least one mismatch\n    #\n    # The \"on\" constraints are character-level (hard constraints)\n    # The \"off\" constraints are window-level (soft constraints - at least one mismatch)\n    #\n    # Let's separate: first compute the cost to satisfy all \"on\" constraints (fix characters to match b),\n    # then check if \"off\" constraints are automatically satisfied; if not, add cost to break them.\n    \n    # For a set S of \"on\" positions:\n    # 1. For each position i in S, characters a[i..i+m-1] must all match b\n    #    - But if two \"on\" positions overlap, the overlapping characters must match b in both windows\n    #    - This is only consistent if b[offset1] == b[offset2] for all shared characters\n    #    - If inconsistent, this set S is infeasible (cost = INF)\n    # 2. After fixing characters for \"on\" positions, some \"off\" positions might accidentally match b\n    #    - For each \"off\" position j, check if the window j..j+m-1 matches b after all fixes\n    #    - If it does match, we need to change at least one character in that window (cost += 1)\n    #    - But changing that character might affect other windows...\n    \n    # This is getting complex. Let me look for a DP that works within time limits.\n    \n    # DP approach:\n    # Process positions left to right. \n    # State: (position i, count k, \"committed string for overlap\")\n    # The overlap is at most m-1 characters, but m can be 500...\n    \n    # Alternative: since n <= 500, total characters <= 500\n    # Maybe DP on characters of a, not positions of b?\n    \n    # Let me try a different DP:\n    # dp[i][k] = min cost to handle the first i positions (0..i-1) of a, with k occurrences of b,\n    # where we've optimally decided everything up to position i-1 in a.\n    # But we need to know what the string looks like at position i to handle future windows.\n    \n    # Hmm, let me look at this more carefully.\n    # \n    # Since n, m <= 500, and L = n-m+1 <= 500,\n    # Maybe I can do DP over positions with state being the \"current window content\"\n    # But that's 2^m states for the window, way too large.\n    \n    # Let me think about the structure differently.\n    # \n    # The key insight: consecutive positions overlap by m-1. So if I process positions\n    # one by one and decide on/off, the \"new\" character added at each step is just 1 character.\n    # \n    # DP state: dp[i][k][s] where:\n    # - i = current position (0 to L-1)\n    # - k = number of occurrences so far\n    # - s = the current \"window\" string of length m (what a[i..i+m-1] looks like after changes)\n    # \n    # But s has 2^m possibilities, too large.\n    \n    # I think the right approach is:\n    # dp[i][k] = min cost considering positions 0..i-1, with k occurrences,\n    # AND we store the \"tail\" of what we've committed to.\n    # \n    # But the tail affects future costs...\n    \n    # Let me look at this from a different angle.\n    # Since m <= n <= 500, maybe O(n^3) or O(n^2 * m) is acceptable.\n    \n    # Here's an approach I've seen for similar problems:\n    # \n    # Precompute for each position i and each \"previous match position\" p < i (or -infinity),\n    # the cost to make position i match b, given that position p was the last match.\n    # \n    # If i - p >= m (no overlap), cost is just cost[i] (mismatches in window i).\n    # If i - p < m (overlap), the overlap region [i..p+m-1] must match both b and b shifted,\n    # which might be inconsistent (INF) or have a reduced cost.\n    \n    # Let me formalize:\n    # If position p is \"on\" and position i is \"on\" with i > p:\n    # - Characters a[p..p+m-1] must all match b[0..m-1]\n    # - Characters a[i..i+m-1] must all match b[0..m-1]\n    # - Overlap is a[i..p+m-1] (length = p+m-i = m - (i-p))\n    # - For overlap character at position q (i <= q <= p+m-1):\n    #   b[q-p] must equal b[q-i]\n    # - This is a consistency check: b[j] == b[j-(i-p)] for j = i-p..m-1\n    #   i.e., b[d..m-1] == b[0..m-1-d] where d = i-p\n    #   i.e., b has period d (at least for the suffix/prefix of length m-d)\n    \n    # So two \"on\" positions with gap d = i-p are consistent iff b[d:] == b[:m-d].\n    \n    # This is related to the failure function of KMP!\n    \n    # Let me precompute: for each gap d (1 <= d <= m-1), is it consistent for two \"on\" positions\n    # with gap d? consistent[d] = (b[d:] == b[:m-d])\n    \n    # Now the DP:\n    # dp[i][k] = min cost to have exactly k occurrences among positions 0..i, with position i being \"on\"\n    # dp2[i][k] = min cost to have exactly k occurrences among positions 0..i, with position i being \"off\"\n    # (and positions i+1..L-1 not yet considered)\n    \n    # Transition for dp[i][k] (position i is \"on\"):\n    # We need to pay cost[i] for the new characters in window i.\n    # But if the previous \"on\" position was p with gap d = i-p < m:\n    #   - The overlap characters are already fixed by position p's \"on\" constraint\n    #   - We only pay for the new characters: a[p+m..i+m-1], which are m-d new characters\n    #     Wait, no. If p is \"on\", characters a[p..p+m-1] are fixed to b[0..m-1].\n    #     If i is also \"on\", characters a[i..i+m-1] must be fixed to b[0..m-1].\n    #     The overlap a[i..p+m-1] is already fixed to b[i-p..m-1] by position p.\n    #     For position i, we need a[i..p+m-1] = b[0..m-1-(i-p)] = b[0..m-d-1].\n    #     Consistency: b[i-p..m-1] == b[0..m-d-1], i.e., b[d:] == b[:m-d].\n    #     If consistent, the overlap is already satisfied, we only pay for a[p+m..i+m-1] = b[m-d..m-1].\n    #     Cost of new chars: sum(a[p+m+j] != b[m-d+j] for j in 0..d-1)\n    #                      = sum(a[i+m-d+j] != b[m-d+j] for j in 0..d-1)  [since p+m = i+m-d]\n    #                      = sum(a[i+j] != b[j] for j in m-d..m-1)  [substituting j' = m-d+j]\n    #                      Hmm wait: p+m = p+m, i = p+d, so p+m = i + (m-d).\n    #                      New chars: a[i+m-d .. i+m-1] vs b[m-d .. m-1]\n    #                      Cost_new = sum(a[i+m-d+j] != b[m-d+j] for j in 0..d-1)\n    \n    # Actually wait. If position p is \"on\", we've already paid to fix a[p..p+m-1] = b[0..m-1].\n    # So a[p+m-d..p+m-1] = b[m-d..m-1] is already done (paid for).\n    # p+m-d = i (since d = i-p), so a[i..p+m-1] = b[m-d..m-1] is fixed.\n    # But for position i to be \"on\", we need a[i..i+m-1] = b[0..m-1].\n    # The overlap a[i..p+m-1] must satisfy both b[0..m-d-1] and b[m-d..m-1].\n    # Consistency: b[0..m-d-1] == b[m-d..m-1]? No wait:\n    # From position p: a[i+j] = b[d+j] for j=0..m-d-1\n    # From position i: a[i+j] = b[j] for j=0..m-d-1\n    # So consistency: b[d+j] == b[j] for j=0..m-d-1, i.e., b[d:] == b[:m-d]. \u2713\n    \n    # If consistent, the overlap is already paid. New chars for position i: a[i+m-d..i+m-1] vs b[m-d..m-1].\n    # But wait, these might already be fixed by position p! p covers a[p..p+m-1] = a[i-d..i+m-d-1].\n    # The new chars for position i are a[i+m-d..i+m-1], which are beyond p's window (p+m-1 = i+m-d-1).\n    # So these are truly new chars, costing: sum(a[i+m-d+j] != b[m-d+j] for j=0..d-1).\n    \n    # This is getting complex. Let me just implement a DP where I track the last \"on\" position.\n    \n    # dp[i][k] = min cost, position i is \"on\", k occurrences total (0..i), \n    #            assuming characters in window i are optimally set.\n    # \n    # But I also need to handle \"off\" positions between the last \"on\" and current \"on\".\n    \n    # This is getting really complex. Let me look for a simpler formulation.\n    \n    # Actually, let me think about it differently using the concept of \"segments\".\n    # A maximal run of consecutive \"on\" positions forms a segment.\n    # Within a segment, positions i, i+1, ..., i+t are all \"on\".\n    # The consistency requirement must hold for all consecutive pairs.\n    # The cost of a segment is the cost to fix all characters covered by the segment.\n    \n    # Between segments, \"off\" positions must be broken (at least one char changed from b).\n    \n    # Hmm, but \"off\" positions between segments might accidentally match b due to the fixed chars.\n    \n    # OK let me just try to implement the DP with state (position, count, last_on_position).\n    # With n=500, this is O(L^3) = O(500^3) = 125M operations, might be too slow.\n    # But maybe with pruning it's OK.\n    \n    # Actually wait. Let me reconsider. The positions are 0..L-1 where L <= 500.\n    # dp[i][k][j] where j is the last \"on\" position before i, with j < i.\n    # States: L * L * L = 500^3 = 125M. Too much memory and time.\n    \n    # Let me think of a smarter DP.\n    \n    # Key observation: if position i is \"on\", the cost depends only on the PREVIOUS \"on\" position\n    # (not all previous ones), because the overlap is only with the immediately previous window.\n    # Wait, actually it depends on ALL previous \"on\" positions that overlap with i.\n    # Position j overlaps with i if i - j < m, i.e., j > i - m.\n    # So there can be up to m-1 overlapping \"on\" positions.\n    \n    # But within a \"run\" of consecutive \"on\" positions, the consistency must hold pairwise.\n    # Actually, if positions p and p+d1 are both \"on\", and p+d1 and p+d1+d2 are both \"on\",\n    # we need b[d1:] == b[:m-d1] and b[d2:] == b[:m-d2].\n    # But we also need consistency between p and p+d1+d2: b[d1+d2:] == b[:m-d1-d2].\n    # This might not follow from the pairwise conditions.\n    # So we need to check all pairs within the run.\n    \n    # Actually, for a run of consecutive \"on\" positions (i, i+1, i+2, ..., i+t),\n    # we need b[d:] == b[:m-d] for d=1,2,...,t (all gaps from 1 to t).\n    # And the total cost of the run is the cost to fix a[i..i+t+m-1] to match\n    # the pattern imposed by b repeated with period 1 (if all d=1..t are consistent).\n    # Wait, not exactly. The pattern is determined by b and the period.\n    \n    # This is getting very complex. Let me just implement a simpler O(L^2 * L) DP\n    # and see if it passes within the time limit.\n    \n    # Actually, I think there's a cleaner way. Let me define:\n    # \n    # For a subset S of positions that are \"on\", the minimum cost is:\n    # 1. Fix all characters covered by S to match b (pay for mismatches).\n    #    This is feasible only if the constraints are consistent.\n    # 2. For each \"off\" position j not in S, if the window j still matches b after step 1,\n    #    pay 1 to break it (and this doesn't affect other windows because we can choose\n    #    which character to change carefully).\n    #    But wait, breaking window j might affect other windows!\n    \n    # Hmm, this is really complex. Let me look at the problem from a high level.\n    \n    # I think the right approach is interval DP or some form of DP that avoids tracking\n    # the full overlap state.\n    \n    # Let me try a different DP formulation:\n    # \n    # Process positions 0 to L-1. At each position, decide if it's \"on\" or \"off\".\n    # State: dp[i][k] = min cost to handle positions 0..i with exactly k \"on\" positions,\n    #        given that we've optimally set the characters a[0..i+m-1].\n    # \n    # But we need to know what a[i+1..i+m-1] looks like to compute future costs.\n    # This is the \"tail\" state problem.\n    \n    # Alternatively, since the overlap between position i and i+1 is m-1 characters,\n    # and we're deciding character by character, maybe we can do DP over characters of a:\n    # \n    # dp[p][k] = min cost to set a[0..p-1] such that:\n    # - There are exactly k complete occurrences of b ending at or before position p-1.\n    # - a[0..p-1] is optimally set.\n    # \n    # But we need to know the \"current match state\" (like KMP state) to handle future matches.\n    # \n    # dp[p][k][q] where q is the KMP state (longest proper prefix of b that is a suffix of a[0..p-1]).\n    # States: n * n * m = 500 * 500 * 500 = 125M. Too much.\n    \n    # Hmm. Let me think about what's special about this problem.\n    \n    # n, m <= 500. The answer array has n-m+2 entries.\n    # \n    # I think the intended solution might be O(n^3) or O(n^2 * m) with careful implementation.\n    \n    # Let me try the following DP:\n    # dp[i][k] = min cost, where i is the current position (0..L-1), k is the number of\n    #            \"on\" positions so far (0..i), and position i is \"on\".\n    # dp2[i][k] = same but position i is \"off\".\n    # \n    # For dp[i][k] (position i is \"on\"):\n    # Option 1: Previous position i-1 was \"off\" (or i=0).\n    #   - Cost of making position i match b: cost[i] (mismatches in a[i..i+m-1])\n    #   - But wait, some of these characters might have been changed for previous windows.\n    #   - This is the crux of the difficulty.\n    \n    # I think the key insight I'm missing is:\n    # When we make position i \"on\", we fix a[i..i+m-1] = b.\n    # When we make position j \"off\" (and j < i, j+m > i, so they overlap),\n    # the overlap characters are fixed by position i's \"on\" constraint.\n    # The \"off\" constraint for j just needs at least one mismatch in a[j..j+m-1] from b.\n    # Since we're fixing a[i..j+m-1] = b[i-j..m-1], the only characters that could differ\n    # from b for window j are a[j..i-1] = b[0..i-j-1] (from position j's perspective).\n    # Wait, but we haven't fixed a[j..i-1] for position i's \"on\" constraint (those are before window i).\n    \n    # Let me re-examine. Suppose position i is \"on\" and position j < i is \"off\", with j+m > i (overlap).\n    # - Position i being \"on\" fixes a[i..i+m-1] = b[0..m-1].\n    # - For position j to be \"off\", we need a[j..j+m-1] \u2260 b (as a string).\n    #   The overlap part a[i..j+m-1] is fixed to b[i-j..m-1].\n    #   The non-overlap part a[j..i-1] is b[0..i-j-1] (from position j's perspective).\n    #   For position j to be \"off\", we need a[j..i-1] \u2260 b[0..i-j-1] (since overlap is already b[i-j..m-1]).\n    #   If a[j..i-1] = b[0..i-j-1] (i.e., the non-overlap part matches), then position j is accidentally \"on\",\n    #   which is bad. We'd need to change one of a[j..i-1].\n    \n    # This shows that the problem is indeed complex due to overlaps.\n    \n    # Let me look for a cleaner solution structure.\n    \n    # I'll try to implement the DP where I track the last \"on\" position explicitly.\n    # dp[last_on][k] = min cost having processed all positions up to some point,\n    #                  with k \"on\" positions, and the last \"on\" position is `last_on`.\n    # \n    # But I also need to know the current position being processed.\n    # \n    # Let me define:\n    # dp[i][j][k] = min cost, positions 0..i processed, j = last \"on\" position (or -1), k = count.\n    # This is O(L^3) states, too much.\n    \n    # Alternative: dp[i][k] = min cost, positions 0..i processed, k \"on\" positions,\n    #              and position i is the LAST \"on\" position (i.e., position i is \"on\").\n    # \n    # Transition: dp[i][k] = min over j < i of (dp[j][k-1] + cost_to_add_position_i_given_last_on_is_j + cost_to_ensure_positions_j+1..i-1_are_off)\n    # \n    # The \"cost_to_ensure_positions_j+1..i-1_are_off\" is the tricky part.\n    # Given that position j is \"on\" (fixing a[j..j+m-1] = b) and position i is \"on\" (fixing a[i..i+m-1] = b),\n    # we need to ensure positions j+1..i-1 are all \"off\".\n    # For position p in j+1..i-1:\n    #   a[p..p+m-1] must not equal b.\n    #   The characters a[j..j+m-1] = b (from position j's constraint).\n    #   The characters a[i..i+m-1] = b (from position i's constraint).\n    #   Characters in a[p..p+m-1] that are covered by j's window: a[p..j+m-1] = b[p-j..m-1].\n    #   Characters in a[p..p+m-1] that are covered by i's window: a[i..p+m-1] = b[0..p+m-1-i].\n    #   Characters not covered by either: a[j+m..i-1] (if any).\n    \n    # This is getting very complicated. Let me just try to implement a simpler version\n    # and see if it gives correct answers on the example.\n    \n    # Simplification: Assume positions don't overlap (m=1 or positions are far apart).\n    # Then cost[i] = mismatches in window i.\n    # To make position i \"off\" costs 0 if it already doesn't match, or 1 if it does.\n    # This gives a simple knapsack-like DP.\n    \n    # For the general case with overlaps, I'll use a DP where I track the \"last on\" position.\n    \n    # Let me define:\n    # For a given assignment of on/off to all L positions, the minimum cost is:\n    # (This is what we want to compute for each assignment, then minimize over assignments with k \"on\"s.)\n    \n    # The minimum cost for a given assignment:\n    # 1. For each \"on\" position i, fix a[i..i+m-1] = b. The cost is the number of characters\n    #    that need to change (mismatches), but we don't double-count shared characters.\n    # 2. For each \"off\" position j, ensure a[j..j+m-1] \u2260 b. If it already doesn't match (due to\n    #    the original a or changes made in step 1), cost is 0. Otherwise, cost is 1.\n    #    But changing one character for position j might affect other positions.\n    \n    # The problem is that step 2 can cascade. Let me ignore this for now and assume\n    # that we can always fix \"off\" positions for cost 1 each without affecting other positions.\n    # (This might not be true in general, but let's see.)\n    \n    # Under this assumption:\n    # Total cost = cost_to_fix_on_positions + cost_to_break_off_positions_that_accidentally_match\n    \n    # For the \"on\" positions, the cost is the number of character changes needed.\n    # Characters shared between two \"on\" positions must be consistent (or cost is INF).\n    \n    # For \"off\" positions, after fixing \"on\" characters, check if the window matches b.\n    # If yes, add 1 (but this change might affect an \"on\" window... so we need to be careful).\n    \n    # Actually, if the \"off\" position j overlaps with an \"on\" position i (i > j, i < j+m),\n    # then a[i..j+m-1] = b[i-j..m-1] (fixed by position i).\n    # For window j to be \"off\", we need a[j..j+m-1] \u2260 b.\n    # The overlap part matches b[i-j..m-1]. The non-overlap part a[j..i-1] is not fixed by position i.\n    # If a[j..i-1] = b[0..i-j-1] (original), then window j would match b, so we need to change one\n    # character in a[j..i-1]. This change doesn't affect position i's window. Cost = 1.\n    # If a[j..i-1] \u2260 b[0..i-j-1] (original or after other changes), window j already doesn't match. Cost = 0.\n    \n    # But what if the \"off\" position j overlaps with an \"on\" position i (i < j, i+m > j)?\n    # Then a[j..i+m-1] = b[j-i..m-1] (fixed by position i).\n    # For window j to be \"off\", we need a[j..j+m-1] \u2260 b.\n    # The overlap part a[j..i+m-1] = b[j-i..m-1]. For this to cause a mismatch with b[0..m-1],\n    # we need b[j-i..m-1] \u2260 b[0..m-1-(j-i)], i.e., b is NOT consistent with period j-i.\n    # If b IS consistent (b[j-i:] == b[:m-(j-i)]), then the overlap part matches b[0..m-1-(j-i)],\n    # and we need a[i+m..j+m-1] \u2260 b[m-(j-i)..m-1] (the non-overlap part).\n    # This is getting really complex.\n    \n    # I think for a competitive programming problem at this level (2200 rating),\n    # there must be a cleaner DP formulation. Let me think harder.\n    \n    # Let me re-read the problem. We want exactly k occurrences of b as substrings in a.\n    # We can change characters of a.\n    \n    #",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "9 3\n100101011\n101\n",
+            "expected": "1 1 0 1 6 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 127,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "300 9\n10101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010",
+            "expected": "30 29 29 29 29 29 28 28 28 28 28 27 27 27 27 27 26 26 26 26 26 25 25 25 25 25 24 24 24 24 24 23 23 23 23 23 22 22 22 22 22 21 21 21 21 21 20 20 20 20 20 19 19 19 19 19 18 18 18 18 18 17 17 17 17 17 16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 174,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "45 30\n000101011011111101011110100101100000111001000\n001100101001011111000101111110\n",
+            "expected": "0 11 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 76,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "383 106\n001110010010001111011110010101100110110111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+            "expected": "0 37 80 128 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 53,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "300 20\n1111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001",
+            "expected": "15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 103,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "96 38\n100010000100011000011010101001010111000111110001100001100001111110001000111111001110100101101000\n11011110100011001111111101000001000001\n",
+            "expected": "0 12 27 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 70,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1 1\n1\n1\n",
+            "expected": "1 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 80,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "300 11\n0101010000110000010001011010111100010101001101101011000100100001101110111100101100111110100010100111101101011111001100100000100010100100011010111011000101110011100100010001001000011010111110110",
+            "expected": "0 1 2 4 6 8 10 12 14 17 20 23 26 29 32 35 38 41 45 49 53 57 61 68 75 85 97 131 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 119,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110",
+            "expected": "30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 45 90 135 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 87,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "300 1\n11111111011000101000111010110001001110111011011101110111100000110010001010101110010110011110000101001001110101011100000100011001010110011101110110101000010000010101001111011101101000110111000011",
+            "expected": "141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 98 97 96 95 94 93 92 91 90 89",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 96,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 2 4 6 8 10 13 16 19 22 25 28 31 35 39 43 47 51 55 59 64 69 74 80 88 101 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 83,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "300 19\n0000001111111110010000100101110111010001110000100010101011100010111101111110100011101010101100110101000111100000011100011011011111010100011000100101100111100010100000011010111001110011101101010",
+            "expected": "0 6 5 6 8 10 11 13 15 16 19 20 21 22 24 25 26 27 29 30 31 32 34 35 36 37 39 40 42 44 46 47 49 50 52 53 55 56 58 59 60 62 62 63 65 67 69 71 72 73 75 77 79 81 83 84 86 86 88 89 91 92 93 94 96 97 99 101 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 126,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "300 1\n11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "expected": "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 102,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "1 1\n1\n0\n",
+            "expected": "0 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 102,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "262 14\n1101101101001010011111001111101110001101010001110010000001010111011010000000110101010100010100000110101000011101100011000110011111001001110001101001000110101111001000001100100110110000001101010",
+            "expected": "0 3 6 9 12 15 19 23 27 31 35 40 45 50 55 60 65 71 78 85 95 109 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 103,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "247 209\n110000000000100111100011011111100010010110000101110111110001101111001110110101000110110100101100001101100111010001000011101001101011011111011000000010100011110001110000011011010101001100100011",
+            "expected": "0 94 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 126,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "300 24\n1000000101011110000001010011111011101010111010001100111000010110001011001000011110011100111111000000101011000001000111111011111110100111000001011001101100011100101110011100010101101101100011111",
+            "expected": "0 4 7 10 13 15 17 21 24 27 30 33 36 39 42 45 48 51 53 55 58 61 65 68 71 74 77 80 84 87 90 93 96 98 102 105 107 109 111 115 118 122 125 129 132 135 138 141 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 106,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "300 1\n11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+            "expected": "300 299 298 297 296 295 294 293 292 291 290 289 288 287 286 285 284 283 282 281 280 279 278 277 276 275 274 273 272 271 270 269 268 267 266 265 264 263 262 261 260 259 258 257 256 255 254 253 252 251 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 70,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "300 1\n11001100111101000011000101010100101110010000000100101111101011011011011111111010000001110010100000001110101010110011111100011000011010110111010001101101001101100011001000101000011110110001100110",
+            "expected": "148 147 146 145 144 143 142 141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 115,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "246 18\n1101111011110110011101100010000111011000101110010110110100111000100100001000111110001011110011100110011100101000101100111110000101001110110011111011110000000111100000100110010011101110111101110",
+            "expected": "0 4 8 12 16 22 28 34 41 48 55 63 71 86 102 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 97,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "300 30\n1111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011",
+            "expected": "10 9 8 7 6 5 4 3 2 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 87,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "300 20\n1110000100100010101100011001010100101101011010000111100001001000101011000110010101001011010110100001111000010010001010110001100101010010110101101000011110000100100010101100011001010100101101011",
+            "expected": "0 4 8 12 16 20 24 31 38 45 52 59 70 83 98 113 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 72,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "300 5\n10110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011",
+            "expected": "60 59 58 57 56 55 54 53 52 51 50 49 48 47 46 45 44 43 42 41 40 39 38 37 36 35 34 33 32 31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 6 7 13 14 20 21 27 28 34 35",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 81,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "300 8\n11111100101101011010101110001110001001010010010000000010100101101101110011010011101110011110110101001010111111111000010110101101001001101001100011100101001010101111000100100101011011000100101110",
+            "expected": "2 1 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 16 18 20 22 24 26 28 30 32 34 36 39 42 45 48 51 54 57 60 64 70 76 83 93 103 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 105,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "300 20\n1000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100",
+            "expected": "0 8 15 23 30 38 45 53 60 68 75 83 90 98 105 113 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 61,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "300 20\n0001011100101111010011010000010000000000000100111001111000101110010100001001110001001010011100100010011011111001111001100000000100111111100111010101100111110110111111101100110011010101110110111",
+            "expected": "0 4 3 5 4 5 5 6 6 6 7 7 8 8 9 9 9 10 9 10 11 10 11 12 12 11 13 12 12 14 13 14 14 14 13 14 14 15 15 17 16 16 17 17 18 18 18 19 19 20 21 21 21 21 21 20 21 21 22 23 23 24 23 24 24 25 26 26 27 28 29 30 29",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 89,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "191 63\n11000001001111101100110001001001101000011001010010000011001100101001101011100111001111111101011001000110111000110100000100110101011011011011101000100110010001001101011011101111000011100011110\n0",
+            "expected": "0 23 48 89 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 98,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "300 20\n1100011110100001000011000111101000010000110001111010000100001100011110100001000011000111101000010000110001111010000100001100011110100001000011000111101000010000110001111010000100001100011110100",
+            "expected": "0 8 12 19 24 31 36 43 48 55 60 67 72 79 84 93 102 110 119 128 137 152 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 78,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "383 106\n001110010010001111011110010101100110110111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+            "expected": "0 36 80 125 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 68,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001",
+            "expected": "14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 82,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100110010010011101001001110100100111010010011101001001110",
+            "expected": "29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 44 89 134 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 83,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "300 1\n11111111011000101000111010110001001110111011011101110111100000110010001010101110010110011110000101001001110101011100000100011001010110011101110110101000010000010101001111011101101000110111000011",
+            "expected": "142 141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 98 97 96 95 94 93 92 91 9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 63,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 2 4 6 8 10 13 16 19 22 25 28 31 35 39 43 47 51 55 59 64 69 75 81 89 102 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 80,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "300 19\n0000001111111110010000100101110111010001110000100010001011100010111101111110100011101010101100110101000111100000011100011011011111010100011000100101100111100010100000011010111001110011101101010",
+            "expected": "0 6 5 6 8 10 11 13 15 16 19 20 21 23 24 26 27 28 29 30 31 33 34 36 37 38 40 41 43 45 47 48 50 51 53 54 56 57 59 60 61 63 63 64 66 68 70 72 73 74 76 78 80 82 84 85 87 87 89 90 92 93 94 95 97 98 100 102",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 64,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "300 20\n1110000100100010101100011001010100101101011010000111100001001000101111000110010101001011010110100001111000010010001010110001100101010010110101101000011110000100100010101100011001010100101101011",
+            "expected": "0 4 8 12 16 20 25 32 39 46 53 60 71 84 99 114 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 85,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "300 8\n11111100101101011010101110001110001001010010010000000010100101101101110011010011101110011110110101001010111111111000010110101101001001101001100011100101001010101111000100100101011011000100101110",
+            "expected": "4 3 2 1 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 18 19 21 23 25 27 29 31 33 35 37 39 41 43 45 47 49 51 53 55 58 60 63 65 68 70 73 76 79 81 84 87 90 94 99 110 115 128 144 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 132,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "300 20\n1000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100",
+            "expected": "0 7 14 22 29 37 44 52 59 67 74 82 89 97 104 112 121 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 54,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "191 63\n11000000001111101100110001001001101000011001010010000011001100101001101011100111001111111101011001000110111000110100000100110101011011011011101000100110010001001101011011101111000011100011110\n0",
+            "expected": "0 23 47 90 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 76,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+            "expected": "13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 2 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 92,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110110100111010010011101001001110100100111010010011101001001110100100110010010011101001001110100100111010010011101001001110",
+            "expected": "28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 2 45 88 133 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 76,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 2 4 6 8 10 12 14 16 19 22 25 28 31 34 38 42 46 50 54 59 65 72 80 88 98 129 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 65,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+            "expected": "0 1 2 3 4 5 6 7 8 9 10 11 12 13 15 17 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 86,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 2 4 6 8 10 12 14 17 20 23 26 29 32 35 38 41 44 47 51 55 59 64 71 78 85 94 124 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 81,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+            "expected": "0 2 4 6 8 10 12 14 16 18 20 22 24 26 29 32 98 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 59,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 3 5 7 9 11 13 16 19 22 25 28 31 34 37 40 43 46 50 54 58 63 70 77 84 93 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 75,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+            "expected": "0 3 6 9 12 15 18 21 24 27 30 33 36 39 43 47 102 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 116,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 3 5 7 9 11 13 15 18 21 24 27 30 33 36 39 42 45 49 53 58 63 70 77 84 92 124 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 99,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011100101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 3 5 7 9 11 13 15 18 21 24 27 30 33 36 39 42 45 49 53 58 63 69 76 83 91 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 133,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011100101011011111011110100011111010000011011111000111101100",
+            "expected": "0 1 2 3 5 7 9 11 13 15 17 19 22 25 28 31 35 39 43 47 51 56 61 67 73 81 92 132 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 93,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "383 106\n001110010010001111011110010101100110100111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+            "expected": "0 37 80 129 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+            "runtime_ms": 93,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "9 3\n100101011\n101\n",
+        "expected": "1 1 0 1 6 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 127,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "300 9\n10101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010",
+        "expected": "30 29 29 29 29 29 28 28 28 28 28 27 27 27 27 27 26 26 26 26 26 25 25 25 25 25 24 24 24 24 24 23 23 23 23 23 22 22 22 22 22 21 21 21 21 21 20 20 20 20 20 19 19 19 19 19 18 18 18 18 18 17 17 17 17 17 16",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 174,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "45 30\n000101011011111101011110100101100000111001000\n001100101001011111000101111110\n",
+        "expected": "0 11 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 76,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "383 106\n001110010010001111011110010101100110110111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+        "expected": "0 37 80 128 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 53,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "300 20\n1111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001",
+        "expected": "15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 103,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "96 38\n100010000100011000011010101001010111000111110001100001100001111110001000111111001110100101101000\n11011110100011001111111101000001000001\n",
+        "expected": "0 12 27 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 70,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "1 1\n1\n1\n",
+        "expected": "1 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 80,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "300 11\n0101010000110000010001011010111100010101001101101011000100100001101110111100101100111110100010100111101101011111001100100000100010100100011010111011000101110011100100010001001000011010111110110",
+        "expected": "0 1 2 4 6 8 10 12 14 17 20 23 26 29 32 35 38 41 45 49 53 57 61 68 75 85 97 131 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 119,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110",
+        "expected": "30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 45 90 135 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 87,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "300 1\n11111111011000101000111010110001001110111011011101110111100000110010001010101110010110011110000101001001110101011100000100011001010110011101110110101000010000010101001111011101101000110111000011",
+        "expected": "141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 98 97 96 95 94 93 92 91 90 89",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 96,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 2 4 6 8 10 13 16 19 22 25 28 31 35 39 43 47 51 55 59 64 69 74 80 88 101 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 83,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "300 19\n0000001111111110010000100101110111010001110000100010101011100010111101111110100011101010101100110101000111100000011100011011011111010100011000100101100111100010100000011010111001110011101101010",
+        "expected": "0 6 5 6 8 10 11 13 15 16 19 20 21 22 24 25 26 27 29 30 31 32 34 35 36 37 39 40 42 44 46 47 49 50 52 53 55 56 58 59 60 62 62 63 65 67 69 71 72 73 75 77 79 81 83 84 86 86 88 89 91 92 93 94 96 97 99 101 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 126,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "300 1\n11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+        "expected": "0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 102,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "1 1\n1\n0\n",
+        "expected": "0 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 102,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "262 14\n1101101101001010011111001111101110001101010001110010000001010111011010000000110101010100010100000110101000011101100011000110011111001001110001101001000110101111001000001100100110110000001101010",
+        "expected": "0 3 6 9 12 15 19 23 27 31 35 40 45 50 55 60 65 71 78 85 95 109 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 103,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "247 209\n110000000000100111100011011111100010010110000101110111110001101111001110110101000110110100101100001101100111010001000011101001101011011111011000000010100011110001110000011011010101001100100011",
+        "expected": "0 94 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 126,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "300 24\n1000000101011110000001010011111011101010111010001100111000010110001011001000011110011100111111000000101011000001000111111011111110100111000001011001101100011100101110011100010101101101100011111",
+        "expected": "0 4 7 10 13 15 17 21 24 27 30 33 36 39 42 45 48 51 53 55 58 61 65 68 71 74 77 80 84 87 90 93 96 98 102 105 107 109 111 115 118 122 125 129 132 135 138 141 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 106,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "300 1\n11111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+        "expected": "300 299 298 297 296 295 294 293 292 291 290 289 288 287 286 285 284 283 282 281 280 279 278 277 276 275 274 273 272 271 270 269 268 267 266 265 264 263 262 261 260 259 258 257 256 255 254 253 252 251 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 70,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "300 1\n11001100111101000011000101010100101110010000000100101111101011011011011111111010000001110010100000001110101010110011111100011000011010110111010001101101001101100011001000101000011110110001100110",
+        "expected": "148 147 146 145 144 143 142 141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 9",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 115,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "246 18\n1101111011110110011101100010000111011000101110010110110100111000100100001000111110001011110011100110011100101000101100111110000101001110110011111011110000000111100000100110010011101110111101110",
+        "expected": "0 4 8 12 16 22 28 34 41 48 55 63 71 86 102 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 97,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "300 30\n1111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011101110001000110001111111001011",
+        "expected": "10 9 8 7 6 5 4 3 2 1 0 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 87,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "300 20\n1110000100100010101100011001010100101101011010000111100001001000101011000110010101001011010110100001111000010010001010110001100101010010110101101000011110000100100010101100011001010100101101011",
+        "expected": "0 4 8 12 16 20 24 31 38 45 52 59 70 83 98 113 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 72,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "300 5\n10110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011010110101101011",
+        "expected": "60 59 58 57 56 55 54 53 52 51 50 49 48 47 46 45 44 43 42 41 40 39 38 37 36 35 34 33 32 31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 6 7 13 14 20 21 27 28 34 35",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 81,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "300 8\n11111100101101011010101110001110001001010010010000000010100101101101110011010011101110011110110101001010111111111000010110101101001001101001100011100101001010101111000100100101011011000100101110",
+        "expected": "2 1 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 16 18 20 22 24 26 28 30 32 34 36 39 42 45 48 51 54 57 60 64 70 76 83 93 103 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 105,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "300 20\n1000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100",
+        "expected": "0 8 15 23 30 38 45 53 60 68 75 83 90 98 105 113 122 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 61,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "300 20\n0001011100101111010011010000010000000000000100111001111000101110010100001001110001001010011100100010011011111001111001100000000100111111100111010101100111110110111111101100110011010101110110111",
+        "expected": "0 4 3 5 4 5 5 6 6 6 7 7 8 8 9 9 9 10 9 10 11 10 11 12 12 11 13 12 12 14 13 14 14 14 13 14 14 15 15 17 16 16 17 17 18 18 18 19 19 20 21 21 21 21 21 20 21 21 22 23 23 24 23 24 24 25 26 26 27 28 29 30 29",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 89,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "191 63\n11000001001111101100110001001001101000011001010010000011001100101001101011100111001111111101011001000110111000110100000100110101011011011011101000100110010001001101011011101111000011100011110\n0",
+        "expected": "0 23 48 89 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 98,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "300 20\n1100011110100001000011000111101000010000110001111010000100001100011110100001000011000111101000010000110001111010000100001100011110100001000011000111101000010000110001111010000100001100011110100",
+        "expected": "0 8 12 19 24 31 36 43 48 55 60 67 72 79 84 93 102 110 119 128 137 152 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 78,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "383 106\n001110010010001111011110010101100110110111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+        "expected": "0 36 80 125 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 68,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011111101111001",
+        "expected": "14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 82,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100111010010011101001001110100100110010010011101001001110100100111010010011101001001110",
+        "expected": "29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 44 89 134 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 83,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "300 1\n11111111011000101000111010110001001110111011011101110111100000110010001010101110010110011110000101001001110101011100000100011001010110011101110110101000010000010101001111011101101000110111000011",
+        "expected": "142 141 140 139 138 137 136 135 134 133 132 131 130 129 128 127 126 125 124 123 122 121 120 119 118 117 116 115 114 113 112 111 110 109 108 107 106 105 104 103 102 101 100 99 98 97 96 95 94 93 92 91 9",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 63,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 2 4 6 8 10 13 16 19 22 25 28 31 35 39 43 47 51 55 59 64 69 75 81 89 102 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 80,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "300 19\n0000001111111110010000100101110111010001110000100010001011100010111101111110100011101010101100110101000111100000011100011011011111010100011000100101100111100010100000011010111001110011101101010",
+        "expected": "0 6 5 6 8 10 11 13 15 16 19 20 21 23 24 26 27 28 29 30 31 33 34 36 37 38 40 41 43 45 47 48 50 51 53 54 56 57 59 60 61 63 63 64 66 68 70 72 73 74 76 78 80 82 84 85 87 87 89 90 92 93 94 95 97 98 100 102",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 64,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "300 20\n1110000100100010101100011001010100101101011010000111100001001000101111000110010101001011010110100001111000010010001010110001100101010010110101101000011110000100100010101100011001010100101101011",
+        "expected": "0 4 8 12 16 20 25 32 39 46 53 60 71 84 99 114 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 85,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "300 8\n11111100101101011010101110001110001001010010010000000010100101101101110011010011101110011110110101001010111111111000010110101101001001101001100011100101001010101111000100100101011011000100101110",
+        "expected": "4 3 2 1 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 18 19 21 23 25 27 29 31 33 35 37 39 41 43 45 47 49 51 53 55 58 60 63 65 68 70 73 76 79 81 84 87 90 94 99 110 115 128 144 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 132,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "300 20\n1000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100001000010000100",
+        "expected": "0 7 14 22 29 37 44 52 59 67 74 82 89 97 104 112 121 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 54,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "191 63\n11000000001111101100110001001001101000011001010010000011001100101001101011100111001111111101011001000110111000110100000100110101011011011011101000100110010001001101011011101111000011100011110\n0",
+        "expected": "0 23 47 90 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 76,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+        "expected": "13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 2 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 92,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "300 10\n1101001001110100100111010010011101001001110100100111010010011101001001110110100111010010011101001001110100100111010010011101001001110100100110010010011101001001110100100111010010011101001001110",
+        "expected": "28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 9 8 7 6 5 4 3 2 1 0 1 2 45 88 133 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 76,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 2 4 6 8 10 12 14 16 19 22 25 28 31 34 38 42 46 50 54 59 65 72 80 88 98 129 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 65,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+        "expected": "0 1 2 3 4 5 6 7 8 9 10 11 12 13 15 17 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 86,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "300 11\n0100110010101111100010101110001101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 2 4 6 8 10 12 14 17 20 23 26 29 32 35 38 41 44 47 51 55 59 64 71 78 85 94 124 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 ",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 81,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+        "expected": "0 2 4 6 8 10 12 14 16 18 20 22 24 26 29 32 98 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 59,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 3 5 7 9 11 13 16 19 22 25 28 31 34 37 40 43 46 50 54 58 63 70 77 84 93 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 75,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "300 20\n1111101111001100000111111011110011000001111100111100110000011111101111001100000111111011110011000001111110111100110000011111101111001100000111111011110011000001111110111100110000011011101111001",
+        "expected": "0 3 6 9 12 15 18 21 24 27 30 33 36 39 43 47 102 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 116,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011110101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 3 5 7 9 11 13 15 18 21 24 27 30 33 36 39 42 45 49 53 58 63 70 77 84 92 124 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 99,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011100101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 3 5 7 9 11 13 15 18 21 24 27 30 33 36 39 42 45 49 53 58 63 69 76 83 91 123 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 133,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "300 11\n0100110010101111100010101110101101001001110010100010010100100000001001110010010011110111001011000110000011011010000001111111010111011011100101011011111011110100011111010000011011111000111101100",
+        "expected": "0 1 2 3 5 7 9 11 13 15 17 19 22 25 28 31 35 39 43 47 51 56 61 67 73 81 92 132 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 93,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "383 106\n001110010010001111011110010101100110100111100110111011011100001000100000010110101000100110111011000011100011000100110101011110001001001001000110010111111101111100000111110010101000100100100001",
+        "expected": "0 37 80 129 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 6\n    Actually, let me think differently. Let's define which positions are \"active\" (match b). The cost involves:\n                                        ",
+        "runtime_ms": 93,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.124428,
+  "total_latency_ms": 136256,
+  "iterations_used": null,
+  "early_stopped": null
+}

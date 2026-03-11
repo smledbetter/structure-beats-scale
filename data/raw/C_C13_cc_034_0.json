@@ -1,0 +1,1985 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_034",
+  "replica": 0,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # state: L -> min R\n    d = a[0]\n    dp = {0: d, d: 0}\n    \n    for i in range(1, n):\n        d = a[i]\n        new_dp = {}\n        for L, R in dp.items():\n            # go right\n            nL, nR = L + d, max(R - d, 0)\n            if nL not in new_dp or new_dp[nL] > nR:\n                new_dp[nL] = nR\n            # go left\n            nL, nR = max(L - d, 0), R + d\n            if nL not in new_dp or new_dp[nL] > nR:\n                new_dp[nL] = nR\n        dp = new_dp\n    \n    return min(L + R for L, R in dp.items())\n\nt = int(input())\nfor _ in range(t):\n    print(solve())",
+      "input_tokens": 750,
+      "output_tokens": 1341,
+      "cost_usd": 0.022365,
+      "latency_ms": 23281
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import defaultdict\n\ninput_data = sys.stdin.read().split()\nidx = 0\nt = int(input_data[idx]); idx += 1\nfor _ in range(t):\n    n = int(input_data[idx]); idx += 1\n    a = list(map(int, input_data[idx:idx+n])); idx += n\n    \n    # state: left_excess -> min right_excess\n    # initial: place first segment\n    d = a[0]\n    # go right: left=d, right=0; go left: left=0, right=d\n    dp = {d: 0, 0: d}\n    \n    for i in range(1, n):\n        d = a[i]\n        new_dp = {}\n        for le, re in dp.items():\n            # go right\n            nle = le + d\n            nre = max(re - d, 0)\n            if nle not in new_dp or new_dp[nle] > nre:\n                new_dp[nle] = nre\n            # go left\n            nle2 = max(le - d, 0)\n            nre2 = re + d\n            if nle2 not in new_dp or new_dp[nle2] > nre2:\n                new_dp[nle2] = nre2\n        dp = new_dp\n    \n    print(min(le + re for le, re in dp.items()))",
+      "input_tokens": 750,
+      "output_tokens": 1250,
+      "cost_usd": 0.021,
+      "latency_ms": 17426
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Better: track (current_end - L, R - current_end) = (left_extension, right_extension). The coverage length is left_extension + right_extension. The current position is at distance left_extension from L and right_extension from R.\n\nSo state = (left, right) where left = current_pos - L_min (distance from left boundary to current pos), right = R_max - current_pos (distance from current pos to right boundary). Coverage = left + right.\n\nTransitions: given state (left, right), place segment of length d:\n- Go right: new pos = current_pos + d. New right boundary = max(R, current_pos + d) = max(right, d) from current_pos perspective. New left stays same. New state: (left, max(right, d)), but current pos is now at right end, so new_left = left + right - max(right, d) + ... \n\nLet me redefine: state = (left, right) means current position is `left` to the right of L, and `right` to the left of R. So coverage = left + right.\n\nGo right by d: new position = current_pos + d.\n- new_right = max(0, right - d) ... no. \n- new R_boundary = max(old_R, current_pos + d) = max(current_pos + right, current_pos + d) means new_right_from_new_pos = max(right, d) - d... \n\nLet me use: pos relative to L. State = (pos_from_L, total_coverage). But total_coverage = pos_from_L + (R - pos) so R - L = pos_from_L + right_extension.\n\nState (a, b): a = pos - L, b = R - pos. Coverage = a + b.\n- Go right d: new_pos = pos + d. new_L = L (unchanged, a stays same from new perspective? No.)\n  new_a = new_pos - L = a + d (if new_pos doesn't extend left, which it doesn't)\n  new_b = max(R, new_pos) - new_pos = max(b - d, 0)\n  New state: (a + d, max(b - d, 0))\n- Go left d: new_pos = pos - d.\n  new_a = max(a - d, 0)\n  new_b = b + d\n  New state: (max(a-d, 0), b + d)\n\nInitial state: place first segment. It starts at 0, goes right: state (a1, 0) or goes left: state (0, a1). Both give coverage a1.\n\nDP: set of states (a, b), minimize a+b. But a and b can be large. However, for a fixed coverage c = a+b, we just need to know all possible values of a (or b). So we can represent the DP as: for each possible coverage value c, what are the possible values of a?\n\nActually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mapping a -> min coverage? Or just track all reachable (a,b) pairs but prune dominated ones.\n\nA state (a1, b1) dominates (a2, b2) if a1 <= a2 and b1 <= b2 (both extensions smaller). Keep only Pareto-optimal states.\n\nLet me implement this with Pareto-optimal front sorted by a, where b is decreasing.\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    states = set()\n    d = a[0]\n    states.add((d, 0))\n    states.add((0, d))\n    for i in range(1, n):\n        d = a[i]\n        new_states = set()\n        for (l, r) in states:\n            new_states.add((l + d, max(r - d, 0)))\n            new_states.add((max(l - d, 0), r + d))\n        # Preto pruning\n        lst = sorted(new_states)\n        pruned = []\n        min_r = float('inf')\n        for (l, r) in lst:\n            if r < min_r:\n                min_r = r\n                pruned.append((l, r))\n        states = set(pruned)\n    print(min(l + r for l, r in states))\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 750,
+      "output_tokens": 1366,
+      "cost_usd": 0.02274,
+      "latency_ms": 22999
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The DP maintains a dictionary of all possible left distances L, which can grow up to O(total sum of lengths) \u2248 10\u2077 entries in the worst case. This leads to excessive memory usage and time complexity, causing TLE/MLE for large inputs (e.g., n=10\u2074 with all a_i=1000).\",\n      \"line\": 12,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n10000\\n\" + \"1000 \" * 10000\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 990,
+          "output_tokens": 134,
+          "cost_usd": 0.000348,
+          "latency_ms": 8110
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 980,
+          "output_tokens": 0,
+          "cost_usd": 0.000245,
+          "latency_ms": 9755
+        }
+      ],
+      "fixes": [],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # state: L -> min R\n    d = a[0]\n    dp = {0: d, d: 0}\n    \n    for i in range(1, n):\n        d = a[i]\n        new_dp = {}\n        for L, R in dp.items():\n            # go right\n            nL, nR = L + d, max(R - d, 0)\n            if nL not in new_dp or new_dp[nL] > nR:\n                new_dp[nL] = nR\n            # go left\n            nL, nR = max(L - d, 0), R + d\n            if nL not in new_dp or new_dp[nL] > nR:\n                new_dp[nL] = nR\n        dp = new_dp\n    \n    return min(L + R for L, R in dp.items())\n\nt = int(input())\nfor _ in range(t):\n    print(solve())",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "3\n3\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "3\n3\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n7\n8",
+            "actual": "3\n3\n14\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n9\n7\n8",
+            "actual": "3\n6\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n7",
+            "actual": "3\n3\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n7\n8",
+            "actual": "3\n6\n9\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n2\n1 3\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n2\n9\n9\n7\n7",
+            "actual": "3\n2\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n7\n8",
+            "actual": "3\n3\n23\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n7\n8",
+            "actual": "4\n3\n14\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n8",
+            "actual": "3\n6\n9\n12\n12\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n8\n8",
+            "actual": "3\n3\n23\n9\n8\n8",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n8",
+            "actual": "4\n3\n14\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n9\n9\n9\n8",
+            "actual": "4\n3\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 13 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n13\n7\n8",
+            "actual": "3\n3\n9\n13\n7\n8",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n2\n1 5\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "5\n6\n9\n9\n7\n8",
+            "actual": "5\n6\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n8",
+            "actual": "3\n3\n14\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n12 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "3\n3\n14\n12\n7\n8",
+            "actual": "3\n3\n14\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n2\n1 5\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "5\n2\n9\n9\n7\n7",
+            "actual": "5\n2\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n12\n7\n8",
+            "actual": "3\n3\n23\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n7\n8",
+            "actual": "4\n3\n14\n8\n7\n8",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n10",
+            "actual": "3\n6\n9\n12\n12\n10",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n8",
+            "actual": "8\n3\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n4\n9\n9\n8",
+            "actual": "4\n3\n4\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 23 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n23\n7\n8",
+            "actual": "3\n3\n9\n23\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n9",
+            "actual": "3\n3\n14\n9\n9\n9",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 12 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n12\n8",
+            "actual": "4\n3\n14\n8\n12\n8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 4 6 7 7 3\n8\n8 6 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n8",
+            "actual": "3\n3\n7\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n9",
+            "actual": "3\n6\n9\n12\n12\n9",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 10 1 0 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n11",
+            "actual": "4\n3\n14\n9\n9\n11",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n13",
+            "actual": "3\n6\n9\n12\n12\n13",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n8",
+            "actual": "4\n2\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n15",
+            "actual": "8\n3\n9\n9\n9\n15",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "3\n3\n4\n9\n9\n8",
+            "actual": "3\n3\n4\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 4\n8\n8 3 6 1 2 4 6 2\n",
+            "expected": "4\n3\n9\n9\n9\n9",
+            "actual": "4\n3\n9\n9\n9\n9",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 10\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 5 6\n",
+            "expected": "3\n3\n9\n12\n7\n8",
+            "actual": "3\n3\n9\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n12\n9",
+            "actual": "3\n3\n14\n9\n12\n9",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 1 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n9\n12\n9",
+            "actual": "3\n6\n9\n9\n12\n9",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n2\n1 2\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "2\n6\n9\n12\n12\n13",
+            "actual": "2\n6\n9\n12\n12\n13",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n15",
+            "actual": "4\n2\n9\n9\n9\n15",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n7 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n7",
+            "actual": "3\n3\n9\n8\n7\n7",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 8\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n12\n12\n9",
+            "actual": "3\n3\n14\n12\n12\n9",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n2\n1 3\n3\n2 0 6\n4\n11 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 5\n",
+            "expected": "3\n6\n12\n12\n7\n8",
+            "actual": "3\n6\n12\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n9",
+            "actual": "3\n3\n7\n9\n7\n9",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n8",
+            "actual": "3\n3\n30\n9\n8\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 5 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n8",
+            "actual": "3\n6\n9\n8\n12\n8",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 14\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 7 6\n",
+            "expected": "3\n3\n9\n14\n7\n8",
+            "actual": "3\n3\n9\n14\n7\n8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n2 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n6",
+            "actual": "3\n3\n9\n8\n7\n6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 3 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n8\n7\n9",
+            "actual": "3\n3\n7\n8\n7\n9",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n9 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n9",
+            "actual": "3\n3\n30\n9\n8\n9",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 8 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n10",
+            "actual": "3\n6\n9\n8\n12\n10",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1027,
+          "output_tokens": 0,
+          "cost_usd": 0.00025675,
+          "latency_ms": 9787
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1022,
+          "output_tokens": 0,
+          "cost_usd": 0.0002555,
+          "latency_ms": 9778
+        }
+      ],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import defaultdict\n\ninput_data = sys.stdin.read().split()\nidx = 0\nt = int(input_data[idx]); idx += 1\nfor _ in range(t):\n    n = int(input_data[idx]); idx += 1\n    a = list(map(int, input_data[idx:idx+n])); idx += n\n    \n    # state: left_excess -> min right_excess\n    # initial: place first segment\n    d = a[0]\n    # go right: left=d, right=0; go left: left=0, right=d\n    dp = {d: 0, 0: d}\n    \n    for i in range(1, n):\n        d = a[i]\n        new_dp = {}\n        for le, re in dp.items():\n            # go right\n            nle = le + d\n            nre = max(re - d, 0)\n            if nle not in new_dp or new_dp[nle] > nre:\n                new_dp[nle] = nre\n            # go left\n            nle2 = max(le - d, 0)\n            nre2 = re + d\n            if nle2 not in new_dp or new_dp[nle2] > nre2:\n                new_dp[nle2] = nre2\n        dp = new_dp\n    \n    print(min(le + re for le, re in dp.items()))",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "3\n3\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "3\n3\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n7\n8",
+            "actual": "3\n3\n14\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n9\n7\n8",
+            "actual": "3\n6\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n7",
+            "actual": "3\n3\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n7\n8",
+            "actual": "3\n6\n9\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n2\n1 3\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n2\n9\n9\n7\n7",
+            "actual": "3\n2\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n7\n8",
+            "actual": "3\n3\n23\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n7\n8",
+            "actual": "4\n3\n14\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n8",
+            "actual": "3\n6\n9\n12\n12\n8",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n8\n8",
+            "actual": "3\n3\n23\n9\n8\n8",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n8",
+            "actual": "4\n3\n14\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n9\n9\n9\n8",
+            "actual": "4\n3\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 13 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n13\n7\n8",
+            "actual": "3\n3\n9\n13\n7\n8",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n2\n1 5\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "5\n6\n9\n9\n7\n8",
+            "actual": "5\n6\n9\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n8",
+            "actual": "3\n3\n14\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n12 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "3\n3\n14\n12\n7\n8",
+            "actual": "3\n3\n14\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n2\n1 5\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "5\n2\n9\n9\n7\n7",
+            "actual": "5\n2\n9\n9\n7\n7",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n12\n7\n8",
+            "actual": "3\n3\n23\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n7\n8",
+            "actual": "4\n3\n14\n8\n7\n8",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n10",
+            "actual": "3\n6\n9\n12\n12\n10",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n8",
+            "actual": "8\n3\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n4\n9\n9\n8",
+            "actual": "4\n3\n4\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 23 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n23\n7\n8",
+            "actual": "3\n3\n9\n23\n7\n8",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n9",
+            "actual": "3\n3\n14\n9\n9\n9",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 12 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n12\n8",
+            "actual": "4\n3\n14\n8\n12\n8",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 4 6 7 7 3\n8\n8 6 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n8",
+            "actual": "3\n3\n7\n9\n7\n8",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n9",
+            "actual": "3\n6\n9\n12\n12\n9",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 10 1 0 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n11",
+            "actual": "4\n3\n14\n9\n9\n11",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n13",
+            "actual": "3\n6\n9\n12\n12\n13",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n8",
+            "actual": "4\n2\n9\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n15",
+            "actual": "8\n3\n9\n9\n9\n15",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "3\n3\n4\n9\n9\n8",
+            "actual": "3\n3\n4\n9\n9\n8",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 4\n8\n8 3 6 1 2 4 6 2\n",
+            "expected": "4\n3\n9\n9\n9\n9",
+            "actual": "4\n3\n9\n9\n9\n9",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 10\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 5 6\n",
+            "expected": "3\n3\n9\n12\n7\n8",
+            "actual": "3\n3\n9\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n12\n9",
+            "actual": "3\n3\n14\n9\n12\n9",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 1 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n9\n12\n9",
+            "actual": "3\n6\n9\n9\n12\n9",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n2\n1 2\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "2\n6\n9\n12\n12\n13",
+            "actual": "2\n6\n9\n12\n12\n13",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n15",
+            "actual": "4\n2\n9\n9\n9\n15",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n7 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n7",
+            "actual": "3\n3\n9\n8\n7\n7",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 8\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n12\n12\n9",
+            "actual": "3\n3\n14\n12\n12\n9",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n2\n1 3\n3\n2 0 6\n4\n11 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 5\n",
+            "expected": "3\n6\n12\n12\n7\n8",
+            "actual": "3\n6\n12\n12\n7\n8",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n9",
+            "actual": "3\n3\n7\n9\n7\n9",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n8",
+            "actual": "3\n3\n30\n9\n8\n8",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 5 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n8",
+            "actual": "3\n6\n9\n8\n12\n8",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 14\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 7 6\n",
+            "expected": "3\n3\n9\n14\n7\n8",
+            "actual": "3\n3\n9\n14\n7\n8",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n2 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n6",
+            "actual": "3\n3\n9\n8\n7\n6",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 3 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n8\n7\n9",
+            "actual": "3\n3\n7\n8\n7\n9",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n9 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n9",
+            "actual": "3\n3\n30\n9\n8\n9",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 8 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n10",
+            "actual": "3\n6\n9\n8\n12\n10",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\"verdict\": \"PASS\", \"bugs\": []}",
+          "parsed": {
+            "verdict": "PASS",
+            "bugs": []
+          },
+          "input_tokens": 1687,
+          "output_tokens": 12,
+          "cost_usd": 0.00043075,
+          "latency_ms": 5315
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\"verdict\": \"PASS\", \"bugs\": []}",
+          "parsed": {
+            "verdict": "PASS",
+            "bugs": []
+          },
+          "input_tokens": 1693,
+          "output_tokens": 12,
+          "cost_usd": 0.00043225,
+          "latency_ms": 6772
+        }
+      ],
+      "fixes": [],
+      "final_code": "Better: track (current_end - L, R - current_end) = (left_extension, right_extension). The coverage length is left_extension + right_extension. The current position is at distance left_extension from L and right_extension from R.\n\nSo state = (left, right) where left = current_pos - L_min (distance from left boundary to current pos), right = R_max - current_pos (distance from current pos to right boundary). Coverage = left + right.\n\nTransitions: given state (left, right), place segment of length d:\n- Go right: new pos = current_pos + d. New right boundary = max(R, current_pos + d) = max(right, d) from current_pos perspective. New left stays same. New state: (left, max(right, d)), but current pos is now at right end, so new_left = left + right - max(right, d) + ... \n\nLet me redefine: state = (left, right) means current position is `left` to the right of L, and `right` to the left of R. So coverage = left + right.\n\nGo right by d: new position = current_pos + d.\n- new_right = max(0, right - d) ... no. \n- new R_boundary = max(old_R, current_pos + d) = max(current_pos + right, current_pos + d) means new_right_from_new_pos = max(right, d) - d... \n\nLet me use: pos relative to L. State = (pos_from_L, total_coverage). But total_coverage = pos_from_L + (R - pos) so R - L = pos_from_L + right_extension.\n\nState (a, b): a = pos - L, b = R - pos. Coverage = a + b.\n- Go right d: new_pos = pos + d. new_L = L (unchanged, a stays same from new perspective? No.)\n  new_a = new_pos - L = a + d (if new_pos doesn't extend left, which it doesn't)\n  new_b = max(R, new_pos) - new_pos = max(b - d, 0)\n  New state: (a + d, max(b - d, 0))\n- Go left d: new_pos = pos - d.\n  new_a = max(a - d, 0)\n  new_b = b + d\n  New state: (max(a-d, 0), b + d)\n\nInitial state: place first segment. It starts at 0, goes right: state (a1, 0) or goes left: state (0, a1). Both give coverage a1.\n\nDP: set of states (a, b), minimize a+b. But a and b can be large. However, for a fixed coverage c = a+b, we just need to know all possible values of a (or b). So we can represent the DP as: for each possible coverage value c, what are the possible values of a?\n\nActually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mapping a -> min coverage? Or just track all reachable (a,b) pairs but prune dominated ones.\n\nA state (a1, b1) dominates (a2, b2) if a1 <= a2 and b1 <= b2 (both extensions smaller). Keep only Pareto-optimal states.\n\nLet me implement this with Pareto-optimal front sorted by a, where b is decreasing.\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    states = set()\n    d = a[0]\n    states.add((d, 0))\n    states.add((0, d))\n    for i in range(1, n):\n        d = a[i]\n        new_states = set()\n        for (l, r) in states:\n            new_states.add((l + d, max(r - d, 0)))\n            new_states.add((max(l - d, 0), r + d))\n        # Preto pruning\n        lst = sorted(new_states)\n        pruned = []\n        min_r = float('inf')\n        for (l, r) in lst:\n            if r < min_r:\n                min_r = r\n                pruned.append((l, r))\n        states = set(pruned)\n    print(min(l + r for l, r in states))\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n9\n7\n7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n2\n1 3\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "3\n2\n9\n9\n7\n7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n9\n8\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n9\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 13 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n13\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n2\n1 5\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "5\n6\n9\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n12 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "3\n3\n14\n12\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n2\n1 5\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+            "expected": "5\n2\n9\n9\n7\n7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+            "expected": "3\n3\n23\n12\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "4\n3\n4\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 23 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+            "expected": "3\n3\n9\n23\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n9\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 12 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+            "expected": "4\n3\n14\n8\n12\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 50,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 4 6 7 7 3\n8\n8 6 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n12\n12\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 10 1 0 4 6 6\n",
+            "expected": "4\n3\n14\n9\n9\n11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "3\n6\n9\n12\n12\n13",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 2 5 1 2 4 6 6\n",
+            "expected": "8\n3\n9\n9\n9\n15",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+            "expected": "3\n3\n4\n9\n9\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 4\n8\n8 3 6 1 2 4 6 2\n",
+            "expected": "4\n3\n9\n9\n9\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 10\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 5 6\n",
+            "expected": "3\n3\n9\n12\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n9\n12\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 1 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+            "expected": "3\n6\n9\n9\n12\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n2\n1 2\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+            "expected": "2\n6\n9\n12\n12\n13",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 0 5 1 2 4 6 6\n",
+            "expected": "4\n2\n9\n9\n9\n15",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n7 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 8\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+            "expected": "3\n3\n14\n12\n12\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n2\n1 3\n3\n2 0 6\n4\n11 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 5\n",
+            "expected": "3\n6\n12\n12\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n9\n7\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 5 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 14\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 7 6\n",
+            "expected": "3\n3\n9\n14\n7\n8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n2 6 5 1 0 2 4 6\n",
+            "expected": "3\n3\n9\n8\n7\n6",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 3 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+            "expected": "3\n3\n7\n8\n7\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n9 6 0 1 4 4 3 6\n",
+            "expected": "3\n3\n30\n9\n8\n9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 8 1 2 0 0 6\n",
+            "expected": "3\n6\n9\n8\n12\n10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 30\n    Actually let's just do DP with states being (a, b) pairs, but compress: for same coverage c = a+b, we only need distinct a values. Use a dict mappi",
+            "runtime_ms": 32,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n3\n9\n9\n7\n8",
+        "actual": "3\n3\n9\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n3\n9\n9\n7\n8",
+        "actual": "3\n3\n9\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 4 3 6\n",
+        "expected": "3\n3\n14\n9\n7\n8",
+        "actual": "3\n3\n14\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n6\n9\n9\n7\n8",
+        "actual": "3\n6\n9\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+        "expected": "3\n3\n9\n9\n7\n7",
+        "actual": "3\n3\n9\n9\n7\n7",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n6\n9\n12\n7\n8",
+        "actual": "3\n6\n9\n12\n7\n8",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "6\n2\n1 3\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+        "expected": "3\n2\n9\n9\n7\n7",
+        "actual": "3\n2\n9\n9\n7\n7",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+        "expected": "3\n3\n23\n9\n7\n8",
+        "actual": "3\n3\n23\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+        "expected": "4\n3\n14\n9\n7\n8",
+        "actual": "4\n3\n14\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n6\n9\n12\n12\n8",
+        "actual": "3\n6\n9\n12\n12\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 2 4 3 6\n",
+        "expected": "3\n3\n23\n9\n8\n8",
+        "actual": "3\n3\n23\n9\n8\n8",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+        "expected": "4\n3\n14\n9\n9\n8",
+        "actual": "4\n3\n14\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+        "expected": "4\n3\n9\n9\n9\n8",
+        "actual": "4\n3\n9\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 13 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n3\n9\n13\n7\n8",
+        "actual": "3\n3\n9\n13\n7\n8",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "6\n2\n1 5\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "5\n6\n9\n9\n7\n8",
+        "actual": "5\n6\n9\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+        "expected": "3\n3\n14\n9\n9\n8",
+        "actual": "3\n3\n14\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n12 8 4 5\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+        "expected": "3\n3\n14\n12\n7\n8",
+        "actual": "3\n3\n14\n12\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "6\n2\n1 5\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 2 4 6 7 7 3\n8\n7 6 5 1 2 2 3 6\n",
+        "expected": "5\n2\n9\n9\n7\n7",
+        "actual": "5\n2\n9\n9\n7\n7",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 23\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 0 1 2 4 3 6\n",
+        "expected": "3\n3\n23\n12\n7\n8",
+        "actual": "3\n3\n23\n12\n7\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 6 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+        "expected": "4\n3\n14\n8\n7\n8",
+        "actual": "4\n3\n14\n8\n7\n8",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 4 6 1 2 2 0 6\n",
+        "expected": "3\n6\n9\n12\n12\n10",
+        "actual": "3\n6\n9\n12\n12\n10",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+        "expected": "8\n3\n9\n9\n9\n8",
+        "actual": "8\n3\n9\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+        "expected": "4\n3\n4\n9\n9\n8",
+        "actual": "4\n3\n4\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 23 4 5\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 6\n",
+        "expected": "3\n3\n9\n23\n7\n8",
+        "actual": "3\n3\n9\n23\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 7 3\n8\n8 6 0 2 2 4 3 6\n",
+        "expected": "3\n3\n14\n9\n9\n9",
+        "actual": "3\n3\n14\n9\n9\n9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 4\n7\n1 0 4 12 7 7 3\n8\n8 6 5 1 2 4 6 6\n",
+        "expected": "4\n3\n14\n8\n12\n8",
+        "actual": "4\n3\n14\n8\n12\n8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 4 6 7 7 3\n8\n8 6 6 1 2 4 6 6\n",
+        "expected": "3\n3\n7\n9\n7\n8",
+        "actual": "3\n3\n7\n9\n7\n8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+        "expected": "3\n6\n9\n12\n12\n9",
+        "actual": "3\n6\n9\n12\n12\n9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 10 1 0 4 6 6\n",
+        "expected": "4\n3\n14\n9\n9\n11",
+        "actual": "4\n3\n14\n9\n9\n11",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+        "expected": "3\n6\n9\n12\n12\n13",
+        "actual": "3\n6\n9\n12\n12\n13",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 0 5 1 2 4 6 6\n",
+        "expected": "4\n2\n9\n9\n9\n8",
+        "actual": "4\n2\n9\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "6\n2\n1 8\n3\n1 2 3\n4\n4 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 2 5 1 2 4 6 6\n",
+        "expected": "8\n3\n9\n9\n9\n15",
+        "actual": "8\n3\n9\n9\n9\n15",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n4 4 3 2\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n8 2 5 1 2 4 6 6\n",
+        "expected": "3\n3\n4\n9\n9\n8",
+        "actual": "3\n3\n4\n9\n9\n8",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "6\n2\n1 4\n3\n1 2 3\n4\n4 4 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 4\n8\n8 3 6 1 2 4 6 2\n",
+        "expected": "4\n3\n9\n9\n9\n9",
+        "actual": "4\n3\n9\n9\n9\n9",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 10\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 5 6\n",
+        "expected": "3\n3\n9\n12\n7\n8",
+        "actual": "3\n3\n9\n12\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 5\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+        "expected": "3\n3\n14\n9\n12\n9",
+        "actual": "3\n3\n14\n9\n12\n9",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "6\n2\n1 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 1 9\n7\n1 2 4 6 12 7 3\n8\n8 6 7 1 2 1 3 6\n",
+        "expected": "3\n6\n9\n9\n12\n9",
+        "actual": "3\n6\n9\n9\n12\n9",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "6\n2\n1 2\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 12 7 3\n8\n13 4 6 1 2 2 0 6\n",
+        "expected": "2\n6\n9\n12\n12\n13",
+        "actual": "2\n6\n9\n12\n12\n13",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "6\n2\n1 4\n3\n1 2 0\n4\n2 2 3 9\n4\n6 8 4 5\n7\n1 0 4 6 4 7 3\n8\n15 0 5 1 2 4 6 6\n",
+        "expected": "4\n2\n9\n9\n9\n15",
+        "actual": "4\n2\n9\n9\n9\n15",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n7 6 5 1 0 2 4 6\n",
+        "expected": "3\n3\n9\n8\n7\n7",
+        "actual": "3\n3\n9\n8\n7\n7",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 14\n4\n6 8 4 8\n7\n1 2 4 9 7 10 3\n8\n8 6 0 2 2 4 3 6\n",
+        "expected": "3\n3\n14\n12\n12\n9",
+        "actual": "3\n3\n14\n12\n12\n9",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "6\n2\n1 3\n3\n2 0 6\n4\n11 2 3 9\n4\n6 8 4 9\n7\n1 2 4 6 7 7 3\n8\n8 6 5 1 2 2 3 5\n",
+        "expected": "3\n6\n12\n12\n7\n8",
+        "actual": "3\n6\n12\n12\n7\n8",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 4 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+        "expected": "3\n3\n7\n9\n7\n9",
+        "actual": "3\n3\n7\n9\n7\n9",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n8 6 0 1 4 4 3 6\n",
+        "expected": "3\n3\n30\n9\n8\n8",
+        "actual": "3\n3\n30\n9\n8\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 5 1 2 0 0 6\n",
+        "expected": "3\n6\n9\n8\n12\n8",
+        "actual": "3\n6\n9\n8\n12\n8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 4 14\n7\n1 2 4 6 7 7 0\n8\n8 6 5 1 2 4 7 6\n",
+        "expected": "3\n3\n9\n14\n7\n8",
+        "actual": "3\n3\n9\n14\n7\n8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "6\n2\n1 3\n3\n1 2 3\n4\n2 2 3 9\n4\n6 8 6 5\n7\n1 0 4 6 7 7 3\n8\n2 6 5 1 0 2 4 6\n",
+        "expected": "3\n3\n9\n8\n7\n6",
+        "actual": "3\n3\n9\n8\n7\n6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "6\n2\n1 3\n3\n1 3 3\n4\n2 0 3 7\n4\n6 8 3 5\n7\n1 3 1 6 7 7 3\n8\n8 5 6 1 2 4 6 6\n",
+        "expected": "3\n3\n7\n8\n7\n9",
+        "actual": "3\n3\n7\n8\n7\n9",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "6\n2\n1 3\n3\n2 2 3\n4\n2 2 4 30\n4\n6 8 4 5\n7\n1 2 4 6 8 7 3\n8\n9 6 0 1 4 4 3 6\n",
+        "expected": "3\n3\n30\n9\n8\n9",
+        "actual": "3\n3\n30\n9\n8\n9",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "6\n2\n2 3\n3\n1 2 6\n4\n6 2 3 9\n4\n6 8 4 1\n7\n1 2 4 6 12 6 3\n8\n8 6 8 1 2 0 0 6\n",
+        "expected": "3\n6\n9\n8\n12\n10",
+        "actual": "3\n6\n9\n8\n12\n10",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.06807324999999999,
+  "total_latency_ms": 113223,
+  "iterations_used": null,
+  "early_stopped": null
+}

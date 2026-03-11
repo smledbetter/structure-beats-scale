@@ -1,0 +1,1424 @@
+{
+  "study": "C",
+  "condition": "C3",
+  "task_id": "cc_053",
+  "replica": 1,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "So the total intersections = number of pairs of chords that intersect.\n\nI need to:\n1. Count intersections among the k existing chords\n2. Choose the remaining n-k chords optimally to maximize total intersections\n\nThe key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining 2(n-k) free points to maximize total crossing pairs.\n\nThis is an optimization problem. With n \u2264 100, we have at most 100 chords, so at most 50 free points pairs to assign (up to 100 free points).\n\nLet me think about the approach:\n- The free points are those not yet used by the k chords\n- I need to pair them up optimally\n\nThe number of free points is 2(n-k). I need to find a perfect matching on these free points that maximizes crossings.\n\nFor counting crossings: chord (a,b) and chord (c,d) cross iff their endpoints alternate. \n\nThe total intersections = intersections among existing chords + intersections between existing and new chords + intersections among new chords.\n\nFor n \u2264 100, we have at most 100 free points (n-k \u2264 100). Finding optimal matching on up to 100 points... \n\nThis looks like it could be solved with DP on intervals. The classic \"maximum crossings\" for a set of points can be solved with DP.\n\nActually, for a set of 2m free points on a circle, the maximum number of crossings among m chords connecting them can be computed. The classic result is C(m,2) - (something), but actually we want to maximize crossings.\n\nWait - for points on a circle, maximum crossings among a perfect matching: we can achieve at most C(m,2) crossings? No, that's not right either.\n\nActually the maximum number of crossings among m non-crossing... wait, we want maximum crossings.\n\nFor m chords on 2m points on a circle, the maximum number of crossing pairs is C(m,2) when all chords cross each other - but that's not always achievable.\n\nLet me think with DP. Label the free points 1..2m in order on the circle. DP[i][j] = maximum crossings using points from i to j (where j-i+1 is even).\n\nWhen we pair point i with point p (i < p), the chord (i,p) crosses all chords entirely within (i,p) that also have one endpoint outside... Actually this is complex.\n\nLet me use the interval DP approach:\n- `dp[mask]` or `dp[i][j]` for the free points\n\nWith free points relabeled 0..2m-1, dp[i][j] = max crossings among chords formed from free points i..j.\n\nWhen we fix that point i pairs with point p (i < p \u2264 j, and p-i is odd so that both sides have even count):\n- Crossings within left part (i+1..p-1): dp[i+1][p-1]\n- Crossings within right part (p+1..j): dp[p+1][j]  \n- Crossings between chord (i,p) and chords in right part: each chord in right part has both endpoints in p+1..j, so chord (i,p) doesn't cross them (since i is outside)\n- Wait, I also need to count crossings between new chords and existing chords.\n\nLet me separate: compute existing-existing crossings directly, then use DP for free points considering both new-new and new-existing crossings.\n\nFor new-existing crossings: for each new chord (a,b), count existing chords that cross it.\n\nI'll implement interval DP on the free points, where dp[i][j] = max crossings (new-new + new-existing) using free points indexed i..j.\n\nWhen pairing free[i] with free[p]: crossings with existing chords for chord (free[i], free[p]) + dp[i+1][p-1] + dp[p+1][j] + crossings between chord(free[i],free[p]) and all chords formed in the right segment... wait, those aren't formed yet.\n\nActually new-new crossings: chord(free[i], free[p]) crosses a chord (free[a], free[b]) with a,b in (i+1..p-1) iff... no, (free[i],free[p]) won't cross chords entirely inside (i+1,p-1) since both endpoints of those are between i and p.\n\nSo dp[i][j]: pair i with p, add cross_with_existing(free[i],free[p]) + (p-i-1)//2 chords inside will each potentially cross with chords outside [i,p]... \n\nLet me just implement this carefully.",
+      "input_tokens": 723,
+      "output_tokens": 1221,
+      "cost_usd": 0.020484,
+      "latency_ms": 23545
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "def solve():\n    import sys\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        chords = []\n        used = set()\n        for i in range(k):\n            x, y = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n            chords.append((x,y))\n            used.add(x); used.add(y)\n        free = sorted(set(range(1,2*n+1)) - used)\n        def intersects(a,b,c,d):\n            # on circle 1..2n, do chords (a,b) and (c,d) intersect?\n            if a > b: a,b = b,a\n            if c > d: c,d = d,c\n            return (a < c < b < d) or (c < a < d < b)\n        # count existing-existing\n        ans = 0\n        for i in range(len(chords)):\n            for j in range(i+1,len(chords)):\n                if intersects(*chords[i],*chords[j]): ans+=1\n        # dp on free points\n        m = len(free)\n        if m == 0:\n            print(ans); continue\n        dp = [[0]*m for _ in range(m)]\n        def ei(a,b):\n            # intersections of chord(free[a],free[b]) with existing chords\n            cnt=0\n            for c in chords:\n                if intersects(free[a],free[b],c[0],c[1]): cnt+=1\n            return cnt\n        for length in range(2, m+1, 2):\n            for i in range(0, m-length+1, 1):\n                j = i+length-1\n                if (j-i+1)%2!=0: continue\n                best = -1\n                for mid in range(i+1,j+1,2):\n                    val = dp[i+1][mid-1] if mid-1>=i+1 else 0\n                    val += dp[mid+1][j] if mid+1<=j-1 else 0\n                    val += ei(i,mid)\n                    if val > best: best=val\n                dp[i][j] = best\n        ans += dp[0][m-1]\n        print(ans)\nsolve()",
+      "input_tokens": 723,
+      "output_tokens": 1764,
+      "cost_usd": 0.028629,
+      "latency_ms": 26065
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "So the total intersections = number of pairs of chords that intersect.\n\nI need to:\n1. Count intersections among the k existing chords\n2. Choose the remaining n-k chords optimally to maximize total intersections\n\nThe key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining 2(n-k) free points to maximize total crossing pairs.\n\nThis is an optimization problem. With n \u2264 100, we have at most 100 chords, so at most 50 free points pairs to assign (up to 100 free points).\n\nLet me think about the approach:\n- The free points are those not yet used by the k chords\n- I need to pair them up optimally\n\nThe number of free points is 2(n-k). I need to find a perfect matching on these free points that maximizes crossings.\n\nFor counting crossings: chord (a,b) and chord (c,d) cross iff their endpoints alternate. \n\nThe total intersections = intersections among existing chords + intersections between existing and new chords + intersections among new chords.\n\nFor n \u2264 100, we have at most 100 free points (n-k \u2264 100). Finding optimal matching on up to 100 points... \n\nThis looks like it could be solved with DP on intervals. The classic \"maximum crossings\" for a set of points can be solved with DP.\n\nActually, for a set of 2m free points on a circle, the maximum number of crossings among m chords connecting them can be computed. The classic result is C(m,2) - (something), but actually we want to maximize crossings.\n\nWait - for points on a circle, maximum crossings among a perfect matching: we can achieve at most C(m,2) crossings? No, that's not right either.\n\nActually the maximum number of crossings among m non-crossing... wait, we want maximum crossings.\n\nFor m chords on 2m points on a circle, the maximum number of crossing pairs is C(m,2) when all chords cross each other - but that's not always achievable.\n\nLet me think with DP. Label the free points 1..2m in order on the circle. DP[i][j] = maximum crossings using points from i to j (where j-i+1 is even).\n\nWhen we pair point i with point p (i < p), the chord (i,p) crosses all chords entirely within (i,p) that also have one endpoint outside... Actually this is complex.\n\nLet me use the interval DP approach:\n- `dp[mask]` or `dp[i][j]` for the free points\n\nWith free points relabeled 0..2m-1, dp[i][j] = max crossings among chords formed from free points i..j.\n\nWhen we fix that point i pairs with point p (i < p \u2264 j, and p-i is odd so that both sides have even count):\n- Crossings within left part (i+1..p-1): dp[i+1][p-1]\n- Crossings within right part (p+1..j): dp[p+1][j]  \n- Crossings between chord (i,p) and chords in right part: each chord in right part has both endpoints in p+1..j, so chord (i,p) doesn't cross them (since i is outside)\n- Wait, I also need to count crossings between new chords and existing chords.\n\nLet me separate: compute existing-existing crossings directly, then use DP for free points considering both new-new and new-existing crossings.\n\nFor new-existing crossings: for each new chord (a,b), count existing chords that cross it.\n\nI'll implement interval DP on the free points, where dp[i][j] = max crossings (new-new + new-existing) using free points indexed i..j.\n\nWhen pairing free[i] with free[p]: crossings with existing chords for chord (free[i], free[p]) + dp[i+1][p-1] + dp[p+1][j] + crossings between chord(free[i],free[p]) and all chords formed in the right segment... wait, those aren't formed yet.\n\nActually new-new crossings: chord(free[i], free[p]) crosses a chord (free[a], free[b]) with a,b in (i+1..p-1) iff... no, (free[i],free[p]) won't cross chords entirely inside (i+1,p-1) since both endpoints of those are between i and p.\n\nSo dp[i][j]: pair i with p, add cross_with_existing(free[i],free[p]) + (p-i-1)//2 chords inside will each potentially cross with chords outside [i,p]... \n\nLet me just implement this carefully.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n14",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 55,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n20",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 108,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 53,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n20",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 90,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 105,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 93,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 79,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n18",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 147,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n17",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 104,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "4\n0\n0\n21",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 131,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+            "expected": "16\n0\n0\n20",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 113,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n22",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 70,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n43",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 57,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 47,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n18",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 63,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n9 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n15",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 62,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "4\n0\n0\n82",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 2\n14 6\n3 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n37",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 78,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "2\n0\n0\n22",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 71,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 3\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n36",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 83,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "2\n0\n1\n16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 98,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n18",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 93,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 3\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n28",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 113,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 7\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+            "expected": "16\n0\n0\n22",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 70,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 1\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n24",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 70,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 73,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n9 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 62,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n17",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 94,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 2\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n14",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 58,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n35",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 118,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n4 2\n8 2\n1 7\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "2\n0\n0\n20",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 101,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n4 2\n8 2\n1 3\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "2\n0\n0\n19",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 72,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 1\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n42",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 102,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 2\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n31",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 86,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n5 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "8\n0\n1\n17",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 61,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n38",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 98,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 5\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n21",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 71,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 97,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "3\n0\n1\n35",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 0\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n45",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 60,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n1 7\n",
+            "expected": "3\n0\n1\n39",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 52,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n29 18\n11 7\n",
+            "expected": "3\n0\n1\n38",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 74,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n15 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n50",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 13\n",
+            "expected": "4\n0\n0\n17",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 17\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n22",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 45,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n76",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 76,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n4 0\n10 6\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n6\n20",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 102,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n4 2\n6 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "6\n0\n0\n21",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 60,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n42",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 7\n    The key insight: two chords intersect iff their endpoints alternate on the circle. Given all 2n points, I need to complete the matching of remaining",
+            "runtime_ms": 68,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "def solve():\n    import sys\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        chords = []\n        used = set()\n        for i in range(k):\n            x, y = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n            chords.append((x,y))\n            used.add(x); used.add(y)\n        free = sorted(set(range(1,2*n+1)) - used)\n        def intersects(a,b,c,d):\n            # on circle 1..2n, do chords (a,b) and (c,d) intersect?\n            if a > b: a,b = b,a\n            if c > d: c,d = d,c\n            return (a < c < b < d) or (c < a < d < b)\n        # count existing-existing\n        ans = 0\n        for i in range(len(chords)):\n            for j in range(i+1,len(chords)):\n                if intersects(*chords[i],*chords[j]): ans+=1\n        # dp on free points\n        m = len(free)\n        if m == 0:\n            print(ans); continue\n        dp = [[0]*m for _ in range(m)]\n        def ei(a,b):\n            # intersections of chord(free[a],free[b]) with existing chords\n            cnt=0\n            for c in chords:\n                if intersects(free[a],free[b],c[0],c[1]): cnt+=1\n            return cnt\n        for length in range(2, m+1, 2):\n            for i in range(0, m-length+1, 1):\n                j = i+length-1\n                if (j-i+1)%2!=0: continue\n                best = -1\n                for mid in range(i+1,j+1,2):\n                    val = dp[i+1][mid-1] if mid-1>=i+1 else 0\n                    val += dp[mid+1][j] if mid+1<=j-1 else 0\n                    val += ei(i,mid)\n                    if val > best: best=val\n                dp[i][j] = best\n        ans += dp[0][m-1]\n        print(ans)\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n14",
+            "actual": "3\n0\n0\n8",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n20",
+            "actual": "3\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n19",
+            "actual": "3\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n20",
+            "actual": "3\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n19",
+            "actual": "3\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n19",
+            "actual": "2\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n19",
+            "actual": "6\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n18",
+            "actual": "6\n0\n0\n12",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n17",
+            "actual": "3\n0\n0\n11",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "4\n0\n0\n21",
+            "actual": "3\n0\n0\n15",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+            "expected": "16\n0\n0\n20",
+            "actual": "6\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 26,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n22",
+            "actual": "3\n0\n0\n16",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n43",
+            "actual": "3\n0\n0\n22",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n16",
+            "actual": "3\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n19",
+            "actual": "7\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n18",
+            "actual": "2\n0\n0\n12",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n9 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n15",
+            "actual": "6\n0\n0\n9",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "4\n0\n0\n82",
+            "actual": "3\n0\n0\n27",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 2\n14 6\n3 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n37",
+            "actual": "3\n0\n0\n9",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "2\n0\n0\n22",
+            "actual": "1\n0\n0\n16",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 3\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n36",
+            "actual": "3\n0\n0\n15",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "2\n0\n1\n16",
+            "actual": "1\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n18",
+            "actual": "3\n0\n0\n12",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 3\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n28",
+            "actual": "3\n0\n0\n7",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 7\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+            "expected": "16\n0\n0\n22",
+            "actual": "6\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 1\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+            "expected": "4\n0\n0\n24",
+            "actual": "3\n0\n0\n18",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n16",
+            "actual": "3\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n9 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n16",
+            "actual": "6\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n17",
+            "actual": "6\n0\n0\n11",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 2\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n14",
+            "actual": "6\n0\n0\n8",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n35",
+            "actual": "3\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n4 2\n8 2\n1 7\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "2\n0\n0\n20",
+            "actual": "1\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n4 2\n8 2\n1 3\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "2\n0\n0\n19",
+            "actual": "1\n0\n0\n13",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 1\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "4\n0\n0\n42",
+            "actual": "3\n0\n0\n6",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 2\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n31",
+            "actual": "6\n0\n0\n3",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n5 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "8\n0\n1\n17",
+            "actual": "5\n0\n0\n11",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n38",
+            "actual": "3\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 5\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n21",
+            "actual": "7\n0\n0\n11",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n16",
+            "actual": "2\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "3\n0\n1\n35",
+            "actual": "2\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 25,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 0\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n45",
+            "actual": "2\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n1 7\n",
+            "expected": "3\n0\n1\n39",
+            "actual": "2\n0\n0\n18",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n29 18\n11 7\n",
+            "expected": "3\n0\n1\n38",
+            "actual": "2\n0\n0\n10",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n15 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n1\n50",
+            "actual": "3\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 13\n",
+            "expected": "4\n0\n0\n17",
+            "actual": "3\n0\n0\n11",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 17\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "3\n0\n0\n22",
+            "actual": "2\n0\n0\n16",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "16\n0\n0\n76",
+            "actual": "6\n0\n0\n21",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n4 0\n10 6\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+            "expected": "4\n0\n6\n20",
+            "actual": "3\n0\n0\n14",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n4 2\n6 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+            "expected": "6\n0\n0\n21",
+            "actual": "5\n0\n0\n15",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+            "expected": "13\n0\n0\n42",
+            "actual": "7\n0\n0\n21",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 50,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n14",
+        "actual": "3\n0\n0\n8",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n19",
+        "actual": "3\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n19",
+        "actual": "3\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n19",
+        "actual": "2\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n19",
+        "actual": "6\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n18",
+        "actual": "6\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n17",
+        "actual": "3\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "4\n0\n0\n21",
+        "actual": "3\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+        "expected": "16\n0\n0\n20",
+        "actual": "6\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n22",
+        "actual": "3\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n43",
+        "actual": "3\n0\n0\n22",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n16",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n19",
+        "actual": "7\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n18",
+        "actual": "2\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n9 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n15",
+        "actual": "6\n0\n0\n9",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "4\n0\n0\n82",
+        "actual": "3\n0\n0\n27",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 2\n14 6\n3 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n37",
+        "actual": "3\n0\n0\n9",
+        "stderr": "",
+        "runtime_ms": 79,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "2\n0\n0\n22",
+        "actual": "1\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 3\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n36",
+        "actual": "3\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "2\n0\n1\n16",
+        "actual": "1\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n18",
+        "actual": "3\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 3\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n28",
+        "actual": "3\n0\n0\n7",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 7\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+        "expected": "16\n0\n0\n22",
+        "actual": "6\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 1\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n24",
+        "actual": "3\n0\n0\n18",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n16",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n9 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n16",
+        "actual": "6\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n17",
+        "actual": "6\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 2\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n14",
+        "actual": "6\n0\n0\n8",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n35",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n4 2\n8 2\n1 7\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "2\n0\n0\n20",
+        "actual": "1\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n4 2\n8 2\n1 3\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "2\n0\n0\n19",
+        "actual": "1\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 1\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n42",
+        "actual": "3\n0\n0\n6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 2\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n31",
+        "actual": "6\n0\n0\n3",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n5 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "8\n0\n1\n17",
+        "actual": "5\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n38",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 5\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n21",
+        "actual": "7\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n16",
+        "actual": "2\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "3\n0\n1\n35",
+        "actual": "2\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 0\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n45",
+        "actual": "2\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n1 7\n",
+        "expected": "3\n0\n1\n39",
+        "actual": "2\n0\n0\n18",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n29 18\n11 7\n",
+        "expected": "3\n0\n1\n38",
+        "actual": "2\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n15 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n50",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 13\n",
+        "expected": "4\n0\n0\n17",
+        "actual": "3\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 17\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n22",
+        "actual": "2\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n76",
+        "actual": "6\n0\n0\n21",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n4 0\n10 6\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n6\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n4 2\n6 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "6\n0\n0\n21",
+        "actual": "5\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n42",
+        "actual": "7\n0\n0\n21",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.049113000000000004,
+  "total_latency_ms": 49610,
+  "iterations_used": null,
+  "early_stopped": null
+}

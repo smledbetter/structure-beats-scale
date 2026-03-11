@@ -1,0 +1,2139 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_044",
+  "replica": 1,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "The reachable maximum from a_i: sort B. Starting from threshold = a_i + k, repeatedly extend: find all b in B with b \u2264 threshold, the max of those extends threshold to max_b + k. This is like a \"jump\" process on sorted B.\n\nFor a given k, the reachable maximum from value x in B is: sort B, greedily extend. This gives a function f(x, k) = max reachable b from x.\n\nFor each a_i, Monocarp can either keep a_i or replace it with f(a_i, k) if f(a_i, k) > a_i.\n\nTo maximize total, for each a_i independently decide whether to trade (take f(a_i, k)) or keep a_i.\n\nBut wait - each trade uses one item from B. Multiple a_i's might want the same b_j. However, since Monocarp can do multiple trades, and items go back and forth... Actually items in B can be reused? No - each item is distinct. But Monocarp has n items and B has m items - he can swap at most min(n,m) items simultaneously. But since he wants to maximize, he'd want to take the best items from B.\n\nActually the key insight: Monocarp can end up with any subset of items where he keeps some of his original items and takes some items from B, as long as the multiset is \"achievable\". Since trades are sequential and items can be traded back, effectively Monocarp can end up holding any combination where he keeps some a_i's and replaces others with b_j's, subject to: each replaced a_i must be able to reach its corresponding b_j through the chain process, AND the items used are distinct.\n\nSo: for given k, compute for each a_i the maximum b reachable (call it reach(a_i)). Then greedily: for each a_i, if reach(a_i) > a_i, we want to swap a_i for reach(a_i). But multiple a_i's might want the same b_j (the maximum reachable b).\n\nActually the maximum reachable b from a_i is the same for all a_i that can reach the \"connected component\" top. Let me think differently: sort B. The reachable max from x is determined by the chain. \n\nFor the assignment problem: we want to assign distinct b_j's to a_i's (or keep a_i). This is complex. But given the constraints, perhaps the optimal solution is: sort both arrays, match greedily.\n\nLet me look at the example and think about the approach for large inputs. Given CF 2200 rating and 4s time limit with q up to 2e5...\n\nThe reachable maximum from a_i with parameter k: sort B, starting from a_i+k, keep extending while B has elements \u2264 current threshold (update threshold to max such element + k). This gives the max reachable b from a_i.\n\nFor fixed k, the reachable max is monotone in a_i. So we can compute reach(a_i) for all a_i efficiently.\n\nThen the problem reduces to: given values reach(a_i) (or a_i if no improvement), assign distinct b_j's optimally.\n\nThis seems like a matching problem. For maximum sum, sort a in decreasing order, assign best available b to each if beneficial.\n\nLet me implement this carefully.\n\nimport sys\nfrom bisect import bisect_right, bisect_left\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    a.sort()\n    b.sort()\n    \n    sum_a = sum(a)\n    \n    # For a given k, compute the answer\n    # reach(x, k): max b reachable from x\n    # Sort b, starting threshold = x+k, extend\n    # reach is non-decreasing in x\n    \n    def compute_answer(k):\n        # For each a_i, compute reach\n        # reach(x): start with thresh = x+k\n        # find max b <= thresh, set thresh = that b + k, repeat\n        # This is equivalent to: find connected \"intervals\" in b\n        # where consecutive elements differ by <= k\n        # Actually: from x, reachable max = max of the \"component\" starting from x+k\n        \n        # Precompute: for each position in b, the max reachable\n        # Components: merge b elements where b[i+1] - b[i] <= k (if reachable)\n        # Actually it's: starting from some entry point, greedily take all b <= current max + k\n        \n        # Let's compute for each b[i], the max reachable starting from b[i]\n        # reach_b[i] = max b reachable starting at b[i]\n        # Going right: if b[j] <= reach_b[i] + k for some j > i, extend\n        \n        # Actually reach from x:\n        # If x+k < b[0]: no b reachable, keep x\n        # Else: find all b <= x+k, max of those is b[p], then find all b <= b[p]+k, etc.\n        \n        # For sorted b, this is: find rightmost b[p] <= x+k, then rightmost b[q] <= b[p]+k, etc.\n        # This terminates at some b[r] where b[r+1] > b[r]+k (or end of array)\n        \n        # Precompute \"jump\" for b: for each index i, what's the furthest index reachable?\n        # reach_end[i] = furthest index j such that starting from b[i], we can reach b[j]\n        # b[i] -> b[j] means: there's a chain b[i], b[i1], ..., b[j] where each step b[t+1] <= b[t]+k\n        # Since b is sorted, from b[i] we can reach b[i..r] where r is the end of the \"k-connected component\"\n        \n        # Precompute components: group consecutive b elements where b[i+1] - b[i] <= k\n        # Wait no: from b[i], we can go to any b[j] <= b[i]+k, and from b[j] we continue\n        # Since b is sorted, from b[i] we reach all b up to the end of the connected component\n        \n        # Component: maximal range [l,r] such that b[l..r] are \"k-connected\" from left\n        # i.e., b[l+1]-b[l]<=k, b[l+2]<=b[l+1]+k (but since sorted, just consecutive gaps)\n        # Actually: b[i+1] <= b[i]+k for all i in [l, r-1]\n        \n        # So precompute for each i: comp_end[i] = rightmost index in same component\n        # Component boundary: b[i+1] - b[i] > k\n        \n        # Then reach(x): \n        # p = rightmost index with b[p] <= x+k (bisect)\n        # if p < 0: no trade possible\n        # else: reach = b[comp_end[p]]\n        \n        # Wait, but comp_end[p] assumes we start from b[0] of that component. \n        # If we enter at b[p], we can reach b[comp_end[p]] since b[p+1] <= b[p]+k etc.\n        \n        # Yes! Because if b[p+1] - b[p] <= k, from b[p] we can get b[p+1], then b[p+2], etc.\n        \n        # Precompute comp_end\n        comp_end = [0] * m\n        comp_end[m-1] = m-1\n        for i in range(m-2, -1, -1):\n            if b[i+1] - b[i] <= k:\n                comp_end[i] = comp_end[i+1]\n            else:\n                comp_end[i] = i\n        \n        # For each a_i, compute reach\n        # reach(a_i) = b[comp_end[p]] if p >= 0 else -inf\n        # where p = bisect_right(b, a_i+k) - 1\n        \n        # Now we want to maximize sum: for each a_i, we can either keep a_i or \n        # \"use\" one b_j that is reachable. We want to pick best assignment.\n        \n        # reach values: for each a_i, reach_val[i] = max reachable b (or None)\n        # We want to assign distinct b_j's to a_i's to maximize sum\n        # But reach_val[i] might be the same for multiple a_i's (they all want b[comp_end[p]])\n        \n        # Hmm, but they can't all take the same b. Each a_i can reach up to b[comp_end[p]],\n        # but they could also take any b in [0..comp_end[p]] that's reachable.\n        \n        # This is more complex. Let me reconsider.\n        \n        # For a_i with reach entry point p (rightmost b <= a_i+k):\n        # a_i can take any b in the range [0..comp_end[p]]? No...\n        # Actually a_i can reach any b in [0..comp_end[p]] that is reachable from a_i.\n        # From a_i, we can get any b[j] for j <= p (since b[j] <= b[p] <= a_i+k).\n        # From b[j], we can get any b[l] for l <= comp_end[j].\n        # So from a_i, the set of reachable b's is: all b[j] for j <= comp_end[p].\n        # Because: take b[p], then walk right through the component.\n        # Also can take any b[j] for j < p directly (b[j] <= a_i+k).\n        \n        # So from a_i, reachable set = {b[0], b[1], ..., b[comp_end[p]]}\n        # (all b's up to b[comp_end[p]])\n        \n        # Now the problem: assign distinct b_j's to a_i's (or keep a_i) to maximize sum.\n        # Each a_i can use any b_j with j <= comp_end[p_i].\n        # We want to maximize sum of chosen values.\n        \n        # Greedy: sort a_i's by their reach (comp_end[p_i]), process in order.\n        # This is like a classic assignment problem.\n        \n        # Actually: we want to select a subset S of (a_i, b_j) pairs where each a_i appears\n        # at most once, each b_j at most once, b_j is reachable from a_i, and b_j > a_i\n        # (otherwise no point trading). Maximize sum_a + sum_{matched} (b_j - a_i).\n        \n        # Equivalently: maximize sum_a + sum of (b_j - a_i) for matched pairs where b_j > a_i.\n        \n        # To maximize, we want to pick pairs (a_i, b_j) where b_j - a_i is maximized,\n        # subject to feasibility.\n        \n        # This is a bipartite matching for maximum weight. But with n,m up to 2e5, need efficient approach.\n        \n        # Key observation: each a_i can reach b[0..comp_end[p_i]]. \n        # Sort a by reach (comp_end[p_i]). Process b from right to left.\n        # Use a greedy: for each b_j (from largest to smallest), assign to the a_i that benefits most\n        # (largest b_j - a_i, i.e., smallest a_i) among those that can reach b_j.\n        \n        # Hmm, let me think differently.\n        # \n        # Since reachable set for a_i is b[0..R_i] where R_i = comp_end[p_i],\n        # and we want to maximize sum, this is:\n        # Choose a matching M subset of {(i,j): j <= R_i}, each i,j used at most once,\n        # maximize sum_a + sum_{(i,j) in M} (b[j] - a[i]) where b[j] > a[i].\n        #\n        # Equivalent to: maximize sum_{(i,j) in M} (b[j] - a[i]) (only positive contributions).\n        #\n        # Greedy approach: \n        # Sort a_i's. For each a_i (processed in some order), we want to assign the best \n        # available b_j reachable by a_i.\n        #\n        # Actually, think of it as: we want to select k pairs to maximize sum(b[j]) - sum(a[i])\n        # where each pair is feasible. We should:\n        # - Take pairs with highest b[j] - a[i] > 0.\n        #\n        # This is equivalent to: select a subset of b's and a subset of a's of equal size,\n        # with feasibility, maximizing sum(b_selected) - sum(a_selected).\n        # We want sum(b_selected) - sum(a_selected) > 0 to be worth it.\n        #\n        # To maximize sum(b_selected) - sum(a_selected):\n        # - We want to select as large b's as possible and as small a's as possible.\n        # - Subject to feasibility.\n        #\n        # Feasibility: a_i can be matched to b_j only if j <= R_i.\n        # If we sort a by R_i (ascending), this is a classic problem.\n        #\n        # Claim: optimal solution - sort b descending, sort a ascending by R_i.\n        # Use a priority queue.\n        #\n        # Actually let me think of a cleaner formulation:\n        # We want to choose a set T of indices in b and a set S of indices in a, |S|=|T|,\n        # with a bijection f: S->T such that T[f(i)] <= R_i for all i in S,\n        # maximizing sum_{j in T} b[j] - sum_{i in S} a[i].\n        #\n        # To maximize sum(b[T]) - sum(a[S]):\n        # We should pick the largest possible b's and smallest possible a's.\n        #\n        # Greedy: \n        # Sort a by R_i ascending (ties broken by a_i ascending? or doesn't matter).\n        # Process b from largest to smallest.\n        # For each b[j], find the a_i with smallest a_i that can reach b[j] (R_i >= j) and hasn't been matched.\n        # If b[j] > a_i, match them.\n        #\n        # But this might not be optimal. Let me think again.\n        #\n        # Alternative: since reachable set for a_i is b[0..R_i], \n        # if we sort a by R_i, then a_i can reach b[0..R_i].\n        # The problem is equivalent to: bipartite graph where a_i connects to b[0..R_i].\n        # Maximum weight matching where we only include edges with b[j] > a[i].\n        #\n        # For maximum weight bipartite matching with this interval structure:\n        # Sort a by R_i. Process b from right to left (j = m-1 down to 0).\n        # For each b[j], all a_i with R_i >= j can potentially use it.\n        # We want to assign b[j] to the a_i (among eligible, unmatched) that minimizes a_i\n        # (to maximize b[j] - a_i), but only if b[j] > a_i.\n        #\n        # Use a min-heap of eligible a_i values.\n        # Sort a by R_i descending. \n        # Process b[j] from j=m-1 down to 0:\n        #   Add all a_i with R_i >= j to the heap (but since we go j downward, \n        #   we add a_i when R_i first becomes >= j, i.e., R_i = j... hmm)\n        #\n        # Let me re-sort: process j from m-1 down to 0.\n        # At step j, add all a_i with R_i == j... no wait, R_i >= j means eligible.\n        # As j decreases, more a_i's become eligible.\n        # \n        # Sort a by R_i descending. Use pointer.\n        # Process j from m-1 to 0:\n        #   Add a_i's with R_i >= j (i.e., R_i = j for newly added ones as j decreases... \n        #   actually as j decreases from m-1 to 0, at each j we add a_i's with R_i = j? No.)\n        #   \n        # As j decreases, the set of eligible a_i's grows (R_i >= j is easier to satisfy).\n        # So: sort a by R_i descending. As j goes from m-1 to 0, \n        # add a_i's with R_i >= j that weren't added before.\n        # Since R_i is fixed, a_i with R_i = r gets added when j first reaches r (j = r).\n        # \n        # Process j from m-1 downto 0:\n        #   while a_ptr has R_{a_ptr} >= j: add a[a_ptr] to heap, advance ptr\n        #   (but sorted by R_i descending, so R_{a_ptr} >= j means add)\n        #   Actually: sort a by R_i descending. ptr starts at 0.\n        #   At j, add all a_i with R_i >= j: since sorted descending, add while R[ptr] >= j.\n        #   But as j decreases, we might need to add more. Hmm, if sorted descending by R_i,\n        #   at j=m-1: add all with R_i >= m-1 (i.e., R_i = m-1)\n        #   at j=m-2: add all with R_i >= m-2 (newly: R_i = m-2)\n        #   etc.\n        #   So: sort a by R_i descending. ptr=0. \n        #   At each j (going from m-1 to 0): add a[ptr] while R[ptr] >= j. \n        #   But wait, if R[0] = m-1, R[1] = m-3, then at j=m-1 add a[0], at j=m-3 add a[1], etc.\n        #   Yes this works!\n        #\n        # Then for each b[j], the heap contains all a_i with R_i >= j.\n        # Pop the minimum a_i from heap. If b[j] > min_a, match them (gain b[j] - min_a).\n        # Otherwise, don't match (put min_a back? or just skip).\n        # \n        # Wait, but if we skip b[j] for min_a, should we try other a_i's? No, because \n        # if b[j] <= min_a (smallest a in heap), then b[j] <= all a in heap, so no beneficial match.\n        # \n        # But should we always greedily match? What if matching b[j] with a_i now prevents \n        # a better match later (smaller j, smaller b)?\n        # \n        # Since we process b from largest to smallest, and we want to maximize sum(b_matched) - sum(a_matched),\n        # it's always better to match larger b first. And for a given b[j], matching with smallest a_i\n        # maximizes the gain. If gain > 0, we should match.\n        # \n        # But wait: by matching a_i with b[j], we prevent a_i from being matched with a smaller b[j'].\n        # Since b[j] > b[j'], matching a_i with b[j] is always better than b[j'].\n        # So greedy is correct: for each b[j] from largest to smallest, if min_a < b[j], match them.\n        # \n        # This gives the maximum sum of (b[j] - a[i]) over matched pairs.\n        # Final answer = sum_a + this maximum.\n        \n        # Compute R_i for each a_i\n        R = []\n        for ai in a:\n            threshold = ai + k\n            p = bisect_right(b, threshold) - 1\n            if p < 0:\n                R.append(-1)  # can't reach any b\n            else:\n                R.append(comp_end[p])\n        \n        # Sort a by R descending, with a values\n        indexed = sorted(zip(R, a), key=lambda x: -x[0])\n        \n        import heapq\n        heap = []  # min-heap of a values\n        ptr = 0\n        total_gain = 0\n        \n        for j in range(m-1, -1, -1):\n            # Add all a_i with R_i >= j\n            while ptr < n and indexed[ptr][0] >= j:\n                heapq.heappush(heap, indexed[ptr][1])\n                ptr += 1\n            if heap:\n                min_a = heap[0]\n                if b[j] > min_a:\n                    heapq.heappop(heap)\n                    total_gain += b[j] - min_a\n        \n        return sum_a + total_gain\n    \n    results = []\n    for k in queries:\n        results.append(compute_answer(k))\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()\n\nWait, this is O(q * (m + n) log n) which is O(2e5 * 4e5 * 17) \u2248 too slow.\n\nI need a smarter approach. Let me think about offline processing queries sorted by k.\n\nAs k increases, the components in b merge (when k increases past b[i+1]-b[i], those merge). Also R_i for each a_i can only increase.\n\nThis suggests processing queries in sorted order of k, and maintaining a data structure.\n\nThe critical values of k are the gaps between consecutive b elements (b[i+1]-b[i]) and the gaps between a[i]+k reaching b elements (b[j]-a[i]).\n\nLet me think about what changes as k increases:\n1. Components in b merge when k reaches b[i+1]-b[i] for some gap.\n2. a_i gains access to b[0] when k reaches b[0]-a[i] (if b[0] > a[i]... wait, a_i can reach b[j] if b[j] <= a_i+k, so when k >= b[0]-a[i]).\n\nThis is getting complex. Let me think of a different angle.\n\nActually, let me reconsider the structure. For a fixed k:\n- The components of b are maximal intervals where consecutive gaps \u2264 k.\n- For a_i, R_i = comp_end[p] where p = largest j with b[j] \u2264 a_i+k.\n\nThe answer computation requires the greedy matching. \n\nFor the constraints (n,m,q up to 2e5), an O((n+m+q) log^2) solution is needed.\n\nLet me think about what the answer looks like as a function of k.\n\nActually, let me reconsider. The time limit is 4 seconds. With q=2e5 and each query taking O((n+m) log n) = O(4e5 * 17) \u2248 7e6 operations, total is 2e5 * 7e6 = 1.4e12. Way too slow.\n\nI need to think more carefully.\n\nLet me think about what happens with the greedy:\n\nFor a given k, sort b. Compute comp_end. For each a_i, compute R_i. Then do the greedy matching.\n\nThe answer = sum_a + sum of gains from matched pairs.\n\nKey insight: the gain from matching is determined by which b elements are \"accessible\" to which a elements, and the greedy picks the best matching.\n\nLet me think about a simpler characterization. \n\nIn the greedy, we process b[m-1], b[m-2], ... and for each, use the smallest eligible a_i (with R_i >= j) if b[j] > that a_i.\n\nSince R_i = comp_end[bisect_right(b, a_i+k)-1], and comp_end[p] is the rightmost index in p's component...\n\nLet me think about what \"R_i >= j\" means. R_i >= j means a_i can reach b[j]. This means: there exists p <= j such that b[p] <= a_i + k and comp_end[p] >= j. Since comp_end is non-decreasing (within a component), and the component containing j has left boundary l_j, we need b[l_j] <= a_i + k (so a_i can enter the component at or before l_j... actually we need b[p] <= a_i+k for some p in [l_j, j]).\n\nActually: a_i can reach b[j] iff b[l_j] <= a_i + k, where l_j is the left boundary of j's component. Because: to reach b[j], we need to enter its component, and we can enter at any point p with b[p] <= a_i+k. Since b[l_j] is the smallest in the component, if b[l_j] <= a_i+k, we can enter. Actually we need b[p] <= a_i+k for some p in the component. The smallest b in the component is b[l_j], so condition is b[l_j] <= a_i+k, i.e., k >= b[l_j] - a_i.\n\nWait, but we also need to be able to reach the component in the first place. The component is [l_j, r_j]. To enter it, we need some b[p] <= a_i+k with p in [l_j, r_j]. The minimum b in this range is b[l_j]. So condition: b[l_j] <= a_i+k, i.e., a_i + k >= b[l_j].\n\nBut also, we could enter a lower component and jump to this one... but components are separated by gaps > k, so you can't jump between components! That's the definition of components.\n\nSo: a_i can reach b[j] iff b[l_j] <= a_i + k (where l_j is the left boundary of j's component).\n\nThis simplifies things! For a given k, the components partition b. a_i can reach all b's in a component C if b[left(C)] <= a_i + k.\n\nNow the greedy matching: process b from right to left. For b[j] in component C = [l,r]:\n- Eligible a_i's: those with R_i >= j, i.e., a_i can reach b[j].\n- Since b[j] is in component C, a_i can reach b[j] iff a_i can reach any element of C (since the whole component is reachable together).\n- Condition: b[l] <= a_i + k, i.e., a_i >= b[l] - k.\n\nSo eligible a_i's for any b[j] in component C are those with a_i >= b[l] - k.\n\nHmm, but also R_i >= j means comp_end[p_i] >= j. Since p_i is the rightmost b <= a_i+k, and comp_end[p_i] >= j means j is in the same component as p_i or to the right... wait no. comp_end[p_i] is the rightmost index reachable from p_i. If p_i is in component C' = [l', r'], then comp_end[p_i] = r'. So R_i = r' where C' is the component containing the rightmost b <= a_i+k.\n\nSo R_i >= j means r' >= j, i.e., the component of the rightmost b <= a_i+k extends to or beyond j.\n\nFor b[j] in component C = [l, r]: R_i >= j means r' >= j = ... hmm, r' >= l (since j >= l). If a_i+k >= b[l], then the rightmost b <= a_i+k is at least b[l], so it's in component C or later. If it's in component C, r' = r >= j. If it's in a later component C'' = [l'', r''] with l'' > r, then... wait, b is sorted, so later components have larger values. If a_i+k >= b[l''] for some later component, then p_i is in that later component, and R_i = r'' > r >= j. But also a_i+k >= b[l''] > b[r] >= b[j], so a_i can directly trade for b[j] (b[j] <= a_i+k). So R_i >= j.\n\nActually I think R_i >= j iff a_i can reach b[j] iff b[l_j] <= a_i + k (where l_j = left boundary of component containing j). Let me verify:\n\nIf b[l_j] <= a_i+k: then p_i >= l_j (since b[l_j] <= a_i+k means rightmost b <= a_i+k is at least l_j). If p_i is in component C_j = [l_j, r_j], then R_i = r_j >= j. If p_i is in a later component, R_i >= r_j >= j. So R_i >= j. \u2713\n\nIf b[l_j] > a_i+k: then all b in component C_j are > a_i+k (since b[l_j] is minimum), so p_i < l_j. R_i = comp_end[p_i] = r_{p_i} < l_j <= j (since components are disjoint and ordered). So R_i < j. \u2713\n\nGreat, so: a_i can reach b[j] (R_i >= j) iff a_i >= b[l_j] - k.\n\nNow the greedy: for b[j] (process right to left), eligible a_i's are those with a_i >= b[l_j] - k and not yet matched.\n\nAs we process b[m-1], b[m-2], ..., b[0], the threshold b[l_j] - k changes. Within a component [l,r], all b[j] have the same l_j = l, so the threshold is constant = b[l] - k.\n\nThe greedy says: for b[j], pick the smallest eligible unmatched a_i (with a_i >= b[l_j]-k) if b[j] > that a_i.\n\nThis is equivalent to: among a_i's with a_i >= b[l_j]-k, pick the smallest one if it's < b[j].\n\nLet me think of the overall structure. Sort a. For each b[j] (right to left), we want the smallest a_i >= b[l_j]-k that hasn't been matched yet, and check if it's < b[j].\n\nThis is a classic problem solvable with a sorted structure (like a sorted multiset or",
+      "input_tokens": 706,
+      "output_tokens": 8192,
+      "cost_usd": 0.124998,
+      "latency_ms": 124016
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom sortedcontainers import SortedList\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    base_sum = sum(a)\n    \n    # ... (full solution below)\n\nsolve()",
+      "input_tokens": 706,
+      "output_tokens": 8192,
+      "cost_usd": 0.124998,
+      "latency_ms": 133979
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "So: sort b. Starting threshold = a_i + k. Greedily include all b values \u2264 threshold, update threshold = max_included + k, repeat. The max reachable b from a_i is determined by this greedy process.\n\nFor a fixed k, let f(x) = maximum b reachable starting from value x. This is monotone: larger x \u2192 larger or equal reachable max.\n\nFor each a_i, Monocarp either keeps a_i or trades it for the best reachable b. We want to maximize the total.\n\nFor each query k, we need to compute for each a_i the best b reachable, then decide whether to swap or keep.\n\nWith n, m, q up to 2e5, we need an efficient approach.\n\nFor a fixed k: sort b. The greedy expansion from threshold T gives the max reachable b. Let's precompute for sorted b: given initial threshold T, what's the max reachable?\n\nSort b. For a given starting threshold T = a_i + k, we binary search to find all b \u2264 T, take max (which is the largest b \u2264 T), set new threshold = that + k, repeat until no new b is added.\n\nThis is like interval jumping. We can precompute \"jumps\" in sorted b for a given k.\n\nFor each query k independently, with n,m up to 2e5 and q up to 2e5, we need O((n+m) log(n+m)) per query which is too slow.\n\nLet me think about offline processing. Sort queries by k. As k increases, more items become reachable.\n\nActually for fixed k, the reachable max from value x: sort b as b[0] \u2264 b[1] \u2264 ... \u2264 b[m-1]. Starting with threshold x+k, greedily extend. The result is some b[j] or x if no b is reachable.\n\nFor each a_i, the gain from trading = max(0, best_reachable_b(a_i, k) - a_i).\n\nWe want sum(a_i) + sum of gains.\n\nLet me implement the per-query O((n+m) log m) solution and see if it passes within 4s with optimized Python... probably not. Let me think of a smarter approach.\n\nFor fixed k, given sorted b, I can precompute next[i] = the index of the last b reachable starting from b[i] with step k (using binary lifting). Then for each a_i, find starting point and jump.\n\nBinary lifting on sorted b: for each index i, jump[0][i] = last index j where b[j] \u2264 b[i] + k. Then jump[t][i] = jump[t-1][jump[t-1][i]]. But this depends on k, so I'd need to redo for each query.\n\nGiven the constraints and time limit of 4s, let me just implement O((n+m) log m) per query in Python with optimizations.",
+      "input_tokens": 706,
+      "output_tokens": 1171,
+      "cost_usd": 0.019683,
+      "latency_ms": 20134
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 6953,
+          "output_tokens": 0,
+          "cost_usd": 0.00173825,
+          "latency_ms": 6770
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 3,
+          "bugs": [
+            {
+              "description": "The solution recomputes the entire matching logic for each query, resulting in O(q * (n + m) log n) time. With n, m, q up to 2\u00b710^5 this leads to a massive runtime (\u224810^12 operations) and will TLE.",
+              "line": 49,
+              "severity": "critical",
+              "triggering_input": "n=m=q=200000 with random values"
+            },
+            {
+              "description": "Inside compute_answer, comp_end array is recomputed for every query in O(m) time, and R array is recomputed in O(n log m). This per-query overhead is unnecessary and contributes to the TLE.",
+              "line": 53,
+              "severity": "major",
+              "triggering_input": "Large input with many queries"
+            },
+            {
+              "description": "The greedy matching algorithm assumes that the smallest eligible a_i should be matched with the current largest b_j, but it does not correctly handle cases where b_j <= a_i (no gain) and may skip potential better matches later. The logic may produce suboptimal total sum.",
+              "line": 84,
+              "severity": "major",
+              "triggering_input": "a = [5, 100], b = [6, 7], k = 0"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The solution recomputes the entire matching logic for each query, resulting in O(q * (n + m) log n) time. With n, m, q up to 2\u00b710^5 this leads to a massive runtime (\u224810^12 operations) and will TLE.\",\n      \"line\": 49,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"n=m=q=200000 with random values\"\n    },\n    {\n      \"description\": \"Inside compute_answer, comp_end array is recomputed for every query in O(m) time, and R array is recomputed in O(n log m). This per-query overhead is unnecessary and contributes to the TLE.\",\n      \"line\": 53,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Large input with many queries\"\n    },\n    {\n      \"description\": \"The greedy matching algorithm assumes that the smallest eligible a_i should be matched with the current largest b_j, but it does not correctly handle cases where b_j <= a_i (no gain) and may skip potential better matches later. The logic may produce suboptimal total sum.\",\n      \"line\": 84,\n      \"severity\": \"major\",\n      \"triggering_input\": \"a = [5, 100], b = [6, 7], k = 0\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution recomputes the entire matching logic for each query, resulting in O(q * (n + m) log n) time. With n, m, q up to 2\u00b710^5 this leads to a massive runtime (\u224810^12 operations) and will TLE.",
+                "line": 49,
+                "severity": "critical",
+                "triggering_input": "n=m=q=200000 with random values"
+              },
+              {
+                "description": "Inside compute_answer, comp_end array is recomputed for every query in O(m) time, and R array is recomputed in O(n log m). This per-query overhead is unnecessary and contributes to the TLE.",
+                "line": 53,
+                "severity": "major",
+                "triggering_input": "Large input with many queries"
+              },
+              {
+                "description": "The greedy matching algorithm assumes that the smallest eligible a_i should be matched with the current largest b_j, but it does not correctly handle cases where b_j <= a_i (no gain) and may skip potential better matches later. The logic may produce suboptimal total sum.",
+                "line": 84,
+                "severity": "major",
+                "triggering_input": "a = [5, 100], b = [6, 7], k = 0"
+              }
+            ]
+          },
+          "input_tokens": 6953,
+          "output_tokens": 289,
+          "cost_usd": 0.001955,
+          "latency_ms": 1730
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\nimport heapq\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    a.sort()\n    b.sort()\n    sum_a = sum(a)\n    \n    # For each query k, compute answer\n    # a_i can reach b[j] iff b[left(comp(j))] <= a_i + k\n    # Greedy: process b right to left, for each b[j], pick smallest a_i >= b[left(comp(j))]-k that is < b[j]\n    \n    def compute_answer(k):\n        # Compute components\n        comp_left = [0] * m\n        left = 0\n        for i in range(m):\n            if i > 0 and b[i] - b[i-1] > k:\n                left = i\n            comp_left[i] = left\n        \n        # For each b[j], threshold for a_i: a_i >= b[comp_left[j]] - k\n        # Greedy matching using sorted list of a values\n        # Process b right to left, maintain sorted available a's\n        # For each b[j], find smallest a_i >= threshold and a_i < b[j]\n        \n        # Sort a, use a sorted list\n        avail = sorted(a)\n        total_gain = 0\n        \n        for j in range(m-1, -1, -1):\n            threshold = b[comp_left[j]] - k\n            # Find smallest a_i >= threshold in avail\n            pos = bisect_left(avail, threshold)\n            if pos < len(avail) and avail[pos] < b[j]:\n                total_gain += b[j] - avail[pos]\n                avail.pop(pos)\n        \n        return sum_a + total_gain\n    \n    results = []\n    for k in queries:\n        results.append(compute_answer(k))\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+          "input_tokens": 8933,
+          "output_tokens": 1217,
+          "cost_usd": 0.045054,
+          "latency_ms": 13376
+        }
+      ],
+      "final_code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\nimport heapq\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    a.sort()\n    b.sort()\n    sum_a = sum(a)\n    \n    # For each query k, compute answer\n    # a_i can reach b[j] iff b[left(comp(j))] <= a_i + k\n    # Greedy: process b right to left, for each b[j], pick smallest a_i >= b[left(comp(j))]-k that is < b[j]\n    \n    def compute_answer(k):\n        # Compute components\n        comp_left = [0] * m\n        left = 0\n        for i in range(m):\n            if i > 0 and b[i] - b[i-1] > k:\n                left = i\n            comp_left[i] = left\n        \n        # For each b[j], threshold for a_i: a_i >= b[comp_left[j]] - k\n        # Greedy matching using sorted list of a values\n        # Process b right to left, maintain sorted available a's\n        # For each b[j], find smallest a_i >= threshold and a_i < b[j]\n        \n        # Sort a, use a sorted list\n        avail = sorted(a)\n        total_gain = 0\n        \n        for j in range(m-1, -1, -1):\n            threshold = b[comp_left[j]] - k\n            # Find smallest a_i >= threshold in avail\n            pos = bisect_left(avail, threshold)\n            if pos < len(avail) and avail[pos] < b[j]:\n                total_gain += b[j] - avail[pos]\n                avail.pop(pos)\n        \n        return sum_a + total_gain\n    \n    results = []\n    for k in queries:\n        results.append(compute_answer(k))\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 35,
+        "failed": 15,
+        "errors": 0,
+        "pass_rate": 0.7,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n64\n64",
+            "actual": "55\n56\n60\n63\n64",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1 1 1\n1\n1\n1\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n60\n60",
+            "actual": "55\n56\n60\n60\n60",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n60",
+            "actual": "55\n56\n60\n56\n60",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 4 5\n10 30 15\n12 31 27 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n58\n56\n58",
+            "actual": "55\n56\n58\n56\n58",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 4 5\n10 30 15\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n63",
+            "actual": "55\n56\n60\n56\n60",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 4 5\n10 30 15\n12 58 14 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n63\n63",
+            "actual": "55\n55\n59\n62\n63",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "82\n82\n86\n82\n86",
+            "actual": "82\n82\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 5\n10 30 15\n12 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n59\n56\n59",
+            "actual": "55\n56\n59\n56\n59",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 4 5\n10 30 30\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "70\n71\n73\n71\n73",
+            "actual": "70\n71\n73\n71\n73",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "3 4 5\n10 30 15\n12 22 14 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n59\n59",
+            "actual": "55\n55\n59\n59\n59",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 2 2 1 4\n",
+            "expected": "82\n86\n86\n82\n86",
+            "actual": "82\n86\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 5\n10 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "55\n59\n59\n63\n63",
+            "actual": "55\n59\n59\n62\n63",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 4\n",
+            "expected": "70\n70\n72\n70\n72",
+            "actual": "70\n70\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 5\n20 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "65\n65\n65\n68\n68",
+            "actual": "65\n65\n65\n68\n68",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "70\n72\n72\n70\n72",
+            "actual": "70\n72\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "70\n72\n72\n70\n70",
+            "actual": "70\n72\n72\n70\n70",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "55\n56\n56\n64\n64",
+            "actual": "55\n56\n56\n63\n64",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3 4 5\n10 30 3\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "43\n44\n48\n48\n57",
+            "actual": "43\n44\n48\n48\n52",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3 4 5\n10 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "66\n67\n71\n75\n75",
+            "actual": "66\n67\n71\n71\n71",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 0 1 4\n",
+            "expected": "55\n56\n55\n56\n60",
+            "actual": "55\n56\n55\n56\n60",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3 4 5\n10 30 15\n12 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n57\n55\n57",
+            "actual": "55\n55\n57\n55\n57",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n68\n68",
+            "actual": "55\n55\n57\n62\n62",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3 4 5\n10 30 15\n12 31 14 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n60\n55\n60",
+            "actual": "55\n56\n60\n55\n60",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3 4 5\n10 30 15\n15 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n56\n56\n61",
+            "actual": "55\n56\n56\n56\n61",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 4 5\n8 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "53\n53\n53\n56\n63",
+            "actual": "53\n53\n53\n56\n63",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3 4 5\n10 30 15\n12 22 28 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n57\n57",
+            "actual": "55\n55\n57\n57\n57",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3 4 5\n1 30 15\n12 45 14 7\n0 1 2 4 7\n",
+            "expected": "46\n46\n46\n46\n59",
+            "actual": "46\n46\n46\n46\n59",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "70\n70\n72\n70\n77",
+            "actual": "70\n70\n72\n70\n77",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 4 5\n20 30 28\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "78\n78\n78\n78\n78",
+            "actual": "78\n78\n78\n78\n78",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3 4 5\n7 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "67\n67\n67\n67\n67",
+            "actual": "67\n67\n67\n67\n67",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3 4 5\n20 9 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "44\n44\n44\n53\n53",
+            "actual": "44\n44\n44\n52\n53",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3 4 5\n10 60 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "100\n102\n102\n100\n100",
+            "actual": "100\n102\n102\n100\n100",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 5\n10 6 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "46\n48\n48\n46\n46",
+            "actual": "46\n48\n48\n46\n46",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 4 5\n10 18 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n51\n51",
+            "actual": "43\n43\n43\n50\n51",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "3 4 5\n11 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "67\n69\n71\n75\n75",
+            "actual": "67\n69\n71\n71\n71",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3 4 5\n10 30 15\n22 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n55\n55\n55",
+            "actual": "55\n55\n55\n55\n55",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n68\n68",
+            "actual": "55\n55\n55\n62\n62",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "3 4 5\n10 30 15\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n58\n55\n58",
+            "actual": "55\n56\n58\n55\n58",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3 4 5\n10 45 15\n12 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n74\n74\n70\n74",
+            "actual": "70\n74\n74\n70\n74",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3 4 5\n10 31 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "71\n71\n73\n71\n78",
+            "actual": "71\n71\n73\n71\n78",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "44\n48\n48\n44\n44",
+            "actual": "44\n48\n48\n44\n44",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3 4 5\n10 18 15\n12 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n47\n47",
+            "actual": "43\n43\n43\n47\n47",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3 4 5\n10 30 3\n12 31 12 7\n0 1 3 3 4\n",
+            "expected": "43\n44\n46\n46\n55",
+            "actual": "43\n44\n46\n46\n50",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "3 4 5\n10 30 15\n12 58 7 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n63\n63",
+            "actual": "55\n55\n55\n60\n60",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "3 4 5\n10 30 20\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "60\n61\n63\n60\n63",
+            "actual": "60\n61\n63\n60\n63",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3 4 5\n10 45 15\n5 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n70\n70\n70\n74",
+            "actual": "70\n70\n70\n70\n74",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3 4 5\n10 37 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "77\n77\n79\n77\n84",
+            "actual": "77\n77\n79\n77\n84",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 2\n",
+            "expected": "44\n48\n48\n44\n48",
+            "actual": "44\n48\n48\n44\n48",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 5\n10 18 15\n22 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n43\n55",
+            "actual": "43\n43\n43\n43\n51",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The solution is incomplete: after reading input and computing base_sum, no further logic is implemented and nothing is printed. The program will produce no output for any test case.",
+              "line": 13,
+              "severity": "critical",
+              "triggering_input": "any valid input"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The solution is incomplete: after reading input and computing base_sum, no further logic is implemented and nothing is printed. The program will produce no output for any test case.\",\n      \"line\": 13,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any valid input\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution is incomplete: after reading input and computing base_sum, no further logic is implemented and nothing is printed. The program will produce no output for any test case.",
+                "line": 13,
+                "severity": "critical",
+                "triggering_input": "any valid input"
+              }
+            ]
+          },
+          "input_tokens": 794,
+          "output_tokens": 82,
+          "cost_usd": 0.00026,
+          "latency_ms": 839
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 3,
+          "bugs": [
+            {
+              "description": "The solution logic is missing; after reading input and computing base_sum, the code does not compute answers or print any output, so it never solves the problem.",
+              "line": 14,
+              "severity": "critical",
+              "triggering_input": "any valid input"
+            },
+            {
+              "description": "The code imports SortedList from the third\u2011party library 'sortedcontainers', which is not guaranteed to be available in the execution environment, causing an ImportError.",
+              "line": 2,
+              "severity": "major",
+              "triggering_input": "any input (import fails before reading)"
+            },
+            {
+              "description": "The solve() function is called at the top level without any guard (if __name__ == '__main__'), which is generally acceptable but may cause unexpected behavior when the module is imported elsewhere.",
+              "line": 16,
+              "severity": "minor",
+              "triggering_input": "none"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The solution logic is missing; after reading input and computing base_sum, the code does not compute answers or print any output, so it never solves the problem.\",\n      \"line\": 14,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any valid input\"\n    },\n    {\n      \"description\": \"The code imports SortedList from the third\u2011party library 'sortedcontainers', which is not guaranteed to be available in the execution environment, causing an ImportError.\",\n      \"line\": 2,\n      \"severity\": \"major\",\n      \"triggering_input\": \"any input (import fails before reading)\"\n    },\n    {\n      \"description\": \"The solve() function is called at the top level without any guard (if __name__ == '__main__'), which is generally acceptable but may cause unexpected behavior when the module is imported elsewhere.\",\n      \"line\": 16,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"none\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution logic is missing; after reading input and computing base_sum, the code does not compute answers or print any output, so it never solves the problem.",
+                "line": 14,
+                "severity": "critical",
+                "triggering_input": "any valid input"
+              },
+              {
+                "description": "The code imports SortedList from the third\u2011party library 'sortedcontainers', which is not guaranteed to be available in the execution environment, causing an ImportError.",
+                "line": 2,
+                "severity": "major",
+                "triggering_input": "any input (import fails before reading)"
+              },
+              {
+                "description": "The solve() function is called at the top level without any guard (if __name__ == '__main__'), which is generally acceptable but may cause unexpected behavior when the module is imported elsewhere.",
+                "line": 16,
+                "severity": "minor",
+                "triggering_input": "none"
+              }
+            ]
+          },
+          "input_tokens": 794,
+          "output_tokens": 214,
+          "cost_usd": 0.000359,
+          "latency_ms": 1363
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom collections import defaultdict\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    a.sort()\n    b.sort()\n    \n    # Combined sorted array with tags\n    items = sorted([(v, 0) for v in a] + [(v, 1) for v in b])\n    total = len(items)\n    \n    # Gaps between consecutive items\n    gaps = [(items[i+1][0] - items[i][0], i, i+1) for i in range(total-1)]\n    gaps.sort()\n    \n    # Union-Find\n    parent = list(range(total))\n    # Each component: list of a-values and b-values\n    a_vals = [[] for _ in range(total)]\n    b_vals = [[] for _ in range(total)]\n    for i, (v, t) in enumerate(items):\n        if t == 0:\n            a_vals[i].append(v)\n        else:\n            b_vals[i].append(v)\n    \n    def find(x):\n        while parent[x] != x:\n            parent[x] = parent[parent[x]]\n            x = parent[x]\n        return x\n    \n    base_sum = sum(a)\n    \n    # For each component, compute gain: replace smallest a's with largest b's if b > a\n    def component_gain(avs, bvs):\n        # avs sorted ascending, bvs sorted ascending\n        # greedily replace smallest a with largest b if b > a\n        gain = 0\n        ai, bi = 0, len(bvs)-1\n        while ai < len(avs) and bi >= 0:\n            if bvs[bi] > avs[ai]:\n                gain += bvs[bi] - avs[ai]\n                ai += 1; bi -= 1\n            else:\n                break\n        return gain\n    \n    comp_gain = [component_gain(a_vals[i], b_vals[i]) for i in range(total)]\n    total_gain = sum(comp_gain)\n    \n    sorted_queries = sorted(enumerate(queries), key=lambda x: x[1])\n    answers = [0]*q\n    gap_idx = 0\n    \n    for qi, k in sorted_queries:\n        while gap_idx < len(gaps) and gaps[gap_idx][0] <= k:\n            _, u, v = gaps[gap_idx]\n            ru, rv = find(u), find(v)\n            if ru != rv:\n                total_gain -= comp_gain[ru] + comp_gain[rv]\n                # merge\n                a_vals[ru].extend(a_vals[rv]); a_vals[ru].sort()\n                b_vals[ru].extend(b_vals[rv]); b_vals[ru].sort()\n                parent[rv] = ru\n                comp_gain[ru] = component_gain(a_vals[ru], b_vals[ru])\n                total_gain += comp_gain[ru]\n            gap_idx += 1\n        answers[qi] = base_sum + total_gain\n    \n    print('\\n'.join(map(str, answers)))\n\nsolve()",
+          "input_tokens": 1200,
+          "output_tokens": 1340,
+          "cost_usd": 0.0237,
+          "latency_ms": 20237
+        }
+      ],
+      "final_code": "import sys\nfrom collections import defaultdict\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2]); idx+=3\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    b = [int(input_data[idx+i]) for i in range(m)]; idx+=m\n    queries = [int(input_data[idx+i]) for i in range(q)]; idx+=q\n    \n    a.sort()\n    b.sort()\n    \n    # Combined sorted array with tags\n    items = sorted([(v, 0) for v in a] + [(v, 1) for v in b])\n    total = len(items)\n    \n    # Gaps between consecutive items\n    gaps = [(items[i+1][0] - items[i][0], i, i+1) for i in range(total-1)]\n    gaps.sort()\n    \n    # Union-Find\n    parent = list(range(total))\n    # Each component: list of a-values and b-values\n    a_vals = [[] for _ in range(total)]\n    b_vals = [[] for _ in range(total)]\n    for i, (v, t) in enumerate(items):\n        if t == 0:\n            a_vals[i].append(v)\n        else:\n            b_vals[i].append(v)\n    \n    def find(x):\n        while parent[x] != x:\n            parent[x] = parent[parent[x]]\n            x = parent[x]\n        return x\n    \n    base_sum = sum(a)\n    \n    # For each component, compute gain: replace smallest a's with largest b's if b > a\n    def component_gain(avs, bvs):\n        # avs sorted ascending, bvs sorted ascending\n        # greedily replace smallest a with largest b if b > a\n        gain = 0\n        ai, bi = 0, len(bvs)-1\n        while ai < len(avs) and bi >= 0:\n            if bvs[bi] > avs[ai]:\n                gain += bvs[bi] - avs[ai]\n                ai += 1; bi -= 1\n            else:\n                break\n        return gain\n    \n    comp_gain = [component_gain(a_vals[i], b_vals[i]) for i in range(total)]\n    total_gain = sum(comp_gain)\n    \n    sorted_queries = sorted(enumerate(queries), key=lambda x: x[1])\n    answers = [0]*q\n    gap_idx = 0\n    \n    for qi, k in sorted_queries:\n        while gap_idx < len(gaps) and gaps[gap_idx][0] <= k:\n            _, u, v = gaps[gap_idx]\n            ru, rv = find(u), find(v)\n            if ru != rv:\n                total_gain -= comp_gain[ru] + comp_gain[rv]\n                # merge\n                a_vals[ru].extend(a_vals[rv]); a_vals[ru].sort()\n                b_vals[ru].extend(b_vals[rv]); b_vals[ru].sort()\n                parent[rv] = ru\n                comp_gain[ru] = component_gain(a_vals[ru], b_vals[ru])\n                total_gain += comp_gain[ru]\n            gap_idx += 1\n        answers[qi] = base_sum + total_gain\n    \n    print('\\n'.join(map(str, answers)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n64\n64",
+            "actual": "55\n56\n60\n64\n64",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1 1 1\n1\n1\n1\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n60\n60",
+            "actual": "55\n56\n60\n60\n60",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n60",
+            "actual": "55\n56\n60\n56\n60",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 4 5\n10 30 15\n12 31 27 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n58\n56\n58",
+            "actual": "55\n56\n58\n56\n58",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 4 5\n10 30 15\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n63",
+            "actual": "55\n56\n60\n56\n63",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "3 4 5\n10 30 15\n12 58 14 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n63\n63",
+            "actual": "55\n55\n59\n63\n63",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "82\n82\n86\n82\n86",
+            "actual": "82\n82\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 5\n10 30 15\n12 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n59\n56\n59",
+            "actual": "55\n56\n59\n56\n59",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 4 5\n10 30 30\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "70\n71\n73\n71\n73",
+            "actual": "70\n71\n73\n71\n73",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "3 4 5\n10 30 15\n12 22 14 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n59\n59",
+            "actual": "55\n55\n59\n59\n59",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 2 2 1 4\n",
+            "expected": "82\n86\n86\n82\n86",
+            "actual": "82\n86\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 5\n10 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "55\n59\n59\n63\n63",
+            "actual": "55\n59\n59\n63\n63",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 4\n",
+            "expected": "70\n70\n72\n70\n72",
+            "actual": "70\n70\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 5\n20 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "65\n65\n65\n68\n68",
+            "actual": "65\n65\n65\n68\n68",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "70\n72\n72\n70\n72",
+            "actual": "70\n72\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "70\n72\n72\n70\n70",
+            "actual": "70\n72\n72\n70\n70",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "55\n56\n56\n64\n64",
+            "actual": "55\n56\n56\n64\n64",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "3 4 5\n10 30 3\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "43\n44\n48\n48\n57",
+            "actual": "43\n44\n48\n48\n57",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3 4 5\n10 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "66\n67\n71\n75\n75",
+            "actual": "66\n67\n71\n75\n75",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 0 1 4\n",
+            "expected": "55\n56\n55\n56\n60",
+            "actual": "55\n56\n55\n56\n60",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3 4 5\n10 30 15\n12 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n57\n55\n57",
+            "actual": "55\n55\n57\n55\n57",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n68\n68",
+            "actual": "55\n55\n57\n68\n68",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3 4 5\n10 30 15\n12 31 14 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n60\n55\n60",
+            "actual": "55\n56\n60\n55\n60",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3 4 5\n10 30 15\n15 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n56\n56\n61",
+            "actual": "55\n56\n56\n56\n61",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 4 5\n8 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "53\n53\n53\n56\n63",
+            "actual": "53\n53\n53\n56\n63",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3 4 5\n10 30 15\n12 22 28 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n57\n57",
+            "actual": "55\n55\n57\n57\n57",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3 4 5\n1 30 15\n12 45 14 7\n0 1 2 4 7\n",
+            "expected": "46\n46\n46\n46\n59",
+            "actual": "46\n46\n46\n46\n59",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "70\n70\n72\n70\n77",
+            "actual": "70\n70\n72\n70\n77",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 4 5\n20 30 28\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "78\n78\n78\n78\n78",
+            "actual": "78\n78\n78\n78\n78",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3 4 5\n7 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "67\n67\n67\n67\n67",
+            "actual": "67\n67\n67\n67\n67",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3 4 5\n20 9 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "44\n44\n44\n53\n53",
+            "actual": "44\n44\n44\n53\n53",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3 4 5\n10 60 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "100\n102\n102\n100\n100",
+            "actual": "100\n102\n102\n100\n100",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 5\n10 6 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "46\n48\n48\n46\n46",
+            "actual": "46\n48\n48\n46\n46",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 4 5\n10 18 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n51\n51",
+            "actual": "43\n43\n43\n51\n51",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3 4 5\n11 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "67\n69\n71\n75\n75",
+            "actual": "67\n69\n71\n75\n75",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "3 4 5\n10 30 15\n22 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n55\n55\n55",
+            "actual": "55\n55\n55\n55\n55",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n68\n68",
+            "actual": "55\n55\n55\n68\n68",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3 4 5\n10 30 15\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n58\n55\n58",
+            "actual": "55\n56\n58\n55\n58",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3 4 5\n10 45 15\n12 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n74\n74\n70\n74",
+            "actual": "70\n74\n74\n70\n74",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3 4 5\n10 31 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "71\n71\n73\n71\n78",
+            "actual": "71\n71\n73\n71\n78",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "44\n48\n48\n44\n44",
+            "actual": "44\n48\n48\n44\n44",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3 4 5\n10 18 15\n12 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n47\n47",
+            "actual": "43\n43\n43\n47\n47",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3 4 5\n10 30 3\n12 31 12 7\n0 1 3 3 4\n",
+            "expected": "43\n44\n46\n46\n55",
+            "actual": "43\n44\n46\n46\n55",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3 4 5\n10 30 15\n12 58 7 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n63\n63",
+            "actual": "55\n55\n55\n63\n63",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3 4 5\n10 30 20\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "60\n61\n63\n60\n63",
+            "actual": "60\n61\n63\n60\n63",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3 4 5\n10 45 15\n5 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n70\n70\n70\n74",
+            "actual": "70\n70\n70\n70\n74",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3 4 5\n10 37 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "77\n77\n79\n77\n84",
+            "actual": "77\n77\n79\n77\n84",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 2\n",
+            "expected": "44\n48\n48\n44\n48",
+            "actual": "44\n48\n48\n44\n48",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 5\n10 18 15\n22 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n43\n55",
+            "actual": "43\n43\n43\n43\n55",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided 'code' contains only comments and a high\u2011level plan, but no actual implementation: it does not read input, does not compute any result, and does not output anything. Therefore it cannot solve the problem.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The provided 'code' contains only comments and a high\u2011level plan, but no actual implementation: it does not read input, does not compute any result, and does not output anything. Therefore it cannot solve the problem.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided 'code' contains only comments and a high\u2011level plan, but no actual implementation: it does not read input, does not compute any result, and does not output anything. Therefore it cannot solve the problem.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 1280,
+          "output_tokens": 93,
+          "cost_usd": 0.00038975,
+          "latency_ms": 1794
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided solution is only a high-level description and does not contain any executable code. It lacks the implementation of the algorithm, input parsing, and output generation, so it cannot solve the problem.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The provided solution is only a high-level description and does not contain any executable code. It lacks the implementation of the algorithm, input parsing, and output generation, so it cannot solve the problem.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"any\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided solution is only a high-level description and does not contain any executable code. It lacks the implementation of the algorithm, input parsing, and output generation, so it cannot solve the problem.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 1280,
+          "output_tokens": 74,
+          "cost_usd": 0.0003755,
+          "latency_ms": 881
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom bisect import bisect_right\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2])\n    idx += 3\n    a = [int(input_data[idx+i]) for i in range(n)]\n    idx += n\n    b = [int(input_data[idx+i]) for i in range(m)]\n    idx += m\n    queries = [int(input_data[idx+i]) for i in range(q)]\n    idx += q\n\n    b.sort()\n    sum_a = sum(a)\n    a.sort()\n\n    # For a fixed k, given starting threshold T = a_i + k,\n    # greedily expand: find all b <= T, new threshold = max(b <= T) + k, repeat.\n    # The max reachable b from threshold T is computed by this greedy.\n    \n    # For each query k:\n    # 1. For each a_i (sorted), compute best_b(a_i, k) = max reachable b starting from a_i+k\n    # 2. gain_i = max(0, best_b(a_i, k) - a_i)\n    # 3. answer = sum_a + sum of gains\n    # But we want to maximize: for each a_i independently decide to swap or not.\n    # Actually we can swap multiple items, and each swap is independent in terms of what's available\n    # (the other character has unlimited copies effectively? No - re-reading...)\n    # Re-reading: Monocarp exchanges one of his items with one of the other character's items.\n    # The other character's items are finite. But Monocarp can get items back.\n    # Key insight: through chains of trades, Monocarp can effectively replace any subset of his items\n    # with items from b, as long as each replacement is \"reachable\" from the original item.\n    # And since he can trade back and forth, each a_i can independently reach its best b.\n    # But each b_j can only be held by one person at a time...\n    # Actually the problem says trades can happen many times, items can be traded back.\n    # The optimal strategy: for each a_i, find the best b reachable, then greedily assign\n    # the best available b values to items that benefit most.\n    # \n    # Simpler interpretation that matches the example: each a_i can independently be replaced\n    # by the best reachable b (if better), and we pick the best assignment.\n    # Given the example works with independent computation, let's go with that.\n\n    def best_reachable(threshold, k, b_sorted):\n        # Returns max b reachable from threshold, or -inf if none\n        cur = threshold\n        result = -1\n        while True:\n            pos = bisect_right(b_sorted, cur) - 1\n            if pos < 0:\n                break\n            if b_sorted[pos] <= result:\n                break\n            result = b_sorted[pos]\n            new_cur = result + k\n            if new_cur <= cur:\n                break\n            cur = new_cur\n        return result\n\n    results = []\n    for k in queries:\n        # For each a_i, compute gain\n        gains = []\n        for ai in a:\n            threshold = ai + k\n            br = best_reachable(threshold, k, b)\n            if br > ai:\n                gains.append(br - ai)\n            else:\n                gains.append(0)\n        \n        # Now we need to assign: we want to maximize total\n        # Each b_j can be used at most once (since it's a physical item)\n        # So we need to solve an assignment problem\n        # Greedy: sort gains descending, assign best available b to best gain\n        # Actually gains already encode which b is best for each a_i\n        # We need to be more careful - multiple a_i might want the same b_j\n        \n        # Simpler greedy that works: \n        # Sort a descending, sort b descending\n        # For each a_i (in desc order), find best reachable b not yet taken\n        # This is complex. Let's use a different approach:\n        # The optimal is: choose a subset S of a's to replace, and assign distinct b's to them\n        # to maximize sum. \n        # \n        # Observation: if a_i can reach b_j, and a_i <= a_i', then a_i' can also reach b_j (since threshold is larger).\n        # So reachability is monotone in a_i.\n        # \n        # Greedy: sort b desc. For each b_j (desc), find the a_i with smallest value that can reach b_j\n        # and where b_j > a_i (gain positive), assign if beneficial.\n        # \n        # Actually let's just do: compute for each a_i the max reachable b,\n        # then solve the assignment greedily.\n        \n        # Recompute with assignment in mind:\n        # For each a_i, max_reach[i] = best reachable b value\n        max_reach = []\n        for ai in a:\n            threshold = ai + k\n            br = best_reachable(threshold, k, b)\n            max_reach.append(br)\n        \n        # Now assignment: pair a_i with some b_j <= max_reach[i], b_j > a_i, each b_j used once\n        # To maximize sum of chosen b_j - a_i for chosen pairs (only if positive)\n        # \n        # Greedy approach: \n        # Sort items by max_reach. Use a multiset of available b values.\n        # For each a_i in increasing order of max_reach, we can take any b <= max_reach[i].\n        # We want to maximize gains, so assign greedily.\n        \n        # Actually the standard approach: \n        # Sort a. For each a_i, it can take any b_j where b_j is reachable from a_i.\n        # Since reachability is monotone, a_i with larger value can reach at least as much.\n        # \n        # Optimal greedy: sort both. Use pointer. \n        # For each a_i (sorted asc), available b's are those with b <= max_reach[i].\n        # We want to pick at most n b's (one per a_i) to maximize sum(selected_b) - sum(replaced_a).\n        # \n        # This is equivalent to: pick a matching to maximize sum of b_j for matched pairs\n        # where b_j <= max_reach[a_i] and b_j > a_i.\n        # \n        # Greedy: process a in increasing order of max_reach. \n        # Add all b <= max_reach[i] to a max-heap.\n        # For each a_i, if heap top > a_i, swap (take from heap, put a_i... but a_i goes to other character)\n        # Wait, once we take b_j, a_i goes away. We want to maximize total.\n        # \n        # Let's think differently: we want to select a subset of (a_i, b_j) pairs where\n        # b_j <= max_reach[a_i], each a_i and b_j used at most once, b_j > a_i,\n        # to maximize sum(b_j - a_i).\n        # \n        # Greedy: sort a ascending (so max_reach ascending too since monotone).\n        # Use a max-heap. For each a_i in order, add all b <= max_reach[a_i] to heap.\n        # If heap is non-empty and heap_max > a_i, take heap_max (gain = heap_max - a_i).\n        # But we might want to save heap_max for a later a_i with even higher a_i... \n        # No: if heap_max > a_i and heap_max > a_i' for a_i' > a_i, gain is larger for a_i \n        # (heap_max - a_i > heap_max - a_i'). So assign to smallest a_i first? No that maximizes gain per pair.\n        # But we want to maximize total gain. If heap_max > a_i, taking it is always good \n        # (positive gain), and we should take the largest available b for smallest a_i.\n        # \n        # Actually: we should take all positive-gain pairs possible.\n        # Sort a ascending. For each a_i, available b's grow (monotone max_reach).\n        # Greedy: for each a_i, if best available b > a_i, take it.\n        # This greedy is optimal because:\n        # - Taking a positive gain never hurts\n        # - Taking the max available b for current a_i: if we skip it for a later a_j > a_i,\n        #   the gain would be smaller (b - a_j < b - a_i). So better to take now.\n        \n        import heapq\n        heap = []  # max-heap (store negatives)\n        b_idx = 0\n        b_sorted_local = b  # already sorted\n        \n        # Sort a with indices to track max_reach\n        indexed = sorted(zip(max_reach, a))\n        \n        total_gain = 0\n        for mr, ai in indexed:\n            # Add all b <= mr to heap\n            while b_idx < m and b_sorted_local[b_idx] <= mr:\n                heapq.heappush(heap, -b_sorted_local[b_idx])\n                b_idx += 1\n            # Take best if positive gain\n            if heap and -heap[0] > ai:\n                best_b = -heapq.heappop(heap)\n                total_gain += best_b - ai\n        \n        results.append(sum_a + total_gain)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+          "input_tokens": 1504,
+          "output_tokens": 2465,
+          "cost_usd": 0.041487,
+          "latency_ms": 38315
+        }
+      ],
+      "final_code": "import sys\nfrom bisect import bisect_right\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n, m, q = int(input_data[idx]), int(input_data[idx+1]), int(input_data[idx+2])\n    idx += 3\n    a = [int(input_data[idx+i]) for i in range(n)]\n    idx += n\n    b = [int(input_data[idx+i]) for i in range(m)]\n    idx += m\n    queries = [int(input_data[idx+i]) for i in range(q)]\n    idx += q\n\n    b.sort()\n    sum_a = sum(a)\n    a.sort()\n\n    # For a fixed k, given starting threshold T = a_i + k,\n    # greedily expand: find all b <= T, new threshold = max(b <= T) + k, repeat.\n    # The max reachable b from threshold T is computed by this greedy.\n    \n    # For each query k:\n    # 1. For each a_i (sorted), compute best_b(a_i, k) = max reachable b starting from a_i+k\n    # 2. gain_i = max(0, best_b(a_i, k) - a_i)\n    # 3. answer = sum_a + sum of gains\n    # But we want to maximize: for each a_i independently decide to swap or not.\n    # Actually we can swap multiple items, and each swap is independent in terms of what's available\n    # (the other character has unlimited copies effectively? No - re-reading...)\n    # Re-reading: Monocarp exchanges one of his items with one of the other character's items.\n    # The other character's items are finite. But Monocarp can get items back.\n    # Key insight: through chains of trades, Monocarp can effectively replace any subset of his items\n    # with items from b, as long as each replacement is \"reachable\" from the original item.\n    # And since he can trade back and forth, each a_i can independently reach its best b.\n    # But each b_j can only be held by one person at a time...\n    # Actually the problem says trades can happen many times, items can be traded back.\n    # The optimal strategy: for each a_i, find the best b reachable, then greedily assign\n    # the best available b values to items that benefit most.\n    # \n    # Simpler interpretation that matches the example: each a_i can independently be replaced\n    # by the best reachable b (if better), and we pick the best assignment.\n    # Given the example works with independent computation, let's go with that.\n\n    def best_reachable(threshold, k, b_sorted):\n        # Returns max b reachable from threshold, or -inf if none\n        cur = threshold\n        result = -1\n        while True:\n            pos = bisect_right(b_sorted, cur) - 1\n            if pos < 0:\n                break\n            if b_sorted[pos] <= result:\n                break\n            result = b_sorted[pos]\n            new_cur = result + k\n            if new_cur <= cur:\n                break\n            cur = new_cur\n        return result\n\n    results = []\n    for k in queries:\n        # For each a_i, compute gain\n        gains = []\n        for ai in a:\n            threshold = ai + k\n            br = best_reachable(threshold, k, b)\n            if br > ai:\n                gains.append(br - ai)\n            else:\n                gains.append(0)\n        \n        # Now we need to assign: we want to maximize total\n        # Each b_j can be used at most once (since it's a physical item)\n        # So we need to solve an assignment problem\n        # Greedy: sort gains descending, assign best available b to best gain\n        # Actually gains already encode which b is best for each a_i\n        # We need to be more careful - multiple a_i might want the same b_j\n        \n        # Simpler greedy that works: \n        # Sort a descending, sort b descending\n        # For each a_i (in desc order), find best reachable b not yet taken\n        # This is complex. Let's use a different approach:\n        # The optimal is: choose a subset S of a's to replace, and assign distinct b's to them\n        # to maximize sum. \n        # \n        # Observation: if a_i can reach b_j, and a_i <= a_i', then a_i' can also reach b_j (since threshold is larger).\n        # So reachability is monotone in a_i.\n        # \n        # Greedy: sort b desc. For each b_j (desc), find the a_i with smallest value that can reach b_j\n        # and where b_j > a_i (gain positive), assign if beneficial.\n        # \n        # Actually let's just do: compute for each a_i the max reachable b,\n        # then solve the assignment greedily.\n        \n        # Recompute with assignment in mind:\n        # For each a_i, max_reach[i] = best reachable b value\n        max_reach = []\n        for ai in a:\n            threshold = ai + k\n            br = best_reachable(threshold, k, b)\n            max_reach.append(br)\n        \n        # Now assignment: pair a_i with some b_j <= max_reach[i], b_j > a_i, each b_j used once\n        # To maximize sum of chosen b_j - a_i for chosen pairs (only if positive)\n        # \n        # Greedy approach: \n        # Sort items by max_reach. Use a multiset of available b values.\n        # For each a_i in increasing order of max_reach, we can take any b <= max_reach[i].\n        # We want to maximize gains, so assign greedily.\n        \n        # Actually the standard approach: \n        # Sort a. For each a_i, it can take any b_j where b_j is reachable from a_i.\n        # Since reachability is monotone, a_i with larger value can reach at least as much.\n        # \n        # Optimal greedy: sort both. Use pointer. \n        # For each a_i (sorted asc), available b's are those with b <= max_reach[i].\n        # We want to pick at most n b's (one per a_i) to maximize sum(selected_b) - sum(replaced_a).\n        # \n        # This is equivalent to: pick a matching to maximize sum of b_j for matched pairs\n        # where b_j <= max_reach[a_i] and b_j > a_i.\n        # \n        # Greedy: process a in increasing order of max_reach. \n        # Add all b <= max_reach[i] to a max-heap.\n        # For each a_i, if heap top > a_i, swap (take from heap, put a_i... but a_i goes to other character)\n        # Wait, once we take b_j, a_i goes away. We want to maximize total.\n        # \n        # Let's think differently: we want to select a subset of (a_i, b_j) pairs where\n        # b_j <= max_reach[a_i], each a_i and b_j used at most once, b_j > a_i,\n        # to maximize sum(b_j - a_i).\n        # \n        # Greedy: sort a ascending (so max_reach ascending too since monotone).\n        # Use a max-heap. For each a_i in order, add all b <= max_reach[a_i] to heap.\n        # If heap is non-empty and heap_max > a_i, take heap_max (gain = heap_max - a_i).\n        # But we might want to save heap_max for a later a_i with even higher a_i... \n        # No: if heap_max > a_i and heap_max > a_i' for a_i' > a_i, gain is larger for a_i \n        # (heap_max - a_i > heap_max - a_i'). So assign to smallest a_i first? No that maximizes gain per pair.\n        # But we want to maximize total gain. If heap_max > a_i, taking it is always good \n        # (positive gain), and we should take the largest available b for smallest a_i.\n        # \n        # Actually: we should take all positive-gain pairs possible.\n        # Sort a ascending. For each a_i, available b's grow (monotone max_reach).\n        # Greedy: for each a_i, if best available b > a_i, take it.\n        # This greedy is optimal because:\n        # - Taking a positive gain never hurts\n        # - Taking the max available b for current a_i: if we skip it for a later a_j > a_i,\n        #   the gain would be smaller (b - a_j < b - a_i). So better to take now.\n        \n        import heapq\n        heap = []  # max-heap (store negatives)\n        b_idx = 0\n        b_sorted_local = b  # already sorted\n        \n        # Sort a with indices to track max_reach\n        indexed = sorted(zip(max_reach, a))\n        \n        total_gain = 0\n        for mr, ai in indexed:\n            # Add all b <= mr to heap\n            while b_idx < m and b_sorted_local[b_idx] <= mr:\n                heapq.heappush(heap, -b_sorted_local[b_idx])\n                b_idx += 1\n            # Take best if positive gain\n            if heap and -heap[0] > ai:\n                best_b = -heapq.heappop(heap)\n                total_gain += best_b - ai\n        \n        results.append(sum_a + total_gain)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 35,
+        "failed": 15,
+        "errors": 0,
+        "pass_rate": 0.7,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n64\n64",
+            "actual": "55\n56\n60\n63\n64",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1 1 1\n1\n1\n1\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "55\n56\n60\n60\n60",
+            "actual": "55\n56\n60\n60\n60",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n60",
+            "actual": "55\n56\n60\n56\n60",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 4 5\n10 30 15\n12 31 27 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n58\n56\n58",
+            "actual": "55\n56\n58\n56\n58",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 4 5\n10 30 15\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n60\n56\n63",
+            "actual": "55\n56\n60\n56\n60",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 4 5\n10 30 15\n12 58 14 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n63\n63",
+            "actual": "55\n55\n59\n62\n63",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 1 2 1 4\n",
+            "expected": "82\n82\n86\n82\n86",
+            "actual": "82\n82\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 5\n10 30 15\n12 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n59\n56\n59",
+            "actual": "55\n56\n59\n56\n59",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 4 5\n10 30 30\n12 31 17 7\n0 1 2 1 4\n",
+            "expected": "70\n71\n73\n71\n73",
+            "actual": "70\n71\n73\n71\n73",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "3 4 5\n10 30 15\n12 22 14 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n59\n59\n59",
+            "actual": "55\n55\n59\n59\n59",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 5\n10 57 15\n12 31 14 7\n0 2 2 1 4\n",
+            "expected": "82\n86\n86\n82\n86",
+            "actual": "82\n86\n86\n82\n86",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 5\n10 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "55\n59\n59\n63\n63",
+            "actual": "55\n59\n59\n62\n63",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 4\n",
+            "expected": "70\n70\n72\n70\n72",
+            "actual": "70\n70\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 5\n20 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "65\n65\n65\n68\n68",
+            "actual": "65\n65\n65\n68\n68",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "70\n72\n72\n70\n72",
+            "actual": "70\n72\n72\n70\n72",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "70\n72\n72\n70\n70",
+            "actual": "70\n72\n72\n70\n70",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "55\n56\n56\n64\n64",
+            "actual": "55\n56\n56\n63\n64",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3 4 5\n10 30 3\n12 31 14 7\n0 1 2 3 4\n",
+            "expected": "43\n44\n48\n48\n57",
+            "actual": "43\n44\n48\n48\n52",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3 4 5\n10 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "66\n67\n71\n75\n75",
+            "actual": "66\n67\n71\n71\n71",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 0 1 4\n",
+            "expected": "55\n56\n55\n56\n60",
+            "actual": "55\n56\n55\n56\n60",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3 4 5\n10 30 15\n12 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n57\n55\n57",
+            "actual": "55\n55\n57\n55\n57",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n68\n68",
+            "actual": "55\n55\n57\n62\n62",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3 4 5\n10 30 15\n12 31 14 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n60\n55\n60",
+            "actual": "55\n56\n60\n55\n60",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3 4 5\n10 30 15\n15 31 13 7\n0 1 2 1 4\n",
+            "expected": "55\n56\n56\n56\n61",
+            "actual": "55\n56\n56\n56\n61",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 4 5\n8 30 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "53\n53\n53\n56\n63",
+            "actual": "53\n53\n53\n56\n63",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3 4 5\n10 30 15\n12 22 28 4\n0 1 2 3 4\n",
+            "expected": "55\n55\n57\n57\n57",
+            "actual": "55\n55\n57\n57\n57",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3 4 5\n1 30 15\n12 45 14 7\n0 1 2 4 7\n",
+            "expected": "46\n46\n46\n46\n59",
+            "actual": "46\n46\n46\n46\n59",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "70\n70\n72\n70\n77",
+            "actual": "70\n70\n72\n70\n77",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 4 5\n20 30 28\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "78\n78\n78\n78\n78",
+            "actual": "78\n78\n78\n78\n78",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3 4 5\n7 30 30\n12 57 17 6\n0 2 2 1 4\n",
+            "expected": "67\n67\n67\n67\n67",
+            "actual": "67\n67\n67\n67\n67",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3 4 5\n20 9 15\n12 76 14 18\n0 2 2 3 4\n",
+            "expected": "44\n44\n44\n53\n53",
+            "actual": "44\n44\n44\n52\n53",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3 4 5\n10 60 30\n12 57 17 6\n0 2 2 1 1\n",
+            "expected": "100\n102\n102\n100\n100",
+            "actual": "100\n102\n102\n100\n100",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 5\n10 6 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "46\n48\n48\n46\n46",
+            "actual": "46\n48\n48\n46\n46",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 4 5\n10 18 15\n12 31 14 18\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n51\n51",
+            "actual": "43\n43\n43\n50\n51",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "3 4 5\n11 30 26\n12 31 14 7\n0 1 2 4 4\n",
+            "expected": "67\n69\n71\n75\n75",
+            "actual": "67\n69\n71\n71\n71",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3 4 5\n10 30 15\n22 56 27 7\n0 1 2 1 4\n",
+            "expected": "55\n55\n55\n55\n55",
+            "actual": "55\n55\n55\n55\n55",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n68\n68",
+            "actual": "55\n55\n55\n62\n62",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "3 4 5\n10 30 15\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "55\n56\n58\n55\n58",
+            "actual": "55\n56\n58\n55\n58",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3 4 5\n10 45 15\n12 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n74\n74\n70\n74",
+            "actual": "70\n74\n74\n70\n74",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3 4 5\n10 31 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "71\n71\n73\n71\n78",
+            "actual": "71\n71\n73\n71\n78",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 1\n",
+            "expected": "44\n48\n48\n44\n44",
+            "actual": "44\n48\n48\n44\n44",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3 4 5\n10 18 15\n12 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n47\n47",
+            "actual": "43\n43\n43\n47\n47",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3 4 5\n10 30 3\n12 31 12 7\n0 1 3 3 4\n",
+            "expected": "43\n44\n46\n46\n55",
+            "actual": "43\n44\n46\n46\n50",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "3 4 5\n10 30 15\n12 58 7 18\n0 1 1 3 4\n",
+            "expected": "55\n55\n55\n63\n63",
+            "actual": "55\n55\n55\n60\n60",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "3 4 5\n10 30 20\n12 31 20 4\n0 1 2 0 4\n",
+            "expected": "60\n61\n63\n60\n63",
+            "actual": "60\n61\n63\n60\n63",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3 4 5\n10 45 15\n5 31 14 13\n0 2 2 1 4\n",
+            "expected": "70\n70\n70\n70\n74",
+            "actual": "70\n70\n70\n70\n74",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3 4 5\n10 37 30\n12 57 17 6\n0 1 2 1 6\n",
+            "expected": "77\n77\n79\n77\n84",
+            "actual": "77\n77\n79\n77\n84",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 2\n",
+            "expected": "44\n48\n48\n44\n48",
+            "actual": "44\n48\n48\n44\n48",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 5\n10 18 15\n22 31 14 0\n0 1 1 3 4\n",
+            "expected": "43\n43\n43\n43\n55",
+            "actual": "43\n43\n43\n43\n51",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 2 3 4\n",
+        "expected": "55\n56\n60\n64\n64",
+        "actual": "55\n56\n60\n64\n64",
+        "stderr": "",
+        "runtime_ms": 75,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1 1 1\n1\n1\n1\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 3 4\n",
+        "expected": "55\n56\n60\n60\n60",
+        "actual": "55\n56\n60\n60\n60",
+        "stderr": "",
+        "runtime_ms": 75,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 2 1 4\n",
+        "expected": "55\n56\n60\n56\n60",
+        "actual": "55\n56\n60\n56\n60",
+        "stderr": "",
+        "runtime_ms": 73,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "3 4 5\n10 30 15\n12 31 27 7\n0 1 2 1 4\n",
+        "expected": "55\n56\n58\n56\n58",
+        "actual": "55\n56\n58\n56\n58",
+        "stderr": "",
+        "runtime_ms": 74,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "3 4 5\n10 30 15\n12 31 17 7\n0 1 2 1 4\n",
+        "expected": "55\n56\n60\n56\n63",
+        "actual": "55\n56\n60\n56\n63",
+        "stderr": "",
+        "runtime_ms": 73,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "3 4 5\n10 30 15\n12 58 14 18\n0 1 2 3 4\n",
+        "expected": "55\n55\n59\n63\n63",
+        "actual": "55\n55\n59\n63\n63",
+        "stderr": "",
+        "runtime_ms": 81,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "3 4 5\n10 57 15\n12 31 14 7\n0 1 2 1 4\n",
+        "expected": "82\n82\n86\n82\n86",
+        "actual": "82\n82\n86\n82\n86",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "3 4 5\n10 30 15\n12 31 13 7\n0 1 2 1 4\n",
+        "expected": "55\n56\n59\n56\n59",
+        "actual": "55\n56\n59\n56\n59",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "3 4 5\n10 30 30\n12 31 17 7\n0 1 2 1 4\n",
+        "expected": "70\n71\n73\n71\n73",
+        "actual": "70\n71\n73\n71\n73",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "3 4 5\n10 30 15\n12 22 14 4\n0 1 2 3 4\n",
+        "expected": "55\n55\n59\n59\n59",
+        "actual": "55\n55\n59\n59\n59",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "3 4 5\n10 57 15\n12 31 14 7\n0 2 2 1 4\n",
+        "expected": "82\n86\n86\n82\n86",
+        "actual": "82\n86\n86\n82\n86",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "3 4 5\n10 30 15\n12 76 14 18\n0 2 2 3 4\n",
+        "expected": "55\n59\n59\n63\n63",
+        "actual": "55\n59\n59\n63\n63",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 4\n",
+        "expected": "70\n70\n72\n70\n72",
+        "actual": "70\n70\n72\n70\n72",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "3 4 5\n20 30 15\n12 76 14 18\n0 2 2 3 4\n",
+        "expected": "65\n65\n65\n68\n68",
+        "actual": "65\n65\n65\n68\n68",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 4\n",
+        "expected": "70\n72\n72\n70\n72",
+        "actual": "70\n72\n72\n70\n72",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "3 4 5\n10 30 30\n12 57 17 6\n0 2 2 1 1\n",
+        "expected": "70\n72\n72\n70\n70",
+        "actual": "70\n72\n72\n70\n70",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "3 4 5\n10 30 15\n12 31 14 18\n0 1 1 3 4\n",
+        "expected": "55\n56\n56\n64\n64",
+        "actual": "55\n56\n56\n64\n64",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "3 4 5\n10 30 3\n12 31 14 7\n0 1 2 3 4\n",
+        "expected": "43\n44\n48\n48\n57",
+        "actual": "43\n44\n48\n48\n57",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3 4 5\n10 30 26\n12 31 14 7\n0 1 2 4 4\n",
+        "expected": "66\n67\n71\n75\n75",
+        "actual": "66\n67\n71\n75\n75",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "3 4 5\n10 30 15\n12 31 14 7\n0 1 0 1 4\n",
+        "expected": "55\n56\n55\n56\n60",
+        "actual": "55\n56\n55\n56\n60",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "3 4 5\n10 30 15\n12 56 27 7\n0 1 2 1 4\n",
+        "expected": "55\n55\n57\n55\n57",
+        "actual": "55\n55\n57\n55\n57",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 2 3 4\n",
+        "expected": "55\n55\n57\n68\n68",
+        "actual": "55\n55\n57\n68\n68",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "3 4 5\n10 30 15\n12 31 14 4\n0 1 2 0 4\n",
+        "expected": "55\n56\n60\n55\n60",
+        "actual": "55\n56\n60\n55\n60",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "3 4 5\n10 30 15\n15 31 13 7\n0 1 2 1 4\n",
+        "expected": "55\n56\n56\n56\n61",
+        "actual": "55\n56\n56\n56\n61",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "3 4 5\n8 30 15\n12 76 14 18\n0 2 2 3 4\n",
+        "expected": "53\n53\n53\n56\n63",
+        "actual": "53\n53\n53\n56\n63",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "3 4 5\n10 30 15\n12 22 28 4\n0 1 2 3 4\n",
+        "expected": "55\n55\n57\n57\n57",
+        "actual": "55\n55\n57\n57\n57",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "3 4 5\n1 30 15\n12 45 14 7\n0 1 2 4 7\n",
+        "expected": "46\n46\n46\n46\n59",
+        "actual": "46\n46\n46\n46\n59",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "3 4 5\n10 30 30\n12 57 17 6\n0 1 2 1 6\n",
+        "expected": "70\n70\n72\n70\n77",
+        "actual": "70\n70\n72\n70\n77",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "3 4 5\n20 30 28\n12 76 14 18\n0 2 2 3 4\n",
+        "expected": "78\n78\n78\n78\n78",
+        "actual": "78\n78\n78\n78\n78",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "3 4 5\n7 30 30\n12 57 17 6\n0 2 2 1 4\n",
+        "expected": "67\n67\n67\n67\n67",
+        "actual": "67\n67\n67\n67\n67",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "3 4 5\n20 9 15\n12 76 14 18\n0 2 2 3 4\n",
+        "expected": "44\n44\n44\n53\n53",
+        "actual": "44\n44\n44\n53\n53",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3 4 5\n10 60 30\n12 57 17 6\n0 2 2 1 1\n",
+        "expected": "100\n102\n102\n100\n100",
+        "actual": "100\n102\n102\n100\n100",
+        "stderr": "",
+        "runtime_ms": 82,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "3 4 5\n10 6 30\n12 57 26 6\n0 2 2 1 1\n",
+        "expected": "46\n48\n48\n46\n46",
+        "actual": "46\n48\n48\n46\n46",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3 4 5\n10 18 15\n12 31 14 18\n0 1 1 3 4\n",
+        "expected": "43\n43\n43\n51\n51",
+        "actual": "43\n43\n43\n51\n51",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3 4 5\n11 30 26\n12 31 14 7\n0 1 2 4 4\n",
+        "expected": "67\n69\n71\n75\n75",
+        "actual": "67\n69\n71\n75\n75",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "3 4 5\n10 30 15\n22 56 27 7\n0 1 2 1 4\n",
+        "expected": "55\n55\n55\n55\n55",
+        "actual": "55\n55\n55\n55\n55",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "3 4 5\n10 30 15\n12 58 20 18\n0 1 1 3 4\n",
+        "expected": "55\n55\n55\n68\n68",
+        "actual": "55\n55\n55\n68\n68",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "3 4 5\n10 30 15\n12 31 20 4\n0 1 2 0 4\n",
+        "expected": "55\n56\n58\n55\n58",
+        "actual": "55\n56\n58\n55\n58",
+        "stderr": "",
+        "runtime_ms": 78,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "3 4 5\n10 45 15\n12 31 14 13\n0 2 2 1 4\n",
+        "expected": "70\n74\n74\n70\n74",
+        "actual": "70\n74\n74\n70\n74",
+        "stderr": "",
+        "runtime_ms": 73,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "3 4 5\n10 31 30\n12 57 17 6\n0 1 2 1 6\n",
+        "expected": "71\n71\n73\n71\n78",
+        "actual": "71\n71\n73\n71\n78",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 1\n",
+        "expected": "44\n48\n48\n44\n44",
+        "actual": "44\n48\n48\n44\n44",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "3 4 5\n10 18 15\n12 31 14 0\n0 1 1 3 4\n",
+        "expected": "43\n43\n43\n47\n47",
+        "actual": "43\n43\n43\n47\n47",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "3 4 5\n10 30 3\n12 31 12 7\n0 1 3 3 4\n",
+        "expected": "43\n44\n46\n46\n55",
+        "actual": "43\n44\n46\n46\n55",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "3 4 5\n10 30 15\n12 58 7 18\n0 1 1 3 4\n",
+        "expected": "55\n55\n55\n63\n63",
+        "actual": "55\n55\n55\n63\n63",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "3 4 5\n10 30 20\n12 31 20 4\n0 1 2 0 4\n",
+        "expected": "60\n61\n63\n60\n63",
+        "actual": "60\n61\n63\n60\n63",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "3 4 5\n10 45 15\n5 31 14 13\n0 2 2 1 4\n",
+        "expected": "70\n70\n70\n70\n74",
+        "actual": "70\n70\n70\n70\n74",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "3 4 5\n10 37 30\n12 57 17 6\n0 1 2 1 6\n",
+        "expected": "77\n77\n79\n77\n84",
+        "actual": "77\n77\n79\n77\n84",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "3 4 5\n10 4 30\n12 57 26 6\n0 2 2 1 2\n",
+        "expected": "44\n48\n48\n44\n48",
+        "actual": "44\n48\n48\n44\n48",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "3 4 5\n10 18 15\n22 31 14 0\n0 1 1 3 4\n",
+        "expected": "43\n43\n43\n43\n55",
+        "actual": "43\n43\n43\n43\n55",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.38499749999999994,
+  "total_latency_ms": 363434,
+  "iterations_used": null,
+  "early_stopped": null
+}

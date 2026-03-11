@@ -1,0 +1,1108 @@
+{
+  "study": "C",
+  "condition": "C10",
+  "task_id": "cc_037",
+  "replica": 0,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Since each extra query can be any (a,b) pair, we can choose paths to add any vector in the path space. The minimum extra queries = the number of \"free\" dimensions we need to cover = essentially 1 if the current sum is non-zero in the quotient, but could be more...\n\nActually the answer for extra queries: the current parity vector `v` in GF(2)^(n-1) (tree edges). We can add cycles freely. The residual after projecting out the cycle space has some rank `r`. We need `r` extra queries if `r > 0`, but actually each extra query adds one path vector, so minimum extra = `r`... but wait, we can choose the extra queries optimally, so minimum = `ceil(r/1)` = `r`? No, each query adds one vector, so minimum = `r`.\n\nHmm, but actually the answer could be 0 or more. Let me reconsider with the examples.\n\nGiven the constraint `nq \u2264 3\u00b710^5`, n and q are small together.\n\nLet me implement:\n1. Build spanning tree using BFS/DFS.\n2. For each query, find tree path using LCA.\n3. Compute parity of each tree edge.\n4. Use Gaussian elimination over GF(2) with cycle vectors to check if parity vector is achievable.\n5. If yes, find actual paths (tree path + some cycles to fix non-tree edges... wait, we need all edges even, including non-tree edges).\n\nNon-tree edges: each non-tree edge is used exactly once per fundamental cycle that includes it. We can choose to include/exclude each fundamental cycle. A non-tree edge (u,v) appears in exactly one fundamental cycle. Its parity = (number of queries whose tree path uses this cycle) mod 2. To make it even, we need to include/exclude the cycle an appropriate number of times.\n\nSo the problem is: assign 0/1 to each fundamental cycle to make all edge parities even.\n\nAfter reading more carefully and given complexity, let me code this up.\n\nGiven the complexity of full implementation, here's my solution:\n\n<solution>\nimport sys\nfrom collections import defaultdict, deque\ninput = sys.stdin.readline\n\ndef solve():\n    import sys\n    from sys import stdin\n    data = stdin.read().split()\n    idx = 0\n    def rd():\n        nonlocal idx\n        v = data[idx]; idx+=1; return v\n    def ri():\n        return int(rd())\n    \n    n,m = ri(),ri()\n    adj = [[] for _ in range(n+1)]\n    edges = []\n    for i in range(m):\n        x,y = ri(),ri()\n        adj[x].append((y,i))\n        adj[y].append((x,i))\n        edges.append((x,y))\n    \n    q = ri()\n    queries = []\n    for _ in range(q):\n        a,b = ri(),ri()\n        queries.append((a,b))\n    \n    # Build spanning tree via BFS from node 1\n    parent = [0]*(n+1)\n    parent_edge = [-1]*(n+1)\n    depth = [0]*(n+1)\n    visited = [False]*(n+1)\n    visited[1] = True\n    queue = deque([1])\n    tree_edges = set()\n    non_tree_edges = []\n    non_tree_edge_idx = []\n    \n    while queue:\n        u = queue.popleft()\n        for v,ei in adj[u]:\n            if not visited[v]:\n                visited[v] = True\n                parent[v] = u\n                parent_edge[v] = ei\n                depth[v] = depth[u]+1\n                tree_edges.add(ei)\n                queue.append(v)\n    \n    for i,(x,y) in enumerate(edges):\n        if i not in tree_edges:\n            non_tree_edges.append((x,y))\n            non_tree_edge_idx.append(i)\n    \n    # For LCA\n    LOG = 19\n    up = [[0]*(n+1) for _ in range(LOG)]\n    up[0] = parent[:]\n    up[0][1] = 1\n    for k in range(1,LOG):\n        for v in range(1,n+1):\n            up[k][v] = up[k-1][up[k-1][v]]\n    \n    def lca(u,v):\n        if depth[u]<depth[v]: u,v=v,u\n        diff = depth[u]-depth[v]\n        for k in range(LOG):\n            if (diff>>k)&1:\n                u=up[k][u]\n        if u==v: return u\n        for k in range(LOG-1,-1,-1):\n            if up[k][u]!=up[k][v]:\n                u=up[k][u]; v=up[k][v]\n        return up[0][u]\n    \n    def get_path_to_root(u, stop):\n        path = []\n        while u != stop:\n            path.append(u)\n            u = parent[u]\n        path.append(stop)\n        return path\n    \n    def get_tree_path(u,v):\n        l = lca(u,v)\n        pu = get_path_to_root(u,l)\n        pv = get_path_to_root(v,l)\n        return pu + pv[-2::-1]\n    \n    # Map tree edge index to position (0..n-2)\n    tree_edge_list = sorted(tree_edges)\n    te_pos = {ei:i for i,ei in enumerate(tree_edge_list)}\n    num_te = len(tree_edge_list)\n    \n    # For each tree edge, which node is the child?\n    te_child = {}\n    for ei in tree_edges:\n        x,y = edges[ei]\n        if parent[x]==y:\n            te_child[ei] = x\n        else:\n            te_child[ei] = y\n    \n    # parity[te_pos[ei]] = parity of tree edge ei\n    # We'll use XOR on subtree counts\n    # For a path u->v via lca l, tree edges used = edges on path\n    # We can use difference on subtree: for each node, count[node] = number of paths passing through edge (node, parent[node])\n    # Using +1 at u, +1 at v, -2 at lca\n    \n    # parity vector for queries\n    # parity[v] = (sum of contributions at v) mod 2\n    # contribution: +1 at u, +1 at v, -2 at lca => mod2: +1 at u, +1 at v, +0 at lca\n    \n    cnt = [0]*(n+1)\n    for a,b in queries:\n        l = lca(a,b)\n        cnt[a] ^= 1\n        cnt[b] ^= 1\n        cnt[l] ^= 0  # -2 mod 2 = 0\n        # Actually need to XOR lca twice if we want +1+1-2=0 at lca\n        # Let me redo: parity of edge (v, parent[v]) = sum over queries of [v is on path between a and b]\n        # Using Euler tour difference: delta[a]+=1, delta[b]+=1, delta[lca]-=2\n        # But mod 2: delta[lca] += 0, so parity[v] = XOR of (delta values in subtree of v)\n    \n    # Redo with proper mod2 accumulation\n    cnt2 = [0]*(n+1)\n    for a,b in queries:\n        l = lca(a,b)\n        cnt2[a] ^= 1\n        cnt2[b] ^= 1\n        # lca contribution is -2 which is 0 mod 2, so no change at lca\n    \n    # Now do DFS to accumulate subtree XOR\n    # Process in reverse BFS order\n    bfs_order = []\n    vis2 = [False]*(n+1)\n    vis2[1]=True\n    dq = deque([1])\n    while dq:\n        u=dq.popleft()\n        bfs_order.append(u)\n        for v,ei in adj[u]:\n            if not vis2[v] and ei in tree_edges:\n                vis2[v]=True\n                dq.append(v)\n    \n    for u in reversed(bfs_order):\n        if u != 1:\n            cnt2[parent[u]] ^= cnt2[u]\n    \n    # cnt2[v] for v!=1 = parity of edge (v, parent[v])\n    # This is the required parity from queries; we need it to be 0 for all tree edges\n    # We can flip using fundamental cycles\n    \n    # Each non-tree edge (x,y) forms a cycle: path x->y in tree + edge (x,y)\n    # Using this cycle flips all tree edges on path x->y in tree\n    # We want to find subset of cycles to XOR with cnt2 to get all zeros\n    \n    # Build matrix: rows = tree edges (n-1), cols = non-tree edges + identity\n    # Actually: we have parity vector p (length n-1), and cycle vectors c_i\n    # We want p XOR (XOR of selected c_i) = 0\n    # i.e., p = XOR of selected c_i\n    # Gaussian elimination\n    \n    # Represent each cycle as a set of tree edge positions\n    # cycles[i] = bitmask or list of tree edge positions affected by non-tree edge i\n    \n    # For non-tree edge (x,y), the cycle uses tree edges on path x->lca(x,y) and y->lca(x,y)\n    # We need parity of each tree edge in this cycle\n    \n    # Let's compute cycle vectors using the same subtree trick\n    # cycle_vec[v] for non-tree edge i = parity of tree edge (v,parent[v]) in cycle i\n    \n    # For non-tree edge (x,y): same as a \"query\" x->y\n    # cycle_parity[v] = 1 if edge (v,parent[v]) is in cycle\n    \n    num_nte = len(non_tree_edges)\n    \n    # We'll do Gaussian elimination over GF(2)\n    # Variables: which cycles to use (num_nte variables)\n    # Equations: for each tree edge, parity must become 0\n    \n    # But n-1 can be up to 3*10^5, and num_nte up to 3*10^5\n    # Standard Gaussian elimination would be O(n * num_nte) which could be 9*10^10 - too slow\n    \n    # Better approach: think in terms of the cycle space\n    # The parity vector p must be in the cycle space\n    # The cycle space is spanned by fundamental cycles\n    # A vector is in the cycle space iff it satisfies the \"cut condition\" for every cut\n    # Actually in GF(2), the cycle space = orthogonal complement of the cut space\n    # A vector is in cycle space iff for every vertex subset S, the number of edges in the cut with parity 1 is even\n    # Equivalently, for every vertex v, the sum of parities of edges incident to v is 0 mod 2\n    \n    # Wait, that's for general graphs. For tree edges with parity p[e]:\n    # p is in cycle space of original graph iff ... \n    # Actually the cycle space of the original graph restricted to tree edges:\n    # A tree edge vector is in the cycle space iff it can be expressed as XOR of fundamental cycles\n    # The fundamental cycles span the cycle space\n    # The orthogonal complement of cycle space = cut space\n    # For tree, the cut space is spanned by cuts at each vertex (star cuts)\n    # A vector p on tree edges is in cycle space iff p is orthogonal to all cuts\n    # The cuts of the tree: for each node v, the cut = edges incident to v in tree\n    # p orthogonal to cut at v means XOR of p[e] for e incident to v = 0\n    \n    # But wait, we're working with the original graph's cycle space, not just tree edges.\n    # The cycle space of the original graph: dimension = m - n + 1\n    # Fundamental cycles = one per non-tree edge\n    # Each fundamental cycle has exactly one non-tree edge and some tree edges\n    # A vector on ALL edges is in cycle space iff for every vertex, sum of incident edge values = 0 mod 2\n    # (This is the condition that it's a valid \"flow\" mod 2, i.e., Eulerian)\n    \n    # Our parity vector is on all edges (tree + non-tree)\n    # Non-tree edge parities: each non-tree edge appears in exactly one fundamental cycle\n    # We can freely set each non-tree edge parity by choosing to include/exclude that cycle\n    # But including a cycle also flips tree edges\n    \n    # So the question is: can we choose non-tree edge parities (0 or 1 for each) and cycle inclusions such that:\n    # - Total parity of each tree edge = 0\n    # - Total parity of each non-tree edge = 0\n    # This means: the query parity vector (on all edges) must be in the cycle space\n    # i.e., for every vertex v, sum of incident edge parities = 0 mod 2\n    \n    # Compute parity of each edge\n    # For tree edges: cnt2[child]\n    # For non-tree edges: need to compute similarly\n    \n    # For non-tree edge (x,y): parity = number of queries whose path includes this edge\n    # A query path a->b includes non-tree edge (x,y) only if we route through it\n    # But wait - we CHOOSE the paths! We're not forced to use tree paths.\n    \n    # Oh wait, I've been misunderstanding the problem. We choose the paths freely (any simple path), not just tree paths!\n    \n    # So the question is purely: can we assign simple paths to each query such that all edge parities are",
+      "input_tokens": 1009,
+      "output_tokens": 4096,
+      "cost_usd": 0.064467,
+      "latency_ms": 64983
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 8,
+          "bugs": [
+            {
+              "description": "The solution never calls the solve() function nor prints any output, so it produces no answer for any input.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            },
+            {
+              "description": "The algorithm assumes that each query must follow the tree path between its endpoints, but the problem allows any simple path. Restricting to tree paths can miss feasible solutions and yields incorrect results.",
+              "line": 84,
+              "severity": "critical",
+              "triggering_input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5"
+            },
+            {
+              "description": "The parity accumulation for tree edges is incorrect. The code attempts to use XOR differences but mishandles the LCA contribution and the subtree accumulation, leading to wrong edge parity values.",
+              "line": 98,
+              "severity": "major",
+              "triggering_input": "2 1\n1 2\n1\n1 2"
+            },
+            {
+              "description": "The code never computes or checks the parity of non\u2011tree edges, nor does it attempt to construct the required paths for each query. The output format is never produced.",
+              "line": 115,
+              "severity": "critical",
+              "triggering_input": "any"
+            },
+            {
+              "description": "The Gaussian elimination approach is only sketched and never implemented; the code contains comments about it but no actual elimination, so it cannot determine feasibility or the minimal number of extra queries.",
+              "line": 130,
+              "severity": "critical",
+              "triggering_input": "any"
+            },
+            {
+              "description": "The up table for LCA is built incorrectly: up[0] is assigned parent[:] which includes a dummy 0 index, and up[0][1] is later set to 1, but other entries may be uninitialized for non\u2011tree neighbors, causing incorrect LCA results.",
+              "line": 71,
+              "severity": "major",
+              "triggering_input": "3 3\n1 2\n2 3\n1 3\n1\n1 3"
+            },
+            {
+              "description": "The BFS order for subtree accumulation only traverses tree edges, but the visited flag vis2 is never reset, and the condition 'ei in tree_edges' inside the adjacency loop is inefficient (set lookup) and may skip valid tree edges due to mismatched edge indices.",
+              "line": 108,
+              "severity": "minor",
+              "triggering_input": "any"
+            },
+            {
+              "description": "The code uses many undefined or unused variables (e.g., cnt, cnt2, cycles) and contains dead code paths, indicating incomplete implementation.",
+              "line": 90,
+              "severity": "minor",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The solution never calls the solve() function nor prints any output, so it produces no answer for any input.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any\"\n    },\n    {\n      \"description\": \"The algorithm assumes that each query must follow the tree path between its endpoints, but the problem allows any simple path. Restricting to tree paths can miss feasible solutions and yields incorrect results.\",\n      \"line\": 84,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"6 7\\n2 1\\n2 3\\n3 5\\n1 4\\n6 1\\n5 6\\n4 5\\n3\\n1 4\\n5 1\\n4 5\"\n    },\n    {\n      \"description\": \"The parity accumulation for tree edges is incorrect. The code attempts to use XOR differences but mishandles the LCA contribution and the subtree accumulation, leading to wrong edge parity values.\",\n      \"line\": 98,\n      \"severity\": \"major\",\n      \"triggering_input\": \"2 1\\n1 2\\n1\\n1 2\"\n    },\n    {\n      \"description\": \"The code never computes or checks the parity of non\u2011tree edges, nor does it attempt to construct the required paths for each query. The output format is never produced.\",\n      \"line\": 115,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any\"\n    },\n    {\n      \"description\": \"The Gaussian elimination approach is only sketched and never implemented; the code contains comments about it but no actual elimination, so it cannot determine feasibility or the minimal number of extra queries.\",\n      \"line\": 130,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any\"\n    },\n    {\n      \"description\": \"The up table for LCA is built incorrectly: up[0] is assigned parent[:] which includes a dummy 0 index, and up[0][1] is later set to 1, but other entries may be uninitialized for non\u2011tree neighbors, causing incorrect LCA results.\",\n      \"line\": 71,\n      \"severity\": \"major\",\n      \"triggering_input\": \"3 3\\n1 2\\n2 3\\n1 3\\n1\\n1 3\"\n    },\n    {\n      \"description\": \"The BFS order for subtree accumulation only traverses tree edges, but the visited flag vis2 is never reset, and the condition 'ei in tree_edges' inside the adjacency loop is inefficient (set lookup) and may skip valid tree edges due to mismatched edge indices.\",\n      \"line\": 108,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"any\"\n    },\n    {\n      \"description\": \"The code uses many undefined or unused variables (e.g., cnt, cnt2, cycles) and contains dead code paths, indicating incomplete implementation.\",\n      \"line\": 90,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"any\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution never calls the solve() function nor prints any output, so it produces no answer for any input.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              },
+              {
+                "description": "The algorithm assumes that each query must follow the tree path between its endpoints, but the problem allows any simple path. Restricting to tree paths can miss feasible solutions and yields incorrect results.",
+                "line": 84,
+                "severity": "critical",
+                "triggering_input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5"
+              },
+              {
+                "description": "The parity accumulation for tree edges is incorrect. The code attempts to use XOR differences but mishandles the LCA contribution and the subtree accumulation, leading to wrong edge parity values.",
+                "line": 98,
+                "severity": "major",
+                "triggering_input": "2 1\n1 2\n1\n1 2"
+              },
+              {
+                "description": "The code never computes or checks the parity of non\u2011tree edges, nor does it attempt to construct the required paths for each query. The output format is never produced.",
+                "line": 115,
+                "severity": "critical",
+                "triggering_input": "any"
+              },
+              {
+                "description": "The Gaussian elimination approach is only sketched and never implemented; the code contains comments about it but no actual elimination, so it cannot determine feasibility or the minimal number of extra queries.",
+                "line": 130,
+                "severity": "critical",
+                "triggering_input": "any"
+              },
+              {
+                "description": "The up table for LCA is built incorrectly: up[0] is assigned parent[:] which includes a dummy 0 index, and up[0][1] is later set to 1, but other entries may be uninitialized for non\u2011tree neighbors, causing incorrect LCA results.",
+                "line": 71,
+                "severity": "major",
+                "triggering_input": "3 3\n1 2\n2 3\n1 3\n1\n1 3"
+              },
+              {
+                "description": "The BFS order for subtree accumulation only traverses tree edges, but the visited flag vis2 is never reset, and the condition 'ei in tree_edges' inside the adjacency loop is inefficient (set lookup) and may skip valid tree edges due to mismatched edge indices.",
+                "line": 108,
+                "severity": "minor",
+                "triggering_input": "any"
+              },
+              {
+                "description": "The code uses many undefined or unused variables (e.g., cnt, cnt2, cycles) and contains dead code paths, indicating incomplete implementation.",
+                "line": 90,
+                "severity": "minor",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 3907,
+          "output_tokens": 657,
+          "cost_usd": 0.0014695,
+          "latency_ms": 2424
+        },
+        {
+          "role": "generalist_iter2",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\"verdict\": \"PASS\", \"bugs\": []}",
+          "parsed": {
+            "verdict": "PASS",
+            "bugs": []
+          },
+          "input_tokens": 1642,
+          "output_tokens": 12,
+          "cost_usd": 0.0004195,
+          "latency_ms": 7069
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    def ri():\n        nonlocal idx\n        v = input_data[idx]; idx += 1\n        return int(v)\n    \n    n, m = ri(), ri()\n    adj = [[] for _ in range(n+1)]\n    for i in range(m):\n        x, y = ri(), ri()\n        adj[x].append(y)\n        adj[y].append(x)\n    \n    q = ri()\n    queries = [(ri(), ri()) for _ in range(q)]\n    \n    deg = [0] * (n+1)\n    for a, b in queries:\n        deg[a] += 1\n        deg[b] += 1\n    \n    odd_nodes = [v for v in range(1, n+1) if deg[v] % 2 == 1]\n    \n    if odd_nodes:\n        print(\"NO\")\n        print(len(odd_nodes) // 2)\n        return\n    \n    # Build BFS tree\n    parent = [0] * (n+1)\n    depth = [0] * (n+1)\n    visited = [False] * (n+1)\n    visited[1] = True\n    queue = deque([1])\n    bfs_order = []\n    while queue:\n        u = queue.popleft()\n        bfs_order.append(u)\n        for v in adj[u]:\n            if not visited[v]:\n                visited[v] = True\n                parent[v] = u\n                depth[v] = depth[u] + 1\n                queue.append(v)\n    \n    LOG = 19\n    up = [[0]*(n+1) for _ in range(LOG)]\n    for v in range(1, n+1):\n        up[0][v] = parent[v] if parent[v] != 0 else v\n    up[0][1] = 1\n    for k in range(1, LOG):\n        for v in range(1, n+1):\n            up[k][v] = up[k-1][up[k-1][v]]\n    \n    def lca(u, v):\n        if depth[u] < depth[v]: u, v = v, u\n        diff = depth[u] - depth[v]\n        for k in range(LOG):\n            if (diff >> k) & 1:\n                u = up[k][u]\n        if u == v: return u\n        for k in range(LOG-1, -1, -1):\n            if up[k][u] != up[k][v]:\n                u = up[k][u]; v = up[k][v]\n        return up[0][u]\n    \n    def get_path(u, v):\n        l = lca(u, v)\n        path_u = []\n        x = u\n        while x != l:\n            path_u.append(x)\n            x = parent[x]\n        path_u.append(l)\n        path_v = []\n        x = v\n        while x != l:\n            path_v.append(x)\n            x = parent[x]\n        return path_u + path_v[::-1]\n    \n    out = []\n    out.append(\"YES\")\n    for a, b in queries:\n        path = get_path(a, b)\n        out.append(str(len(path)))\n        out.append(' '.join(map(str, path)))\n    \n    print('\\n'.join(out))\n\nsolve()",
+          "input_tokens": 5266,
+          "output_tokens": 1250,
+          "cost_usd": 0.034548,
+          "latency_ms": 16052
+        }
+      ],
+      "final_code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    def ri():\n        nonlocal idx\n        v = input_data[idx]; idx += 1\n        return int(v)\n    \n    n, m = ri(), ri()\n    adj = [[] for _ in range(n+1)]\n    for i in range(m):\n        x, y = ri(), ri()\n        adj[x].append(y)\n        adj[y].append(x)\n    \n    q = ri()\n    queries = [(ri(), ri()) for _ in range(q)]\n    \n    deg = [0] * (n+1)\n    for a, b in queries:\n        deg[a] += 1\n        deg[b] += 1\n    \n    odd_nodes = [v for v in range(1, n+1) if deg[v] % 2 == 1]\n    \n    if odd_nodes:\n        print(\"NO\")\n        print(len(odd_nodes) // 2)\n        return\n    \n    # Build BFS tree\n    parent = [0] * (n+1)\n    depth = [0] * (n+1)\n    visited = [False] * (n+1)\n    visited[1] = True\n    queue = deque([1])\n    bfs_order = []\n    while queue:\n        u = queue.popleft()\n        bfs_order.append(u)\n        for v in adj[u]:\n            if not visited[v]:\n                visited[v] = True\n                parent[v] = u\n                depth[v] = depth[u] + 1\n                queue.append(v)\n    \n    LOG = 19\n    up = [[0]*(n+1) for _ in range(LOG)]\n    for v in range(1, n+1):\n        up[0][v] = parent[v] if parent[v] != 0 else v\n    up[0][1] = 1\n    for k in range(1, LOG):\n        for v in range(1, n+1):\n            up[k][v] = up[k-1][up[k-1][v]]\n    \n    def lca(u, v):\n        if depth[u] < depth[v]: u, v = v, u\n        diff = depth[u] - depth[v]\n        for k in range(LOG):\n            if (diff >> k) & 1:\n                u = up[k][u]\n        if u == v: return u\n        for k in range(LOG-1, -1, -1):\n            if up[k][u] != up[k][v]:\n                u = up[k][u]; v = up[k][v]\n        return up[0][u]\n    \n    def get_path(u, v):\n        l = lca(u, v)\n        path_u = []\n        x = u\n        while x != l:\n            path_u.append(x)\n            x = parent[x]\n        path_u.append(l)\n        path_v = []\n        x = v\n        while x != l:\n            path_v.append(x)\n            x = parent[x]\n        return path_u + path_v[::-1]\n    \n    out = []\n    out.append(\"YES\")\n    for a, b in queries:\n        path = get_path(a, b)\n        out.append(str(len(path)))\n        out.append(' '.join(map(str, path)))\n    \n    print('\\n'.join(out))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 44,
+        "failed": 6,
+        "errors": 0,
+        "pass_rate": 0.88,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n2\n1 4\n4\n5 3 2 1\n5\n4 1 2 3 5",
+            "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+            "stderr": "",
+            "runtime_ms": 151,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "5 7\n4 3\n4 5\n2 1\n1 4\n1 3\n3 5\n3 2\n4\n4 2\n3 5\n5 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 140,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2 1\n2 1\n1\n2 1\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 136,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n5\n1 2 3 5 4\n4\n5 3 2 1\n2\n4 5",
+            "actual": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "6 7\n2 1\n2 3\n2 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n2\n1 4\n3\n5 2 1\n4\n4 1 2 5",
+            "actual": "YES\n2\n1 4\n3\n5 2 1\n4\n4 1 2 5",
+            "stderr": "",
+            "runtime_ms": 137,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 132,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "6 7\n2 1\n2 3\n2 1\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n2\n1 4\n3\n5 6 1\n4\n4 1 6 5",
+            "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "6 7\n3 2\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n4 3\n",
+            "expected": "YES\n4\n1 2 3 5\n4\n5 3 2 1",
+            "actual": "YES\n3\n1 6 5\n3\n5 6 1",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "6 7\n2 1\n2 3\n1 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n2\n1 4\n2\n5 1\n3\n4 1 5",
+            "actual": "YES\n2\n1 4\n2\n5 1\n3\n4 1 5",
+            "stderr": "",
+            "runtime_ms": 142,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n4 3\n",
+            "expected": "YES\n3\n1 6 5\n3\n5 6 1",
+            "actual": "YES\n3\n1 6 5\n3\n5 6 1",
+            "stderr": "",
+            "runtime_ms": 145,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n0\n2 4\n3 1\n4 5\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 147,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n3 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+            "expected": "YES\n4\n1 6 3 5\n4\n5 3 6 1",
+            "actual": "YES\n4\n1 6 3 5\n4\n5 3 6 1",
+            "stderr": "",
+            "runtime_ms": 146,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6 7\n3 1\n2 2\n3 5\n4 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+            "expected": "YES\n3\n1 3 5\n3\n5 3 1",
+            "actual": "YES\n3\n1 3 5\n3\n5 3 1",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6 7\n2 1\n2 1\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+            "actual": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+            "stderr": "",
+            "runtime_ms": 144,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n4 1\n4 3\n",
+            "expected": "YES\n5\n1 2 3 5 4\n5\n4 5 3 2 1",
+            "actual": "YES\n4\n1 6 5 4\n4\n4 5 6 1",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n2 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+            "expected": "YES\n5\n1 6 2 3 5\n5\n5 3 2 6 1",
+            "actual": "YES\n5\n1 6 2 3 5\n5\n5 3 2 6 1",
+            "stderr": "",
+            "runtime_ms": 149,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 1\n2\n1 4\n4 1\n4 3\n",
+            "expected": "YES\n2\n1 4\n2\n4 1",
+            "actual": "YES\n2\n1 4\n2\n4 1",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 143,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 142,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 134,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 119,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6 7\n3 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 124,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6 7\n3 2\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 129,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6 7\n4 1\n2 3\n2 1\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+            "expected": "YES\n2\n1 4\n3\n5 6 1\n4\n4 1 6 5",
+            "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+            "stderr": "",
+            "runtime_ms": 189,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 132,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 119,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6 7\n2 1\n2 3\n3 6\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6 7\n2 1\n2 3\n3 4\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 1\n4 5\n3\n1 2\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 121,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n3 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 129,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 4\n3\n2 4\n3 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 106,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6 7\n2 2\n2 3\n3 5\n1 5\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6 7\n2 1\n2 5\n3 5\n1 4\n6 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 143,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6 7\n2 1\n2 3\n3 6\n1 2\n5 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 109,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6 7\n2 1\n2 3\n3 4\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n2 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 134,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 1\n4 5\n3\n1 3\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 146,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n3 6\n4 5\n3\n2 4\n3 1\n2 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6 7\n2 1\n2 3\n3 1\n1 2\n5 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "5 7\n4 3\n4 5\n2 1\n1 4\n1 3\n3 5\n3 2\n4\n4 1\n3 5\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 6\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 146,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6 7\n1 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 5\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 3\n4 5\n3\n2 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6 7\n2 2\n2 3\n3 5\n2 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6 7\n2 4\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 134,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6 7\n1 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 197,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6 7\n2 1\n2 3\n3 5\n1 4\n4 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+            "expected": "NO\n1",
+            "actual": "NO\n1",
+            "stderr": "",
+            "runtime_ms": 184,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6 7\n2 1\n2 3\n3 6\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n6 3\n",
+            "expected": "NO\n2",
+            "actual": "NO\n2",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 44,
+    "failed": 6,
+    "errors": 0,
+    "pass_rate": 0.88,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n2\n1 4\n4\n5 3 2 1\n5\n4 1 2 3 5",
+        "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+        "stderr": "",
+        "runtime_ms": 151,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "5 7\n4 3\n4 5\n2 1\n1 4\n1 3\n3 5\n3 2\n4\n4 2\n3 5\n5 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 140,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "2 1\n2 1\n1\n2 1\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 136,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n5\n1 2 3 5 4\n4\n5 3 2 1\n2\n4 5",
+        "actual": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+        "stderr": "",
+        "runtime_ms": 139,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 139,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "6 7\n2 1\n2 3\n2 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n2\n1 4\n3\n5 2 1\n4\n4 1 2 5",
+        "actual": "YES\n2\n1 4\n3\n5 2 1\n4\n4 1 2 5",
+        "stderr": "",
+        "runtime_ms": 137,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 132,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "6 7\n2 1\n2 3\n2 1\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n2\n1 4\n3\n5 6 1\n4\n4 1 6 5",
+        "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+        "stderr": "",
+        "runtime_ms": 141,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "6 7\n3 2\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n4 3\n",
+        "expected": "YES\n4\n1 2 3 5\n4\n5 3 2 1",
+        "actual": "YES\n3\n1 6 5\n3\n5 6 1",
+        "stderr": "",
+        "runtime_ms": 131,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "6 7\n2 1\n2 3\n1 5\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n2\n1 4\n2\n5 1\n3\n4 1 5",
+        "actual": "YES\n2\n1 4\n2\n5 1\n3\n4 1 5",
+        "stderr": "",
+        "runtime_ms": 142,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n4 3\n",
+        "expected": "YES\n3\n1 6 5\n3\n5 6 1",
+        "actual": "YES\n3\n1 6 5\n3\n5 6 1",
+        "stderr": "",
+        "runtime_ms": 145,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n0\n2 4\n3 1\n4 5\n",
+        "expected": "YES",
+        "actual": "YES",
+        "stderr": "",
+        "runtime_ms": 147,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n3 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+        "expected": "YES\n4\n1 6 3 5\n4\n5 3 6 1",
+        "actual": "YES\n4\n1 6 3 5\n4\n5 3 6 1",
+        "stderr": "",
+        "runtime_ms": 146,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "6 7\n3 1\n2 2\n3 5\n4 2\n6 1\n5 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+        "expected": "YES\n3\n1 3 5\n3\n5 3 1",
+        "actual": "YES\n3\n1 3 5\n3\n5 3 1",
+        "stderr": "",
+        "runtime_ms": 152,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "6 7\n2 1\n2 1\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+        "actual": "YES\n4\n1 6 5 4\n3\n5 6 1\n2\n4 5",
+        "stderr": "",
+        "runtime_ms": 144,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n4 1\n4 3\n",
+        "expected": "YES\n5\n1 2 3 5 4\n5\n4 5 3 2 1",
+        "actual": "YES\n4\n1 6 5 4\n4\n4 5 6 1",
+        "stderr": "",
+        "runtime_ms": 139,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "6 7\n3 2\n2 3\n3 5\n2 2\n6 1\n2 6\n4 5\n2\n1 5\n5 1\n3 3\n",
+        "expected": "YES\n5\n1 6 2 3 5\n5\n5 3 2 6 1",
+        "actual": "YES\n5\n1 6 2 3 5\n5\n5 3 2 6 1",
+        "stderr": "",
+        "runtime_ms": 149,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 1\n2\n1 4\n4 1\n4 3\n",
+        "expected": "YES\n2\n1 4\n2\n4 1",
+        "actual": "YES\n2\n1 4\n2\n4 1",
+        "stderr": "",
+        "runtime_ms": 138,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 143,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 142,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 134,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 119,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "6 7\n3 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 124,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "6 7\n3 2\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 129,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 116,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "6 7\n4 1\n2 3\n2 1\n1 4\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 5\n",
+        "expected": "YES\n2\n1 4\n3\n5 6 1\n4\n4 1 6 5",
+        "actual": "YES\n2\n1 4\n3\n5 4 1\n2\n4 5",
+        "stderr": "",
+        "runtime_ms": 189,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 132,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 119,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "6 7\n2 1\n2 3\n3 6\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 139,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "6 7\n2 1\n2 3\n3 4\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 114,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 1\n4 5\n3\n1 2\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 121,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n3 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 129,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "6 7\n2 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 4\n3\n2 4\n3 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 106,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "6 7\n2 2\n2 3\n3 5\n1 5\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "6 7\n2 1\n2 5\n3 5\n1 4\n6 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 143,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "6 7\n2 1\n2 3\n3 6\n1 2\n5 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 109,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "6 7\n2 1\n2 3\n3 4\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n2 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 134,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 1\n4 5\n3\n1 3\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 146,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n3 6\n4 5\n3\n2 4\n3 1\n2 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 114,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "6 7\n2 1\n2 3\n3 1\n1 2\n5 1\n5 6\n4 5\n3\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 99,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "5 7\n4 3\n4 5\n2 1\n1 4\n1 3\n3 5\n3 2\n4\n4 1\n3 5\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n4 6\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 146,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "6 7\n1 1\n2 3\n3 5\n1 2\n6 1\n5 6\n4 5\n2\n1 4\n5 1\n4 3\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 138,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 5\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n6 1\n5 3\n4 5\n3\n2 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 93,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "6 7\n2 2\n2 3\n3 5\n2 4\n6 1\n5 6\n4 5\n3\n1 2\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "6 7\n2 4\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n3 1\n4 5\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 134,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "6 7\n1 2\n2 3\n3 5\n1 4\n6 1\n5 6\n4 5\n3\n2 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 197,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "6 7\n2 1\n2 3\n3 5\n1 4\n4 1\n5 6\n4 5\n1\n1 4\n5 1\n4 5\n",
+        "expected": "NO\n1",
+        "actual": "NO\n1",
+        "stderr": "",
+        "runtime_ms": 184,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "6 7\n2 1\n2 3\n3 6\n1 2\n6 1\n5 6\n4 5\n3\n1 4\n5 1\n6 3\n",
+        "expected": "NO\n2",
+        "actual": "NO\n2",
+        "stderr": "",
+        "runtime_ms": 138,
+        "status": "pass"
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 8,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.88,
+      "cost_this_iteration": 0.0360175,
+      "cumulative_cost": 0.1004845
+    },
+    {
+      "iteration": 2,
+      "bugs_found": 0,
+      "pass_rate_before": 0.88,
+      "pass_rate_after": 0.88,
+      "cost_this_iteration": 0.0004195,
+      "cumulative_cost": 0.10090400000000001
+    }
+  ],
+  "total_cost_usd": 0.10090400000000001,
+  "total_latency_ms": 90528,
+  "iterations_used": 2,
+  "early_stopped": true
+}

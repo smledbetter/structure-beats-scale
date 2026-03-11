@@ -1,0 +1,1424 @@
+{
+  "study": "C",
+  "condition": "C3",
+  "task_id": "cc_047",
+  "replica": 0,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Going from heap `i` (from 3 to n), I can move `d` stones where `3*d <= h_i`, adding `d` to `h_{i-1}` and `2*d` to `h_{i-2}`.\n\nFor binary search check: given target `m`, go through heaps from i=3 to n. At each step, we want to maximize the flexibility. \n\nKey insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i` for future operations... wait, heap `i` won't receive stones from future operations (future operations go to i-1, i-2 relative to future heaps).\n\nActually heap `i` can receive stones when processing heap `i+1` (d stones) and heap `i+2` (2*d stones). So heap `i` can still grow.\n\nLet me think greedily: binary search on answer `m`. Process heaps left to right. At each heap `i` (from 3 to n), we need to decide `d`. We want `h_{i-2} >= m` (since heap `i-2` won't receive any more stones after processing heap `i`). So we must give enough to `h_{i-2}`.\n\nWhen processing heap `i`:\n- `h_{i-2}` needs at least `m` stones. Deficit = `max(0, m - h_{i-2})`.\n- We need `2*d >= deficit`, so `d >= ceil(deficit/2)`.\n- Also `3*d <= h_i`, so `d <= h_i // 3`.\n- We want to maximize `d` to also help `h_{i-1}`.\n\nSo the greedy: at step `i`, compute minimum `d` needed to fix `h_{i-2}`, and maximum `d` possible from `h_i`. If min_d > max_d, infeasible. Otherwise, choose `d = max_d` to maximize stones given to `h_{i-1}`.\n\nWait, but choosing `d = max_d` maximizes `h_{i-1}` which helps future. Let me verify with example 1:\n\nh = [1, 2, 10, 100], m=7\ni=3 (0-indexed: i=2, h[2]=10):\n  h[0]=1, deficit=6, min_d=3, max_d=3. d=3.\n  h[0]+=6 -> 7, h[1]+=3 -> 5, h[2]-=9 -> 1.\ni=4 (i=3, h[3]=100):\n  h[1]=5, deficit=2, min_d=1, max_d=33. d=33.\n  h[1]+=33 -> 38, h[2]+=66 -> 67, h[3]-=99 -> 1.\nAfter: [7, 38, 67, 1]. Min is 1, not 7. Hmm.\n\nThe issue: heap n (last heap) can't give stones to anyone after it's processed. So heap n itself must be >= m.\n\nActually the last heap `h[n-1]` after giving away stones must be >= m. Let me reconsider: after processing heap i, h[i] decreases. The final value of h[i] matters too.\n\nSo when processing heap i, we should choose d to satisfy h[i-2] >= m, but also not reduce h[i] below m (since h[i] won't be boosted... wait it can be boosted by i+1 and i+2).\n\nThis is getting complex. Let me just binary search and simulate carefully: at each heap i (processing order 3..n), choose minimum d to bring h[i-2] to m, and don't take more than needed... but we might want to take more to help h[i-1].\n\nActually the tradeoff: more d helps h[i-1] but hurts h[i]. Since h[i] can be helped by future heaps i+1 and i+2, maybe we should maximize d. But h[n] and h[n-1] can't be helped after processing.\n\nLet me implement: choose d = min(max_d, what's needed). Specifically choose d to exactly fix h[i-2] deficit, but also we can give more if it helps. This needs more careful analysis - let me just try d = max_d and see if final heaps all >= m.\n\nAfter processing all heaps, check if all h[i] >= m.",
+      "input_tokens": 799,
+      "output_tokens": 1143,
+      "cost_usd": 0.019542,
+      "latency_ms": 19754
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d stones at i-1.\n\nActually, let me think about it differently. At step i (processing heap i), I need to decide d_i. The constraint is 3*d_i <= h[i] (current h[i]).\n\nAfter choosing d_i: h[i-2] += 2*d_i, h[i-1] += d_i.\n\nWe process i=2,3,...,n-1. After all processing, all heaps must be >= m.\n\nFor heaps i >= 2, heap i can only receive stones from heap i+2 (when processing i+2, it gets d stones) and heap i+1 (when processing i+1, it gets 2d stones). Wait, no - heap i receives: 2*d when processing heap i+2, and d when processing heap i+1. But heap i itself is processed too (it gives away stones).\n\nLet me do binary search on m, and simulate greedily:\n\nFor each i from 2 to n-1:\n- After previous operations, h[i-2] has some value. If h[i-2] < m, we need to use d from h[i] to fix it.\n- Minimum d needed = ceil((m - h[i-2]) / 2) if h[i-2] < m, else 0\n- Maximum d possible = h[i] // 3\n- If min_d > max_d: infeasible\n- But we might also want to use more d to help h[i-1]\n- Choose d = max(min_d, ...) but we also want to help h[i-1]\n- Actually, we should choose d to maximize help to i-1 as well, but not exceed h[i]//3\n- The optimal d: we need d >= min_d, and we want h[i-1] + d >= m, so d >= m - h[i-1] if h[i-1] < m\n- So d = max(min_d, max(0, m - h[i-1])), but capped at h[i]//3\n\nWait but choosing larger d might hurt heap i itself (it needs to be >= m too). Heap i loses 3d stones.\n\nSo: h[i] - 3*d >= m => d <= (h[i] - m) / 3\n\nSo d is in range [d_min, d_max] where:\n- d_min = max(0, ceil((m - h[i-2])/2), m - h[i-1])  -- need both i-2 and i-1 to reach m\n- d_max = (h[i] - m) // 3  -- heap i must remain >= m... wait but heap i can also receive from i+2\n\nHmm, heap i can receive from future operations. So we can't enforce h[i] >= m at this point.\n\nLet me just enforce that we greedily fix deficits and check at the end.\n\nd_min = max(0, ceil((m - h[i-2])/2), m - h[i-1]) if those are positive\nd_max = h[i] // 3\nif d_min > d_max: return False\nchoose d = d_min (minimize stones taken from h[i] to leave more for future)\n\nThen check at the end all heaps >= m.\n\nimport sys\nfrom math import ceil\ninput = sys.stdin.readline\n\ndef check(h, m):\n    a = h[:]\n    n = len(a)\n    for i in range(2, n):\n        need = max(0, ceil((m - a[i-2]) / 2), m - a[i-1])\n        cap = a[i] // 3\n        if need > cap:\n            return False\n        d = need\n        a[i] -= 3*d\n        a[i-1] += d\n        a[i-2] += 2*d\n    return all(x >= m for x in a)\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    h = list(map(int, input().split()))\n    lo, hi = 0, sum(h) // n\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        if check(h, mid):\n            lo = mid\n        else:\n            hi = mid - 1\n    print(lo)",
+      "input_tokens": 799,
+      "output_tokens": 1429,
+      "cost_usd": 0.023832,
+      "latency_ms": 22960
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Going from heap `i` (from 3 to n), I can move `d` stones where `3*d <= h_i`, adding `d` to `h_{i-1}` and `2*d` to `h_{i-2}`.\n\nFor binary search check: given target `m`, go through heaps from i=3 to n. At each step, we want to maximize the flexibility. \n\nKey insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i` for future operations... wait, heap `i` won't receive stones from future operations (future operations go to i-1, i-2 relative to future heaps).\n\nActually heap `i` can receive stones when processing heap `i+1` (d stones) and heap `i+2` (2*d stones). So heap `i` can still grow.\n\nLet me think greedily: binary search on answer `m`. Process heaps left to right. At each heap `i` (from 3 to n), we need to decide `d`. We want `h_{i-2} >= m` (since heap `i-2` won't receive any more stones after processing heap `i`). So we must give enough to `h_{i-2}`.\n\nWhen processing heap `i`:\n- `h_{i-2}` needs at least `m` stones. Deficit = `max(0, m - h_{i-2})`.\n- We need `2*d >= deficit`, so `d >= ceil(deficit/2)`.\n- Also `3*d <= h_i`, so `d <= h_i // 3`.\n- We want to maximize `d` to also help `h_{i-1}`.\n\nSo the greedy: at step `i`, compute minimum `d` needed to fix `h_{i-2}`, and maximum `d` possible from `h_i`. If min_d > max_d, infeasible. Otherwise, choose `d = max_d` to maximize stones given to `h_{i-1}`.\n\nWait, but choosing `d = max_d` maximizes `h_{i-1}` which helps future. Let me verify with example 1:\n\nh = [1, 2, 10, 100], m=7\ni=3 (0-indexed: i=2, h[2]=10):\n  h[0]=1, deficit=6, min_d=3, max_d=3. d=3.\n  h[0]+=6 -> 7, h[1]+=3 -> 5, h[2]-=9 -> 1.\ni=4 (i=3, h[3]=100):\n  h[1]=5, deficit=2, min_d=1, max_d=33. d=33.\n  h[1]+=33 -> 38, h[2]+=66 -> 67, h[3]-=99 -> 1.\nAfter: [7, 38, 67, 1]. Min is 1, not 7. Hmm.\n\nThe issue: heap n (last heap) can't give stones to anyone after it's processed. So heap n itself must be >= m.\n\nActually the last heap `h[n-1]` after giving away stones must be >= m. Let me reconsider: after processing heap i, h[i] decreases. The final value of h[i] matters too.\n\nSo when processing heap i, we should choose d to satisfy h[i-2] >= m, but also not reduce h[i] below m (since h[i] won't be boosted... wait it can be boosted by i+1 and i+2).\n\nThis is getting complex. Let me just binary search and simulate carefully: at each heap i (processing order 3..n), choose minimum d to bring h[i-2] to m, and don't take more than needed... but we might want to take more to help h[i-1].\n\nActually the tradeoff: more d helps h[i-1] but hurts h[i]. Since h[i] can be helped by future heaps i+1 and i+2, maybe we should maximize d. But h[n] and h[n-1] can't be helped after processing.\n\nLet me implement: choose d = min(max_d, what's needed). Specifically choose d to exactly fix h[i-2] deficit, but also we can give more if it helps. This needs more careful analysis - let me just try d = max_d and see if final heaps all >= m.\n\nAfter processing all heaps, check if all h[i] >= m.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+            "expected": "7\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 6 5 6\n",
+            "expected": "7\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 5 12\n",
+            "expected": "6\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+            "expected": "7\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 12\n",
+            "expected": "8\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+            "expected": "8\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 3 6\n",
+            "expected": "11\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+            "expected": "11\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n4\n1 2 10 100\n4\n100 110 100 1\n5\n5 2 1 1 1\n6\n1 4 4 3 5 3\n",
+            "expected": "7\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n4\n1 2 4 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+            "expected": "3\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n4\n0 3 7 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 3 12\n",
+            "expected": "4\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n4\n1 0 18 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+            "expected": "13\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n1 4 4 3 3 12\n",
+            "expected": "4\n1\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n4\n1 0 16 100\n4\n100 100 100 1\n5\n5 1 1 1 16\n6\n1 1 4 3 3 6\n",
+            "expected": "11\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n2 4 8 3 3 12\n",
+            "expected": "4\n1\n2\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n4\n0 3 16 100\n4\n100 100 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+            "expected": "10\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n4\n1 0 27 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n2 2 2 3 0 7\n",
+            "expected": "19\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+            "expected": "6\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n4\n1 2 10 100\n4\n100 001 100 2\n5\n5 2 1 1 2\n6\n1 4 4 3 5 6\n",
+            "expected": "7\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 3\n6\n1 4 4 3 5 24\n",
+            "expected": "13\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n4\n2 2 3 100\n4\n100 110 110 2\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+            "expected": "4\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n4\n1 2 5 100\n4\n100 100 100 1\n5\n5 2 1 1 8\n6\n1 2 3 6 5 6\n",
+            "expected": "3\n1\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n4\n1 0 6 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 1 2 3 0 7\n",
+            "expected": "5\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n4\n2 2 2 100\n4\n100 101 100 1\n5\n5 1 1 1 2\n6\n1 2 4 1 5 6\n",
+            "expected": "2\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 3 12\n",
+            "expected": "4\n2\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n4\n2 2 3 100\n4\n100 110 110 3\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+            "expected": "4\n3\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n4\n1 2 14 101\n4\n100 100 110 1\n5\n5 1 1 1 8\n6\n1 2 3 5 5 6\n",
+            "expected": "9\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 3 1 2 6\n6\n0 4 6 0 5 6\n",
+            "expected": "7\n1\n3\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+            "expected": "13\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 2 12\n",
+            "expected": "4\n2\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n3 0 4 2 3\n6\n2 4 8 0 3 19\n",
+            "expected": "4\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 1\n6\n1 4 6 15 5 7\n",
+            "expected": "7\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 110 2\n5\n5 2 2 1 4\n6\n1 4 4 3 8 12\n",
+            "expected": "13\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n4\n0 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+            "expected": "12\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 8 6\n",
+            "expected": "11\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n4\n0 2 18 111\n4\n100 110 100 1\n5\n5 6 1 2 1\n6\n1 6 4 3 5 7\n",
+            "expected": "12\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 2\n6\n1 3 6 15 0 7\n",
+            "expected": "7\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 4 3 8 12\n",
+            "expected": "13\n2\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n5 2 1 1 3\n6\n0 7 7 3 5 5\n",
+            "expected": "5\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "11\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 7 3 14 12\n",
+            "expected": "13\n2\n1\n6",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n4\n1 2 27 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "19\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n4\n2 2 10 111\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+            "expected": "8\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n4\n1 2 10 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "7\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n4 2 1 1 6\n6\n0 8 7 3 5 5\n",
+            "expected": "5\n1\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n4\n2 2 10 011\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+            "expected": "5\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 5\n",
+            "expected": "6\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 2 1 1 8\n6\n1 2 2 3 3 6\n",
+            "expected": "11\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n4\n1 2 2 110\n4\n100 110 100 1\n5\n5 2 1 2 1\n6\n1 4 4 3 5 7\n",
+            "expected": "1\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n8 2 1 1 3\n6\n2 4 4 3 5 12\n",
+            "expected": "6\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Key insight: when processing heap `i`, we want heaps `i-2` and `i-1` to reach at least `m`. But we also want to keep as much as possible in heap `i`",
+            "runtime_ms": 29,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d stones at i-1.\n\nActually, let me think about it differently. At step i (processing heap i), I need to decide d_i. The constraint is 3*d_i <= h[i] (current h[i]).\n\nAfter choosing d_i: h[i-2] += 2*d_i, h[i-1] += d_i.\n\nWe process i=2,3,...,n-1. After all processing, all heaps must be >= m.\n\nFor heaps i >= 2, heap i can only receive stones from heap i+2 (when processing i+2, it gets d stones) and heap i+1 (when processing i+1, it gets 2d stones). Wait, no - heap i receives: 2*d when processing heap i+2, and d when processing heap i+1. But heap i itself is processed too (it gives away stones).\n\nLet me do binary search on m, and simulate greedily:\n\nFor each i from 2 to n-1:\n- After previous operations, h[i-2] has some value. If h[i-2] < m, we need to use d from h[i] to fix it.\n- Minimum d needed = ceil((m - h[i-2]) / 2) if h[i-2] < m, else 0\n- Maximum d possible = h[i] // 3\n- If min_d > max_d: infeasible\n- But we might also want to use more d to help h[i-1]\n- Choose d = max(min_d, ...) but we also want to help h[i-1]\n- Actually, we should choose d to maximize help to i-1 as well, but not exceed h[i]//3\n- The optimal d: we need d >= min_d, and we want h[i-1] + d >= m, so d >= m - h[i-1] if h[i-1] < m\n- So d = max(min_d, max(0, m - h[i-1])), but capped at h[i]//3\n\nWait but choosing larger d might hurt heap i itself (it needs to be >= m too). Heap i loses 3d stones.\n\nSo: h[i] - 3*d >= m => d <= (h[i] - m) / 3\n\nSo d is in range [d_min, d_max] where:\n- d_min = max(0, ceil((m - h[i-2])/2), m - h[i-1])  -- need both i-2 and i-1 to reach m\n- d_max = (h[i] - m) // 3  -- heap i must remain >= m... wait but heap i can also receive from i+2\n\nHmm, heap i can receive from future operations. So we can't enforce h[i] >= m at this point.\n\nLet me just enforce that we greedily fix deficits and check at the end.\n\nd_min = max(0, ceil((m - h[i-2])/2), m - h[i-1]) if those are positive\nd_max = h[i] // 3\nif d_min > d_max: return False\nchoose d = d_min (minimize stones taken from h[i] to leave more for future)\n\nThen check at the end all heaps >= m.\n\nimport sys\nfrom math import ceil\ninput = sys.stdin.readline\n\ndef check(h, m):\n    a = h[:]\n    n = len(a)\n    for i in range(2, n):\n        need = max(0, ceil((m - a[i-2]) / 2), m - a[i-1])\n        cap = a[i] // 3\n        if need > cap:\n            return False\n        d = need\n        a[i] -= 3*d\n        a[i-1] += d\n        a[i-2] += 2*d\n    return all(x >= m for x in a)\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    h = list(map(int, input().split()))\n    lo, hi = 0, sum(h) // n\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        if check(h, mid):\n            lo = mid\n        else:\n            hi = mid - 1\n    print(lo)",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+            "expected": "7\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 6 5 6\n",
+            "expected": "7\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 5 12\n",
+            "expected": "6\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+            "expected": "7\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 12\n",
+            "expected": "8\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+            "expected": "8\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 3 6\n",
+            "expected": "11\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+            "expected": "11\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n4\n1 2 10 100\n4\n100 110 100 1\n5\n5 2 1 1 1\n6\n1 4 4 3 5 3\n",
+            "expected": "7\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n4\n1 2 4 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+            "expected": "3\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n4\n0 3 7 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 3 12\n",
+            "expected": "4\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n4\n1 0 18 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+            "expected": "13\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n1 4 4 3 3 12\n",
+            "expected": "4\n1\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n4\n1 0 16 100\n4\n100 100 100 1\n5\n5 1 1 1 16\n6\n1 1 4 3 3 6\n",
+            "expected": "11\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n2 4 8 3 3 12\n",
+            "expected": "4\n1\n2\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n4\n0 3 16 100\n4\n100 100 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+            "expected": "10\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n4\n1 0 27 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n2 2 2 3 0 7\n",
+            "expected": "19\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+            "expected": "6\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n4\n1 2 10 100\n4\n100 001 100 2\n5\n5 2 1 1 2\n6\n1 4 4 3 5 6\n",
+            "expected": "7\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 3\n6\n1 4 4 3 5 24\n",
+            "expected": "13\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n4\n2 2 3 100\n4\n100 110 110 2\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+            "expected": "4\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n4\n1 2 5 100\n4\n100 100 100 1\n5\n5 2 1 1 8\n6\n1 2 3 6 5 6\n",
+            "expected": "3\n1\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n4\n1 0 6 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 1 2 3 0 7\n",
+            "expected": "5\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n4\n2 2 2 100\n4\n100 101 100 1\n5\n5 1 1 1 2\n6\n1 2 4 1 5 6\n",
+            "expected": "2\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 3 12\n",
+            "expected": "4\n2\n2\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n4\n2 2 3 100\n4\n100 110 110 3\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+            "expected": "4\n3\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n4\n1 2 14 101\n4\n100 100 110 1\n5\n5 1 1 1 8\n6\n1 2 3 5 5 6\n",
+            "expected": "9\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 3 1 2 6\n6\n0 4 6 0 5 6\n",
+            "expected": "7\n1\n3\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+            "expected": "13\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 2 12\n",
+            "expected": "4\n2\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n3 0 4 2 3\n6\n2 4 8 0 3 19\n",
+            "expected": "4\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 1\n6\n1 4 6 15 5 7\n",
+            "expected": "7\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 110 2\n5\n5 2 2 1 4\n6\n1 4 4 3 8 12\n",
+            "expected": "13\n2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n4\n0 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+            "expected": "12\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 8 6\n",
+            "expected": "11\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n4\n0 2 18 111\n4\n100 110 100 1\n5\n5 6 1 2 1\n6\n1 6 4 3 5 7\n",
+            "expected": "12\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 2\n6\n1 3 6 15 0 7\n",
+            "expected": "7\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 4 3 8 12\n",
+            "expected": "13\n2\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n5 2 1 1 3\n6\n0 7 7 3 5 5\n",
+            "expected": "5\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "11\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 7 3 14 12\n",
+            "expected": "13\n2\n1\n6",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n4\n1 2 27 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "19\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n4\n2 2 10 111\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+            "expected": "8\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n4\n1 2 10 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+            "expected": "7\n1\n1\n5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n4 2 1 1 6\n6\n0 8 7 3 5 5\n",
+            "expected": "5\n1\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n4\n2 2 10 011\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+            "expected": "5\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 5\n",
+            "expected": "6\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 2 1 1 8\n6\n1 2 2 3 3 6\n",
+            "expected": "11\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n4\n1 2 2 110\n4\n100 110 100 1\n5\n5 2 1 2 1\n6\n1 4 4 3 5 7\n",
+            "expected": "1\n1\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n8 2 1 1 3\n6\n2 4 4 3 5 12\n",
+            "expected": "6\n1\n1\n4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+            "runtime_ms": 30,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+        "expected": "7\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 3 6 5 6\n",
+        "expected": "7\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 5 12\n",
+        "expected": "6\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+        "expected": "7\n1\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 12\n",
+        "expected": "8\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n4\n0 2 14 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+        "expected": "8\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 3 6\n",
+        "expected": "11\n1\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n4\n1 0 16 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+        "expected": "11\n2\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n4\n1 2 10 100\n4\n100 110 100 1\n5\n5 2 1 1 1\n6\n1 4 4 3 5 3\n",
+        "expected": "7\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n4\n1 2 4 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 3 4 5 6\n",
+        "expected": "3\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n4\n0 3 7 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 3 12\n",
+        "expected": "4\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n4\n1 0 18 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 2 2 3 0 7\n",
+        "expected": "13\n2\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n1 4 4 3 3 12\n",
+        "expected": "4\n1\n2\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n4\n1 0 16 100\n4\n100 100 100 1\n5\n5 1 1 1 16\n6\n1 1 4 3 3 6\n",
+        "expected": "11\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n5 2 4 2 3\n6\n2 4 8 3 3 12\n",
+        "expected": "4\n1\n2\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n4\n0 3 16 100\n4\n100 100 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 2 12\n",
+        "expected": "10\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n4\n1 0 27 100\n4\n000 100 100 2\n5\n5 1 1 1 8\n6\n2 2 2 3 0 7\n",
+        "expected": "19\n2\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 39,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 1 1 1 8\n6\n1 2 2 3 5 6\n",
+        "expected": "6\n1\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n4\n1 2 10 100\n4\n100 001 100 2\n5\n5 2 1 1 2\n6\n1 4 4 3 5 6\n",
+        "expected": "7\n2\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 3\n6\n1 4 4 3 5 24\n",
+        "expected": "13\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n4\n2 2 3 100\n4\n100 110 110 2\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+        "expected": "4\n2\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n4\n1 2 5 100\n4\n100 100 100 1\n5\n5 2 1 1 8\n6\n1 2 3 6 5 6\n",
+        "expected": "3\n1\n2\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n4\n1 0 6 100\n4\n000 101 100 2\n5\n5 1 1 1 8\n6\n1 1 2 3 0 7\n",
+        "expected": "5\n2\n1\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n4\n2 2 2 100\n4\n100 101 100 1\n5\n5 1 1 1 2\n6\n1 2 4 1 5 6\n",
+        "expected": "2\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 3 12\n",
+        "expected": "4\n2\n2\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n4\n2 2 3 100\n4\n100 110 110 3\n5\n5 2 1 2 4\n6\n1 2 4 3 5 13\n",
+        "expected": "4\n3\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n4\n1 2 14 101\n4\n100 100 110 1\n5\n5 1 1 1 8\n6\n1 2 3 5 5 6\n",
+        "expected": "9\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n4\n1 2 10 100\n4\n100 100 100 1\n5\n5 3 1 2 6\n6\n0 4 6 0 5 6\n",
+        "expected": "7\n1\n3\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n4\n1 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+        "expected": "13\n1\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n4\n0 3 7 101\n4\n100 001 100 2\n5\n5 2 4 2 3\n6\n2 4 4 3 2 12\n",
+        "expected": "4\n2\n2\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n4\n0 3 7 100\n4\n100 001 100 1\n5\n3 0 4 2 3\n6\n2 4 8 0 3 19\n",
+        "expected": "4\n1\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 1\n6\n1 4 6 15 5 7\n",
+        "expected": "7\n1\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n4\n1 2 19 100\n4\n000 000 110 2\n5\n5 2 2 1 4\n6\n1 4 4 3 8 12\n",
+        "expected": "13\n2\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n4\n0 0 18 100\n4\n100 000 100 1\n5\n10 2 1 1 2\n6\n2 4 4 3 5 24\n",
+        "expected": "12\n1\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 4 3 8 6\n",
+        "expected": "11\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n4\n0 2 18 111\n4\n100 110 100 1\n5\n5 6 1 2 1\n6\n1 6 4 3 5 7\n",
+        "expected": "12\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n4\n1 2 10 111\n4\n100 010 100 1\n5\n5 2 2 2 2\n6\n1 3 6 15 0 7\n",
+        "expected": "7\n1\n2\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 4 3 8 12\n",
+        "expected": "13\n2\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n5 2 1 1 3\n6\n0 7 7 3 5 5\n",
+        "expected": "5\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n4\n1 2 15 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+        "expected": "11\n1\n1\n5",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n4\n1 2 19 100\n4\n000 000 100 2\n5\n5 2 3 1 4\n6\n2 4 7 3 14 12\n",
+        "expected": "13\n2\n1\n6",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n4\n1 2 27 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+        "expected": "19\n1\n1\n5",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n4\n2 2 10 111\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+        "expected": "8\n1\n2\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n4\n1 2 10 100\n4\n100 010 100 1\n5\n5 2 1 1 3\n6\n1 4 10 3 8 11\n",
+        "expected": "7\n1\n1\n5",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n4\n1 2 6 100\n4\n100 111 100 1\n5\n4 2 1 1 6\n6\n0 8 7 3 5 5\n",
+        "expected": "5\n1\n2\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n4\n2 2 10 011\n4\n100 010 100 1\n5\n5 2 2 6 2\n6\n1 3 6 15 0 7\n",
+        "expected": "5\n1\n2\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n5 2 2 1 3\n6\n1 4 4 3 5 5\n",
+        "expected": "6\n1\n1\n2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n4\n1 0 16 100\n4\n000 100 100 1\n5\n5 2 1 1 8\n6\n1 2 2 3 3 6\n",
+        "expected": "11\n1\n2\n1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n4\n1 2 2 110\n4\n100 110 100 1\n5\n5 2 1 2 1\n6\n1 4 4 3 5 7\n",
+        "expected": "1\n1\n1\n3",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n4\n0 2 10 100\n4\n100 000 100 1\n5\n8 2 1 1 3\n6\n2 4 4 3 5 12\n",
+        "expected": "6\n1\n1\n4",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think: when at heap i, h[i-2] might be deficient. We need 2d >= deficit_i2 (deficit at i-2). So d >= ceil(deficit_i2 / 2). But we also get d ",
+        "runtime_ms": 30,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.043373999999999996,
+  "total_latency_ms": 42714,
+  "iterations_used": null,
+  "early_stopped": null
+}

@@ -1,0 +1,2072 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_017",
+  "replica": 1,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\n\ndef solve():\n    MOD = 998244353\n    data = sys.stdin.read().split()\n    n, k = int(data[0]), int(data[1])\n    s = data[2]\n    \n    ones = [0] * (n + 1)\n    for i in range(n):\n        ones[i+1] = ones[i] + (1 if s[i] == '1' else 0)\n    \n    fact = [1] * (n + 1)\n    for i in range(1, n+1):\n        fact[i] = fact[i-1] * i % MOD\n    inv_fact = [1] * (n + 1)\n    inv_fact[n] = pow(fact[n], MOD-2, MOD)\n    for i in range(n-1, -1, -1):\n        inv_fact[i] = inv_fact[i+1] * (i+1) % MOD\n    \n    def C(nn, rr):\n        if rr < 0 or rr > nn or nn < 0:\n            return 0\n        return fact[nn] * inv_fact[rr] % MOD * inv_fact[nn-rr] % MOD\n    \n    ans = 1  # t = s\n    \n    for L in range(n):\n        ot = 0\n        for R in range(L, n):\n            ot += (1 if s[R] == '1' else 0)\n            \n            need = k - ot\n            if need < 0:\n                continue\n            avail = ones[L] + (ones[n] - ones[R+1])\n            if need > avail:\n                continue\n            \n            m = R - L + 1\n            if m == 1:\n                continue\n            \n            sL = int(s[L])\n            sR = int(s[R])\n            ones_fixed = (1 - sL) + (1 - sR)\n            ones_middle = ot - ones_fixed\n            middle_len = m - 2\n            \n            cnt = C(middle_len, ones_middle)\n            ans = (ans + cnt) % MOD\n    \n    print(ans)\n\nsolve()",
+      "input_tokens": 557,
+      "output_tokens": 8043,
+      "cost_usd": 0.122316,
+      "latency_ms": 119047
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n\nLet me think differently. A result string t is achievable if there exists [l, r] such that:\n1. t agrees with s outside [l, r]\n2. t[l..r] has exactly k ones\n3. s[l..r] has exactly k ones (same number of ones)\n\nSo t is achievable iff either t == s, or there exists [l, r] where s and t agree outside [l,r], and both s[l..r] and t[l..r] have exactly k ones.\n\nActually condition 3 means: the number of ones in s[l..r] equals k, and the number of ones in t[l..r] equals k (automatic since ones outside are preserved).\n\nSo t is achievable iff t == s OR there exists l \u2264 r such that s and t differ only within [l,r], and s[l..r] has exactly k ones.\n\nEquivalently: let the differing positions between s and t be some set D. t is achievable if D is empty, or D \u2286 [l,r] for some [l,r] where s[l..r] has exactly k ones, and t[l..r] also has k ones (which follows from D being changes that preserve count... wait no, we need t[l..r] to have k ones too).\n\nSince we shuffle: t[l..r] is a permutation of s[l..r], so they have the same number of ones. So t[l..r] must have k ones.\n\nSo: t is achievable iff there exists [l,r] where:\n- s[l..r] has exactly k ones\n- t agrees with s outside [l,r]  \n- t[l..r] has exactly k ones (automatically satisfied since same multiset)\n\nWait, t[l..r] must be a rearrangement of s[l..r]. So t[l..r] has same ones count as s[l..r] = k. And t outside [l,r] = s outside [l,r].\n\nSo the set of achievable strings = {strings t : \u2203[l,r] with s[l..r] having k ones, and t[l..r] is any permutation of k ones and (r-l+1-k) zeros, and t = s outside [l,r]}.\n\nTo count distinct such strings, I'll think of it as: for each window [l,r] with exactly k ones, we can generate C(r-l+1, k) strings (choosing positions of ones within window). Count the union.\n\nUsing inclusion-exclusion is complex. Instead, let me represent each achievable string by the \"minimal\" window that differs from s. \n\nFor a string t \u2260 s achievable via window [l,r]: the actual differing region is [l', r'] \u2286 [l,r] where l' = first differing pos, r' = last differing pos. The minimal window containing the differing region must have exactly k ones in s.\n\nSo: count strings t where the differing positions form a range [l',r'] (or empty), and s[l'..r'] has exactly k ones, and t[l'..r'] has k ones, and t[l'] \u2260 s[l'], t[r'] \u2260 s[r'].\n\nLet me implement this carefully.\n\nimport sys\nfrom functools import lru_cache\n\ndef solve():\n    MOD = 998244353\n    input_data = sys.stdin.read().split()\n    n, k = int(input_data[0]), int(input_data[1])\n    s = input_data[2]\n    \n    # Count distinct achievable strings\n    # Each achievable string t corresponds to choosing window [l,r] with exactly k ones in s,\n    # and any arrangement of k ones in r-l+1 positions for t[l..r], t=s outside.\n    # We want |union over all valid [l,r] of the set of strings from that window|.\n    \n    # Use the \"canonical window\" approach: for each distinct (outside pattern, inner arrangement),\n    # count once. \n    \n    # Actually let's think: two windows [l1,r1] and [l2,r2] produce overlapping sets.\n    # A string t is in window [l,r]'s set iff t=s outside [l,r] and t[l..r] has k ones.\n    \n    # Key insight: if t differs from s only in [l',r'], then t is achievable iff \n    # there's a valid window containing [l',r']. The minimal such window is [l',r'] itself \n    # (if s[l'..r'] has k ones). But we also need t[l'] != s[l'] and t[r'] != s[r'].\n    \n    # Let me just directly count using the \"tight window\" characterization.\n    # A non-s string t is achievable iff:\n    # - Let l' = min differing pos, r' = max differing pos\n    # - s[l'..r'] has exactly k ones\n    # - t[l'..r'] has exactly k ones (same count)\n    # - t[l'] != s[l'], t[r'] != s[r']  (otherwise the tight window would be smaller)\n    # Wait, the last condition isn't needed for achievability, just for minimality.\n    \n    # Actually t is achievable iff s[l'..r'] has exactly k ones (and t[l'..r'] has k ones, automatic).\n    # Because we can use window [l', r'].\n    \n    # So: count strings t != s where:\n    # - t agrees with s outside [l', r'] (by definition of l', r')\n    # - s[l'..r'] has exactly k ones\n    # - t[l'..r'] != s[l'..r'] (since t differs from s in [l',r'])\n    # - t[l'..r'] has k ones\n    # - t[l'] != s[l'] AND t[r'] != s[r'] (tight bounds)\n    \n    # Plus 1 for s itself.\n    \n    # So count = 1 + sum over all [l',r'] where s[l'..r'] has k ones, of \n    #   (number of binary strings of length r'-l'+1 with k ones, that differ from s[l'..r'] \n    #    at both endpoints, i.e., first and last positions differ)\n    \n    # For a window of length L with k ones:\n    # Total arrangements with k ones: C(L, k)\n    # Minus arrangements where first char = s[l'] (fix first char, choose rest)\n    # Minus arrangements where last char = s[r'] (fix last char, choose rest)  \n    # Plus arrangements where both first=s[l'] and last=s[r']\n    # This gives arrangements that differ at both endpoints.\n    \n    # Wait, I need t[l'] != s[l'] OR ... no. The tight bound condition is:\n    # t[l'] != s[l'] (otherwise l' wouldn't be the first differing position)\n    # t[r'] != s[r'] (otherwise r' wouldn't be the last differing position)\n    \n    # So I need: t[l'..r'] has k ones, t[l'] != s[l'], t[r'] != s[r'].\n    # And t[l'..r'] != s[l'..r'] is automatic from t[l'] != s[l'].\n    \n    # Let me precompute prefix ones counts.\n    \n    ones = [0] * (n + 1)\n    for i in range(n):\n        ones[i+1] = ones[i] + (1 if s[i] == '1' else 0)\n    \n    def count_ones(l, r):  # inclusive\n        return ones[r+1] - ones[l]\n    \n    # Precompute combinations\n    from math import comb\n    # But we need mod... let me precompute\n    \n    max_n = n + 1\n    C = [[0] * (max_n + 1) for _ in range(max_n + 1)]\n    C[0][0] = 1\n    for i in range(1, max_n + 1):\n        C[i][0] = 1\n        for j in range(1, i + 1):\n            C[i][j] = (C[i-1][j-1] + C[i-1][j]) % MOD\n    \n    # For each [l, r] (0-indexed) with count_ones(l,r) == k:\n    # Count arrangements of k ones in (r-l+1) positions with:\n    #   position 0 (=l) != s[l], position (r-l) (=r) != s[r]\n    \n    # s[l] and s[r] are 0 or 1.\n    # Let L = r - l + 1, sl = int(s[l]), sr = int(s[r])\n    # Total with k ones: C(L, k)\n    # With pos 0 = sl: C(L-1, k - sl)\n    # With pos L-1 = sr: C(L-1, k - sr)\n    # With pos 0 = sl AND pos L-1 = sr: C(L-2, k - sl - sr)\n    \n    # Count with pos0 != sl AND posL-1 != sr:\n    # = C(L,k) - C(L-1, k-sl) - C(L-1, k-sr) + C(L-2, k-sl-sr)\n    # (inclusion-exclusion)\n    \n    def safe_C(n, r):\n        if r < 0 or r > n or n < 0:\n            return 0\n        return C[n][r]\n    \n    total = 1  # for s itself\n    \n    # But wait: different [l',r'] windows give disjoint sets of strings \n    # (since the tight differing region uniquely determines l', r').\n    # So we can just sum over all valid [l',r'].\n    \n    for l in range(n):\n        for r in range(l, n):\n            if count_ones(l, r) == k:\n                L = r - l + 1\n                sl = int(s[l])\n                sr = int(s[r])\n                cnt = safe_C(L, k)\n                cnt = (cnt - safe_C(L-1, k - sl)) % MOD\n                cnt = (cnt - safe_C(L-1, k - sr)) % MOD\n                cnt = (cnt + safe_C(L-2, k - sl - sr)) % MOD\n                cnt %= MOD\n                total = (total + cnt) % MOD\n    \n    print(total)\n\nsolve()",
+      "input_tokens": 557,
+      "output_tokens": 2940,
+      "cost_usd": 0.045771,
+      "latency_ms": 41898
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Also, t = s is always achievable (do nothing, or choose any valid substring and don't change it).\n\nFor counting distinct strings: I'll think about what substrings [l,r] with exactly k ones can produce. For each such [l,r], the number of distinct arrangements is C(len, k) where len = r-l+1. But many overlap.\n\nLet me use inclusion-exclusion or a smarter approach. \n\nFor a fixed number of zeros z in the substring, the substring has length k+z. The set of strings produced by [l,r] with k ones and z zeros is: all strings where outside [l,r] matches s, and inside [l,r] has k ones placed in C(k+z, k) ways.\n\nTwo intervals [l1,r1] and [l2,r2] with the same zero count z produce overlapping sets if they share the same \"outside\" characters... this gets complex.\n\nLet me think about the answer differently. The set of reachable strings: for each valid interval [l,r] (exactly k ones), we can place k ones in any of C(r-l+1, k) ways within [l,r], keeping outside fixed.\n\nI'll enumerate over all possible \"difference regions\". The difference between s and t is confined to some interval. Let me enumerate the minimal difference interval [L, R] where s[L] \u2260 t[L] or s[R] \u2260 t[R] (or t = s).\n\nActually, let me just enumerate all valid intervals [l,r], and for each, count the arrangements, then use inclusion-exclusion to avoid double counting. \n\nFor each arrangement within [l,r], it's also achievable by a sub-interval if that sub-interval also has k ones. To avoid double-counting, I should count arrangements where the \"minimal enclosing interval\" is exactly [l,r] - meaning s[l] or t[l] differ AND s[r] or t[r] differ (or the arrangement equals s, counted once).\n\nThis is getting complex. Let me think about using a set-based DP approach for n=5000.\n\nFor each pair (l, r) with exactly k ones in s[l..r], the achievable strings have free positions inside [l,r]. Two intervals give the same string if the free rearrangement matches. \n\nI'll use the approach: count all (interval, arrangement) pairs, subtract duplicates. Use DP where for each interval we track which arrangements are \"new\" (not covered by a sub-interval with k ones).\n\nLet me implement: for each valid [l,r], count arrangements NOT achievable by any strictly contained valid interval. Sum these up, add 1 for s itself.\n\nFor a valid [l,r], sub-intervals with k ones exist when there's a sub-interval. An arrangement of [l,r] is \"new\" iff the leftmost and rightmost positions that differ from s are exactly at or touching l and r... this requires s[l]\u2260t[l] or l is forced, similarly for r.\n\nI'll implement this carefully.\n\n[After more thought, implementing the direct DP counting unique strings]",
+      "input_tokens": 557,
+      "output_tokens": 1135,
+      "cost_usd": 0.018696,
+      "latency_ms": 25699
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The substring selection condition is incorrect. The problem requires the chosen substring to contain exactly k ones, but the code uses `need = k - ot` and checks `need >= 0` and `need <= avail`, allowing substrings with fewer than k ones and compensating with ones outside the interval, which is not allowed.\",\n      \"line\": 33,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"5 3\\n11100\"\n    },\n    {\n      \"description\": \"The number of distinct strings generated from a valid substring is computed incorrectly. The correct count should be `C(m, k)` (all binary strings of length m with exactly k ones). The code uses `ones_fixed`, `ones_middle`, and `middle_len` to compute `C(middle_len, ones_middle)`, which does not correspond to the required combinatorial count.\",\n      \"line\": 44,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"3 1\\n101\"\n    },\n    {\n      \"description\": \"Substrings of length 1 are unconditionally skipped (`if m == 1: continue`). For k = 1 a length\u20111 substring containing a '1' is a valid operation (it yields the original string, which is already counted, but skipping it also skips the case where the original string is the only reachable one, potentially affecting counting logic).\",\n      \"line\": 41,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"2 1\\n10\"\n    },\n    {\n      \"description\": \"The algorithm adds the count for each substring independently (`ans = (ans + cnt) % MOD`), which double\u2011counts strings that can be obtained from multiple different substrings. The problem asks for the number of distinct strings overall, not the sum over substrings.\",\n      \"line\": 51,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"4 1\\n1100\"\n    },\n    {\n      \"description\": \"When k is larger than the total number of ones in the whole string, the correct answer is 1 (only the original string). Because of the faulty selection logic (Bug\u202f1), the code may still accept substrings and add counts, producing an answer greater than 1.\",\n     ",
+          "parsed": null,
+          "input_tokens": 970,
+          "output_tokens": 473,
+          "cost_usd": 0.00059725,
+          "latency_ms": 9607
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 3,
+          "bugs": [
+            {
+              "description": "The algorithm incorrectly allows substrings whose original number of ones (ot) is not equal to k by using a 'need' variable and checking availability of ones outside the interval. The operation can only shuffle within the chosen substring, so a valid interval must have exactly k ones originally. This logical error leads to counting invalid substrings.",
+              "line": 33,
+              "severity": "critical",
+              "triggering_input": "7 2\n1100110"
+            },
+            {
+              "description": "The combinatorial count for a given interval is computed using 'ones_fixed' and 'ones_middle' based on the endpoint characters, which does not reflect the true number of ways to place k ones inside the interval. The formula C(middle_len, ones_middle) is incorrect.",
+              "line": 44,
+              "severity": "major",
+              "triggering_input": "5 0\n10010"
+            },
+            {
+              "description": "The solution sums the counts for each interval, which overcounts strings that can be obtained from multiple intervals. The problem asks for the number of distinct resulting strings, not the total number of ways to obtain them.",
+              "line": 50,
+              "severity": "critical",
+              "triggering_input": "8 1\n10001000"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm incorrectly allows substrings whose original number of ones (ot) is not equal to k by using a 'need' variable and checking availability of ones outside the interval. The operation can only shuffle within the chosen substring, so a valid interval must have exactly k ones originally. This logical error leads to counting invalid substrings.\",\n      \"line\": 33,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"7 2\\n1100110\"\n    },\n    {\n      \"description\": \"The combinatorial count for a given interval is computed using 'ones_fixed' and 'ones_middle' based on the endpoint characters, which does not reflect the true number of ways to place k ones inside the interval. The formula C(middle_len, ones_middle) is incorrect.\",\n      \"line\": 44,\n      \"severity\": \"major\",\n      \"triggering_input\": \"5 0\\n10010\"\n    },\n    {\n      \"description\": \"The solution sums the counts for each interval, which overcounts strings that can be obtained from multiple intervals. The problem asks for the number of distinct resulting strings, not the total number of ways to obtain them.\",\n      \"line\": 50,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"8 1\\n10001000\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm incorrectly allows substrings whose original number of ones (ot) is not equal to k by using a 'need' variable and checking availability of ones outside the interval. The operation can only shuffle within the chosen substring, so a valid interval must have exactly k ones originally. This logical error leads to counting invalid substrings.",
+                "line": 33,
+                "severity": "critical",
+                "triggering_input": "7 2\n1100110"
+              },
+              {
+                "description": "The combinatorial count for a given interval is computed using 'ones_fixed' and 'ones_middle' based on the endpoint characters, which does not reflect the true number of ways to place k ones inside the interval. The formula C(middle_len, ones_middle) is incorrect.",
+                "line": 44,
+                "severity": "major",
+                "triggering_input": "5 0\n10010"
+              },
+              {
+                "description": "The solution sums the counts for each interval, which overcounts strings that can be obtained from multiple intervals. The problem asks for the number of distinct resulting strings, not the total number of ways to obtain them.",
+                "line": 50,
+                "severity": "critical",
+                "triggering_input": "8 1\n10001000"
+              }
+            ]
+          },
+          "input_tokens": 983,
+          "output_tokens": 285,
+          "cost_usd": 0.0004595,
+          "latency_ms": 5479
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef solve():\n    MOD = 998244353\n    data = sys.stdin.read().split()\n    n, k = int(data[0]), int(data[1])\n    s = data[2]\n    \n    ones = [0] * (n + 1)\n    for i in range(n):\n        ones[i+1] = ones[i] + (1 if s[i] == '1' else 0)\n    \n    fact = [1] * (n + 1)\n    for i in range(1, n+1):\n        fact[i] = fact[i-1] * i % MOD\n    inv_fact = [1] * (n + 1)\n    inv_fact[n] = pow(fact[n], MOD-2, MOD)\n    for i in range(n-1, -1, -1):\n        inv_fact[i] = inv_fact[i+1] * (i+1) % MOD\n    \n    def C(nn, rr):\n        if rr < 0 or rr > nn or nn < 0:\n            return 0\n        return fact[nn] * inv_fact[rr] % MOD * inv_fact[nn-rr] % MOD\n    \n    ans = 1  # the original string s itself\n    \n    for l in range(n):\n        sl = int(s[l])\n        ones_in = 0\n        for r in range(l, n):\n            ones_in += int(s[r])\n            if ones_in != k:\n                continue\n            sr = int(s[r])\n            m = r - l + 1\n            # Count arrangements where s[l] != t[l] and s[r] != t[r]\n            # t[l] != s[l] means t[l] = 1-sl, t[r] = 1-sr\n            # remaining m-2 positions get k - (1-sl) - (1-sr) ones\n            inner_ones = k - (1 - sl) - (1 - sr)\n            cnt = C(m - 2, inner_ones)\n            ans = (ans + cnt) % MOD\n    \n    print(ans)\n\nsolve()",
+          "input_tokens": 1417,
+          "output_tokens": 1307,
+          "cost_usd": 0.023856,
+          "latency_ms": 19920
+        }
+      ],
+      "final_code": "import sys\n\ndef solve():\n    MOD = 998244353\n    data = sys.stdin.read().split()\n    n, k = int(data[0]), int(data[1])\n    s = data[2]\n    \n    ones = [0] * (n + 1)\n    for i in range(n):\n        ones[i+1] = ones[i] + (1 if s[i] == '1' else 0)\n    \n    fact = [1] * (n + 1)\n    for i in range(1, n+1):\n        fact[i] = fact[i-1] * i % MOD\n    inv_fact = [1] * (n + 1)\n    inv_fact[n] = pow(fact[n], MOD-2, MOD)\n    for i in range(n-1, -1, -1):\n        inv_fact[i] = inv_fact[i+1] * (i+1) % MOD\n    \n    def C(nn, rr):\n        if rr < 0 or rr > nn or nn < 0:\n            return 0\n        return fact[nn] * inv_fact[rr] % MOD * inv_fact[nn-rr] % MOD\n    \n    ans = 1  # the original string s itself\n    \n    for l in range(n):\n        sl = int(s[l])\n        ones_in = 0\n        for r in range(l, n):\n            ones_in += int(s[r])\n            if ones_in != k:\n                continue\n            sr = int(s[r])\n            m = r - l + 1\n            # Count arrangements where s[l] != t[l] and s[r] != t[r]\n            # t[l] != s[l] means t[l] = 1-sl, t[r] = 1-sr\n            # remaining m-2 positions get k - (1-sl) - (1-sr) ones\n            inner_ones = k - (1 - sl) - (1 - sr)\n            cnt = C(m - 2, inner_ones)\n            ans = (ans + cnt) % MOD\n    \n    print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 13,
+        "failed": 37,
+        "errors": 0,
+        "pass_rate": 0.26,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "10 8\n0010011000\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "5 0\n10010\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "8 1\n10001000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "7 2\n1100110\n",
+            "expected": "16",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "5 2\n00011\n",
+            "expected": "10",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "5 4\n11011\n",
+            "expected": "5",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "81 5\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "187538",
+            "actual": "154378",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4 3\n1011\n",
+            "expected": "4",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "47 25\n11110011111001110100101010011000110111011011101\n",
+            "expected": "314445058",
+            "actual": "736483421",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "291 159\n011001110111110110001111000110001001111100010001011000110100110010001101100110111010101111100111110000110111001100111010001000011001010011011100101000101011010110010011010100100101111010111000",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "459 15\n1010101010101010101010101010101010101010101011111111111111111111110101010101010101010101010111111111111111111111010101010101010101011111111111111111111111010101010101010101111111111111111111111",
+            "expected": "0",
+            "actual": "394690152",
+            "stderr": "",
+            "runtime_ms": 109,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "105 58\n110101000111100000011011011101110100001000110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "13517188",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "52 11\n0110011111001000010000100010010001010100000100110100\n",
+            "expected": "478323746",
+            "actual": "362392027",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "5 2\n00010\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "81 7\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5742546",
+            "actual": "4753253",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "643",
+            "actual": "463",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "52 11\n0110011111001001010000100010010001010100000100110100\n",
+            "expected": "839081463",
+            "actual": "183415071",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "5 1\n10010\n",
+            "expected": "6",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "5 1\n00010\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "647",
+            "actual": "465",
+            "stderr": "",
+            "runtime_ms": 105,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "105 58\n110101000111100001011011011101110100001000110011010101100010111001011111010000111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "13517188",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "52 11\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "434050274",
+            "actual": "162182846",
+            "stderr": "",
+            "runtime_ms": 95,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "636",
+            "actual": "456",
+            "stderr": "",
+            "runtime_ms": 162,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "52 18\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "599691991",
+            "actual": "613046671",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101110101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "626",
+            "actual": "448",
+            "stderr": "",
+            "runtime_ms": 169,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "52 19\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "952723258",
+            "actual": "353031268",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "52 19\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "195718917",
+            "actual": "616636893",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "52 6\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "255778",
+            "actual": "205480",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "81 2\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "775",
+            "actual": "670",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "47 25\n11110011111001110100101110011000110111011011101\n",
+            "expected": "219763798",
+            "actual": "759149855",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "459 1\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "181",
+            "actual": "181",
+            "stderr": "",
+            "runtime_ms": 176,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "105 58\n110101000111100000011011011101110100001010110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "549888257",
+            "actual": "332037115",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "52 11\n0110011111001000010000100010010001010100100100110100\n",
+            "expected": "830263808",
+            "actual": "227532812",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "81 7\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5476834",
+            "actual": "4533839",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "459 3\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "2059",
+            "actual": "1413",
+            "stderr": "",
+            "runtime_ms": 105,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "52 11\n0110011111001001010000101110010001010100000100110100\n",
+            "expected": "535232724",
+            "actual": "441383837",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "52 16\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "627816599",
+            "actual": "691436985",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "52 3\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "1699",
+            "actual": "1394",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "10 3\n0100011000\n",
+            "expected": "120",
+            "actual": "82",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "5 1\n00011\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "52 11\n0110011111001000010000100010010101010100100100110100\n",
+            "expected": "318132228",
+            "actual": "50106372",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "81 8\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "33638279",
+            "actual": "28161446",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "459 6\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "57312",
+            "actual": "38474",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "105 21\n110101000111100001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "305450807",
+            "actual": "129671461",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "10 1\n0100011000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "52 11\n0110011111101000010000100010010101010100100100110100\n",
+            "expected": "962276979",
+            "actual": "754486826",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "105 21\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "713393410",
+            "actual": "500876859",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "10 1\n0100111000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "105 1\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "90",
+            "actual": "90",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "10 1\n0000111000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 2724,
+          "output_tokens": 0,
+          "cost_usd": 0.000681,
+          "latency_ms": 10472
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 2847,
+          "output_tokens": 0,
+          "cost_usd": 0.00071175,
+          "latency_ms": 7589
+        }
+      ],
+      "fixes": [],
+      "final_code": "The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n\nLet me think differently. A result string t is achievable if there exists [l, r] such that:\n1. t agrees with s outside [l, r]\n2. t[l..r] has exactly k ones\n3. s[l..r] has exactly k ones (same number of ones)\n\nSo t is achievable iff either t == s, or there exists [l, r] where s and t agree outside [l,r], and both s[l..r] and t[l..r] have exactly k ones.\n\nActually condition 3 means: the number of ones in s[l..r] equals k, and the number of ones in t[l..r] equals k (automatic since ones outside are preserved).\n\nSo t is achievable iff t == s OR there exists l \u2264 r such that s and t differ only within [l,r], and s[l..r] has exactly k ones.\n\nEquivalently: let the differing positions between s and t be some set D. t is achievable if D is empty, or D \u2286 [l,r] for some [l,r] where s[l..r] has exactly k ones, and t[l..r] also has k ones (which follows from D being changes that preserve count... wait no, we need t[l..r] to have k ones too).\n\nSince we shuffle: t[l..r] is a permutation of s[l..r], so they have the same number of ones. So t[l..r] must have k ones.\n\nSo: t is achievable iff there exists [l,r] where:\n- s[l..r] has exactly k ones\n- t agrees with s outside [l,r]  \n- t[l..r] has exactly k ones (automatically satisfied since same multiset)\n\nWait, t[l..r] must be a rearrangement of s[l..r]. So t[l..r] has same ones count as s[l..r] = k. And t outside [l,r] = s outside [l,r].\n\nSo the set of achievable strings = {strings t : \u2203[l,r] with s[l..r] having k ones, and t[l..r] is any permutation of k ones and (r-l+1-k) zeros, and t = s outside [l,r]}.\n\nTo count distinct such strings, I'll think of it as: for each window [l,r] with exactly k ones, we can generate C(r-l+1, k) strings (choosing positions of ones within window). Count the union.\n\nUsing inclusion-exclusion is complex. Instead, let me represent each achievable string by the \"minimal\" window that differs from s. \n\nFor a string t \u2260 s achievable via window [l,r]: the actual differing region is [l', r'] \u2286 [l,r] where l' = first differing pos, r' = last differing pos. The minimal window containing the differing region must have exactly k ones in s.\n\nSo: count strings t where the differing positions form a range [l',r'] (or empty), and s[l'..r'] has exactly k ones, and t[l'..r'] has k ones, and t[l'] \u2260 s[l'], t[r'] \u2260 s[r'].\n\nLet me implement this carefully.\n\nimport sys\nfrom functools import lru_cache\n\ndef solve():\n    MOD = 998244353\n    input_data = sys.stdin.read().split()\n    n, k = int(input_data[0]), int(input_data[1])\n    s = input_data[2]\n    \n    # Count distinct achievable strings\n    # Each achievable string t corresponds to choosing window [l,r] with exactly k ones in s,\n    # and any arrangement of k ones in r-l+1 positions for t[l..r], t=s outside.\n    # We want |union over all valid [l,r] of the set of strings from that window|.\n    \n    # Use the \"canonical window\" approach: for each distinct (outside pattern, inner arrangement),\n    # count once. \n    \n    # Actually let's think: two windows [l1,r1] and [l2,r2] produce overlapping sets.\n    # A string t is in window [l,r]'s set iff t=s outside [l,r] and t[l..r] has k ones.\n    \n    # Key insight: if t differs from s only in [l',r'], then t is achievable iff \n    # there's a valid window containing [l',r']. The minimal such window is [l',r'] itself \n    # (if s[l'..r'] has k ones). But we also need t[l'] != s[l'] and t[r'] != s[r'].\n    \n    # Let me just directly count using the \"tight window\" characterization.\n    # A non-s string t is achievable iff:\n    # - Let l' = min differing pos, r' = max differing pos\n    # - s[l'..r'] has exactly k ones\n    # - t[l'..r'] has exactly k ones (same count)\n    # - t[l'] != s[l'], t[r'] != s[r']  (otherwise the tight window would be smaller)\n    # Wait, the last condition isn't needed for achievability, just for minimality.\n    \n    # Actually t is achievable iff s[l'..r'] has exactly k ones (and t[l'..r'] has k ones, automatic).\n    # Because we can use window [l', r'].\n    \n    # So: count strings t != s where:\n    # - t agrees with s outside [l', r'] (by definition of l', r')\n    # - s[l'..r'] has exactly k ones\n    # - t[l'..r'] != s[l'..r'] (since t differs from s in [l',r'])\n    # - t[l'..r'] has k ones\n    # - t[l'] != s[l'] AND t[r'] != s[r'] (tight bounds)\n    \n    # Plus 1 for s itself.\n    \n    # So count = 1 + sum over all [l',r'] where s[l'..r'] has k ones, of \n    #   (number of binary strings of length r'-l'+1 with k ones, that differ from s[l'..r'] \n    #    at both endpoints, i.e., first and last positions differ)\n    \n    # For a window of length L with k ones:\n    # Total arrangements with k ones: C(L, k)\n    # Minus arrangements where first char = s[l'] (fix first char, choose rest)\n    # Minus arrangements where last char = s[r'] (fix last char, choose rest)  \n    # Plus arrangements where both first=s[l'] and last=s[r']\n    # This gives arrangements that differ at both endpoints.\n    \n    # Wait, I need t[l'] != s[l'] OR ... no. The tight bound condition is:\n    # t[l'] != s[l'] (otherwise l' wouldn't be the first differing position)\n    # t[r'] != s[r'] (otherwise r' wouldn't be the last differing position)\n    \n    # So I need: t[l'..r'] has k ones, t[l'] != s[l'], t[r'] != s[r'].\n    # And t[l'..r'] != s[l'..r'] is automatic from t[l'] != s[l'].\n    \n    # Let me precompute prefix ones counts.\n    \n    ones = [0] * (n + 1)\n    for i in range(n):\n        ones[i+1] = ones[i] + (1 if s[i] == '1' else 0)\n    \n    def count_ones(l, r):  # inclusive\n        return ones[r+1] - ones[l]\n    \n    # Precompute combinations\n    from math import comb\n    # But we need mod... let me precompute\n    \n    max_n = n + 1\n    C = [[0] * (max_n + 1) for _ in range(max_n + 1)]\n    C[0][0] = 1\n    for i in range(1, max_n + 1):\n        C[i][0] = 1\n        for j in range(1, i + 1):\n            C[i][j] = (C[i-1][j-1] + C[i-1][j]) % MOD\n    \n    # For each [l, r] (0-indexed) with count_ones(l,r) == k:\n    # Count arrangements of k ones in (r-l+1) positions with:\n    #   position 0 (=l) != s[l], position (r-l) (=r) != s[r]\n    \n    # s[l] and s[r] are 0 or 1.\n    # Let L = r - l + 1, sl = int(s[l]), sr = int(s[r])\n    # Total with k ones: C(L, k)\n    # With pos 0 = sl: C(L-1, k - sl)\n    # With pos L-1 = sr: C(L-1, k - sr)\n    # With pos 0 = sl AND pos L-1 = sr: C(L-2, k - sl - sr)\n    \n    # Count with pos0 != sl AND posL-1 != sr:\n    # = C(L,k) - C(L-1, k-sl) - C(L-1, k-sr) + C(L-2, k-sl-sr)\n    # (inclusion-exclusion)\n    \n    def safe_C(n, r):\n        if r < 0 or r > n or n < 0:\n            return 0\n        return C[n][r]\n    \n    total = 1  # for s itself\n    \n    # But wait: different [l',r'] windows give disjoint sets of strings \n    # (since the tight differing region uniquely determines l', r').\n    # So we can just sum over all valid [l',r'].\n    \n    for l in range(n):\n        for r in range(l, n):\n            if count_ones(l, r) == k:\n                L = r - l + 1\n                sl = int(s[l])\n                sr = int(s[r])\n                cnt = safe_C(L, k)\n                cnt = (cnt - safe_C(L-1, k - sl)) % MOD\n                cnt = (cnt - safe_C(L-1, k - sr)) % MOD\n                cnt = (cnt + safe_C(L-2, k - sl - sr)) % MOD\n                cnt %= MOD\n                total = (total + cnt) % MOD\n    \n    print(total)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "10 8\n0010011000\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "5 0\n10010\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "8 1\n10001000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "7 2\n1100110\n",
+            "expected": "16",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "5 2\n00011\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "5 4\n11011\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "81 5\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "187538",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4 3\n1011\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "47 25\n11110011111001110100101010011000110111011011101\n",
+            "expected": "314445058",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "291 159\n011001110111110110001111000110001001111100010001011000110100110010001101100110111010101111100111110000110111001100111010001000011001010011011100101000101011010110010011010100100101111010111000",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "459 15\n1010101010101010101010101010101010101010101011111111111111111111110101010101010101010101010111111111111111111111010101010101010101011111111111111111111111010101010101010101111111111111111111111",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "105 58\n110101000111100000011011011101110100001000110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 43,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "52 11\n0110011111001000010000100010010001010100000100110100\n",
+            "expected": "478323746",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "5 2\n00010\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "81 7\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5742546",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "643",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "52 11\n0110011111001001010000100010010001010100000100110100\n",
+            "expected": "839081463",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "5 1\n10010\n",
+            "expected": "6",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "5 1\n00010\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "647",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "105 58\n110101000111100001011011011101110100001000110011010101100010111001011111010000111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "52 11\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "434050274",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "636",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "52 18\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "599691991",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101110101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "626",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "52 19\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "952723258",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "52 19\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "195718917",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "52 6\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "255778",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 46,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "81 2\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "775",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 57,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "47 25\n11110011111001110100101110011000110111011011101\n",
+            "expected": "219763798",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "459 1\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "181",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "105 58\n110101000111100000011011011101110100001010110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "549888257",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 43,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "52 11\n0110011111001000010000100010010001010100100100110100\n",
+            "expected": "830263808",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "81 7\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5476834",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "459 3\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "2059",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "52 11\n0110011111001001010000101110010001010100000100110100\n",
+            "expected": "535232724",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "52 16\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "627816599",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 49,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "52 3\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "1699",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 47,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "10 3\n0100011000\n",
+            "expected": "120",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "5 1\n00011\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "52 11\n0110011111001000010000100010010101010100100100110100\n",
+            "expected": "318132228",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "81 8\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "33638279",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "459 6\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "57312",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "105 21\n110101000111100001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "305450807",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "10 1\n0100011000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "52 11\n0110011111101000010000100010010101010100100100110100\n",
+            "expected": "962276979",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "105 21\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "713393410",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "10 1\n0100111000\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "105 1\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "90",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "10 1\n0000111000\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    The approach: collect all distinct strings. Since n=5000, we can't enumerate all strings explicitly.\n                                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided code is incomplete and contains only comments and a high\u2011level plan; there is no actual implementation of the algorithm, no input parsing, no output, and no functional logic. This code cannot compile or run, so it fails to solve the problem.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The provided code is incomplete and contains only comments and a high\u2011level plan; there is no actual implementation of the algorithm, no input parsing, no output, and no functional logic. This code cannot compile or run, so it fails to solve the problem.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided code is incomplete and contains only comments and a high\u2011level plan; there is no actual implementation of the algorithm, no input parsing, no output, and no functional logic. This code cannot compile or run, so it fails to solve the problem.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 1167,
+          "output_tokens": 98,
+          "cost_usd": 0.00036525,
+          "latency_ms": 894
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided code is not valid Python code; it contains plain English text and comments without any executable statements, missing input parsing, logic implementation, and output. This results in a syntax error and no solution.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The provided code is not valid Python code; it contains plain English text and comments without any executable statements, missing input parsing, logic implementation, and output. This results in a syntax error and no solution.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided code is not valid Python code; it contains plain English text and comments without any executable statements, missing input parsing, logic implementation, and output. This results in a syntax error and no solution.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 1167,
+          "output_tokens": 85,
+          "cost_usd": 0.0003555,
+          "latency_ms": 1000
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom math import comb\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, k = int(input_data[0]), int(input_data[1])\n    s = input_data[2]\n    \n    MOD = 998244353\n    \n    # Precompute prefix sum of ones\n    prefix = [0] * (n + 1)\n    for i in range(n):\n        prefix[i+1] = prefix[i] + (1 if s[i] == '1' else 0)\n    \n    total_ones = prefix[n]\n    \n    # If k == 0, we can only pick substrings with 0 ones (all zeros substrings)\n    # Rearranging zeros doesn't change anything, so answer is 1\n    if k == 0:\n        print(1)\n        return\n    \n    # For each valid interval [l, r] (0-indexed) with exactly k ones,\n    # we can produce C(r-l+1, k) different strings (place k ones anywhere in [l,r]).\n    # We need to count distinct strings across all valid intervals.\n    \n    # Key insight: A string t is reachable iff there exists an interval [l,r] with\n    # exactly k ones in s[l..r], such that t agrees with s outside [l,r] and\n    # t[l..r] has exactly k ones.\n    \n    # To count distinct reachable strings, we use the following approach:\n    # For each valid interval [l,r], count arrangements that are NOT achievable\n    # by any valid sub-interval. An arrangement t of [l,r] is \"new\" relative to [l,r]\n    # if no strictly smaller valid interval [l',r'] \u2282 [l,r] produces the same t.\n    \n    # An arrangement t within [l,r] is also achievable by a sub-interval if\n    # t[l..l'-1] == s[l..l'-1] and t[r'+1..r] == s[r'+1..r] for some [l',r'] \u2282 [l,r]\n    # with exactly k ones in s[l'..r'].\n    \n    # Simpler: t is achievable by a sub-interval of [l,r] iff the \"changed\" region\n    # (positions where t differs from s) is contained in some valid sub-interval.\n    \n    # For counting, let's think about it differently:\n    # Count arrangements where t[l] != s[l] OR t[r] != s[r] (boundary is \"used\").\n    # More precisely, count arrangements where the minimal interval containing all\n    # differences is exactly [l,r] or is empty (t==s).\n    \n    # Let's enumerate by the number of zeros z in the chosen interval.\n    # For a fixed z, intervals have length k+z.\n    # For each such interval [l, r] (r = l+k+z-1), count arrangements where\n    # t[l] != s[l] OR t[r] != s[r] (to avoid counting sub-intervals).\n    \n    # Actually, let's use inclusion-exclusion on the left and right boundaries.\n    # For interval [l,r] with z zeros:\n    # \"new\" arrangements = total - (arrangements where t[l]==s[l]) - (arrangements where t[r]==s[r])\n    #                    + (arrangements where t[l]==s[l] AND t[r]==s[r])\n    \n    # But this overcounts sub-intervals. Let me use a cleaner DP.\n    \n    # Alternative clean approach:\n    # For each valid interval [l,r], the set of strings it generates is determined by\n    # the outside of [l,r] (fixed = s) and inside has k ones in r-l+1 positions.\n    # Two intervals [l1,r1] and [l2,r2] generate overlapping sets.\n    # \n    # Use the \"canonical interval\" idea: for each reachable string t != s,\n    # define its canonical interval as the minimal [L,R] such that t differs from s\n    # only within [L,R]. Then t is counted exactly once under its canonical interval.\n    # The canonical interval must be a valid interval (have exactly k ones in s).\n    \n    # For t != s with canonical interval [L,R]:\n    # - t[L] != s[L] and t[R] != s[R] (since L,R are minimal)\n    # - s[L..R] has exactly k ones\n    # - t[L..R] has exactly k ones\n    # - No valid sub-interval of [L,R] contains all differences\n    #   (which is guaranteed since L,R are the extremes of differences)\n    \n    # So for each valid [l,r], count arrangements t where t[l]!=s[l] AND t[r]!=s[r]\n    # and t has k ones in [l,r]. This gives the count of strings with canonical interval [l,r].\n    # Plus 1 for t=s.\n    \n    # For interval [l,r] with ones_count = k, zeros_count = z = (r-l+1-k):\n    # Total arrangements: C(k+z, k)\n    # Arrangements where t[l] == s[l]: \n    #   if s[l]=='1': place remaining k-1 ones in remaining k+z-1 positions: C(k+z-1, k-1)\n    #   if s[l]=='0': place k ones in remaining k+z-1 positions: C(k+z-1, k)\n    # Similarly for t[r] == s[r].\n    # Arrangements where t[l]==s[l] AND t[r]==s[r]: depends on s[l] and s[r].\n    \n    # By inclusion-exclusion:\n    # new(l,r) = C(k+z,k) - fix_l - fix_r + fix_l_and_r\n    \n    ans = 1  # for t = s\n    \n    for l in range(n):\n        ones_so_far = 0\n        for r in range(l, n):\n            if s[r] == '1':\n                ones_so_far += 1\n            if ones_so_far == k:\n                # Valid interval [l, r]\n                length = r - l + 1\n                z = length - k  # number of zeros\n                \n                total = comb(length, k) % MOD\n                \n                # fix left: t[l] == s[l]\n                if s[l] == '1':\n                    fix_l = comb(length - 1, k - 1) % MOD\n                else:\n                    fix_l = comb(length - 1, k) % MOD\n                \n                # fix right: t[r] == s[r]\n                if s[r] == '1':\n                    fix_r = comb(length - 1, k - 1) % MOD\n                else:\n                    fix_r = comb(length - 1, k) % MOD\n                \n                # fix both: t[l]==s[l] AND t[r]==s[r]\n                if l == r:\n                    # single character, l==r\n                    fix_lr = comb(length, k) % MOD\n                else:\n                    sl = 1 if s[l] == '1' else 0\n                    sr = 1 if s[r] == '1' else 0\n                    remaining_ones = k - sl - sr\n                    remaining_len = length - 2\n                    if remaining_ones < 0 or remaining_ones > remaining_len:\n                        fix_lr = 0\n                    else:\n                        fix_lr = comb(remaining_len, remaining_ones) % MOD\n                \n                new_count = (total - fix_l - fix_r + fix_lr) % MOD\n                ans = (ans + new_count) % MOD\n            elif ones_so_far > k:\n                break\n    \n    print(ans % MOD)\n\nsolve()",
+          "input_tokens": 1368,
+          "output_tokens": 2001,
+          "cost_usd": 0.034119,
+          "latency_ms": 25294
+        }
+      ],
+      "final_code": "import sys\nfrom math import comb\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, k = int(input_data[0]), int(input_data[1])\n    s = input_data[2]\n    \n    MOD = 998244353\n    \n    # Precompute prefix sum of ones\n    prefix = [0] * (n + 1)\n    for i in range(n):\n        prefix[i+1] = prefix[i] + (1 if s[i] == '1' else 0)\n    \n    total_ones = prefix[n]\n    \n    # If k == 0, we can only pick substrings with 0 ones (all zeros substrings)\n    # Rearranging zeros doesn't change anything, so answer is 1\n    if k == 0:\n        print(1)\n        return\n    \n    # For each valid interval [l, r] (0-indexed) with exactly k ones,\n    # we can produce C(r-l+1, k) different strings (place k ones anywhere in [l,r]).\n    # We need to count distinct strings across all valid intervals.\n    \n    # Key insight: A string t is reachable iff there exists an interval [l,r] with\n    # exactly k ones in s[l..r], such that t agrees with s outside [l,r] and\n    # t[l..r] has exactly k ones.\n    \n    # To count distinct reachable strings, we use the following approach:\n    # For each valid interval [l,r], count arrangements that are NOT achievable\n    # by any valid sub-interval. An arrangement t of [l,r] is \"new\" relative to [l,r]\n    # if no strictly smaller valid interval [l',r'] \u2282 [l,r] produces the same t.\n    \n    # An arrangement t within [l,r] is also achievable by a sub-interval if\n    # t[l..l'-1] == s[l..l'-1] and t[r'+1..r] == s[r'+1..r] for some [l',r'] \u2282 [l,r]\n    # with exactly k ones in s[l'..r'].\n    \n    # Simpler: t is achievable by a sub-interval of [l,r] iff the \"changed\" region\n    # (positions where t differs from s) is contained in some valid sub-interval.\n    \n    # For counting, let's think about it differently:\n    # Count arrangements where t[l] != s[l] OR t[r] != s[r] (boundary is \"used\").\n    # More precisely, count arrangements where the minimal interval containing all\n    # differences is exactly [l,r] or is empty (t==s).\n    \n    # Let's enumerate by the number of zeros z in the chosen interval.\n    # For a fixed z, intervals have length k+z.\n    # For each such interval [l, r] (r = l+k+z-1), count arrangements where\n    # t[l] != s[l] OR t[r] != s[r] (to avoid counting sub-intervals).\n    \n    # Actually, let's use inclusion-exclusion on the left and right boundaries.\n    # For interval [l,r] with z zeros:\n    # \"new\" arrangements = total - (arrangements where t[l]==s[l]) - (arrangements where t[r]==s[r])\n    #                    + (arrangements where t[l]==s[l] AND t[r]==s[r])\n    \n    # But this overcounts sub-intervals. Let me use a cleaner DP.\n    \n    # Alternative clean approach:\n    # For each valid interval [l,r], the set of strings it generates is determined by\n    # the outside of [l,r] (fixed = s) and inside has k ones in r-l+1 positions.\n    # Two intervals [l1,r1] and [l2,r2] generate overlapping sets.\n    # \n    # Use the \"canonical interval\" idea: for each reachable string t != s,\n    # define its canonical interval as the minimal [L,R] such that t differs from s\n    # only within [L,R]. Then t is counted exactly once under its canonical interval.\n    # The canonical interval must be a valid interval (have exactly k ones in s).\n    \n    # For t != s with canonical interval [L,R]:\n    # - t[L] != s[L] and t[R] != s[R] (since L,R are minimal)\n    # - s[L..R] has exactly k ones\n    # - t[L..R] has exactly k ones\n    # - No valid sub-interval of [L,R] contains all differences\n    #   (which is guaranteed since L,R are the extremes of differences)\n    \n    # So for each valid [l,r], count arrangements t where t[l]!=s[l] AND t[r]!=s[r]\n    # and t has k ones in [l,r]. This gives the count of strings with canonical interval [l,r].\n    # Plus 1 for t=s.\n    \n    # For interval [l,r] with ones_count = k, zeros_count = z = (r-l+1-k):\n    # Total arrangements: C(k+z, k)\n    # Arrangements where t[l] == s[l]: \n    #   if s[l]=='1': place remaining k-1 ones in remaining k+z-1 positions: C(k+z-1, k-1)\n    #   if s[l]=='0': place k ones in remaining k+z-1 positions: C(k+z-1, k)\n    # Similarly for t[r] == s[r].\n    # Arrangements where t[l]==s[l] AND t[r]==s[r]: depends on s[l] and s[r].\n    \n    # By inclusion-exclusion:\n    # new(l,r) = C(k+z,k) - fix_l - fix_r + fix_l_and_r\n    \n    ans = 1  # for t = s\n    \n    for l in range(n):\n        ones_so_far = 0\n        for r in range(l, n):\n            if s[r] == '1':\n                ones_so_far += 1\n            if ones_so_far == k:\n                # Valid interval [l, r]\n                length = r - l + 1\n                z = length - k  # number of zeros\n                \n                total = comb(length, k) % MOD\n                \n                # fix left: t[l] == s[l]\n                if s[l] == '1':\n                    fix_l = comb(length - 1, k - 1) % MOD\n                else:\n                    fix_l = comb(length - 1, k) % MOD\n                \n                # fix right: t[r] == s[r]\n                if s[r] == '1':\n                    fix_r = comb(length - 1, k - 1) % MOD\n                else:\n                    fix_r = comb(length - 1, k) % MOD\n                \n                # fix both: t[l]==s[l] AND t[r]==s[r]\n                if l == r:\n                    # single character, l==r\n                    fix_lr = comb(length, k) % MOD\n                else:\n                    sl = 1 if s[l] == '1' else 0\n                    sr = 1 if s[r] == '1' else 0\n                    remaining_ones = k - sl - sr\n                    remaining_len = length - 2\n                    if remaining_ones < 0 or remaining_ones > remaining_len:\n                        fix_lr = 0\n                    else:\n                        fix_lr = comb(remaining_len, remaining_ones) % MOD\n                \n                new_count = (total - fix_l - fix_r + fix_lr) % MOD\n                ans = (ans + new_count) % MOD\n            elif ones_so_far > k:\n                break\n    \n    print(ans % MOD)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 13,
+        "failed": 37,
+        "errors": 0,
+        "pass_rate": 0.26,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "10 8\n0010011000\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "5 0\n10010\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "8 1\n10001000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "7 2\n1100110\n",
+            "expected": "16",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "5 2\n00011\n",
+            "expected": "10",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "5 4\n11011\n",
+            "expected": "5",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "81 5\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "187538",
+            "actual": "154378",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4 3\n1011\n",
+            "expected": "4",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "47 25\n11110011111001110100101010011000110111011011101\n",
+            "expected": "314445058",
+            "actual": "736483421",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "291 159\n011001110111110110001111000110001001111100010001011000110100110010001101100110111010101111100111110000110111001100111010001000011001010011011100101000101011010110010011010100100101111010111000",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "459 15\n1010101010101010101010101010101010101010101011111111111111111111110101010101010101010101010111111111111111111111010101010101010101011111111111111111111111010101010101010101111111111111111111111",
+            "expected": "0",
+            "actual": "394690152",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "105 58\n110101000111100000011011011101110100001000110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "13517188",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "52 11\n0110011111001000010000100010010001010100000100110100\n",
+            "expected": "478323746",
+            "actual": "362392027",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "5 2\n00010\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "81 7\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5742546",
+            "actual": "4753253",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "643",
+            "actual": "463",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "52 11\n0110011111001001010000100010010001010100000100110100\n",
+            "expected": "839081463",
+            "actual": "183415071",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "5 1\n10010\n",
+            "expected": "6",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "5 1\n00010\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "647",
+            "actual": "465",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "105 58\n110101000111100001011011011101110100001000110011010101100010111001011111010000111101011011010110011011110\n",
+            "expected": "132732930",
+            "actual": "13517188",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "52 11\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "434050274",
+            "actual": "162182846",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "636",
+            "actual": "456",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "52 18\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "599691991",
+            "actual": "613046671",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101110101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "626",
+            "actual": "448",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "52 19\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "952723258",
+            "actual": "353031268",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "52 19\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "195718917",
+            "actual": "616636893",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "52 6\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "255778",
+            "actual": "205480",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "81 2\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "775",
+            "actual": "670",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "47 25\n11110011111001110100101110011000110111011011101\n",
+            "expected": "219763798",
+            "actual": "759149855",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "459 1\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "181",
+            "actual": "181",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "105 58\n110101000111100000011011011101110100001010110011010101100010111001011111010010111101011011010110011011110\n",
+            "expected": "549888257",
+            "actual": "332037115",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "52 11\n0110011111001000010000100010010001010100100100110100\n",
+            "expected": "830263808",
+            "actual": "227532812",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "81 7\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "5476834",
+            "actual": "4533839",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "459 3\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "2059",
+            "actual": "1413",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "52 11\n0110011111001001010000101110010001010100000100110100\n",
+            "expected": "535232724",
+            "actual": "441383837",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "52 16\n0110011111001001010000100110010001010100000100110100\n",
+            "expected": "627816599",
+            "actual": "691436985",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "52 3\n0110111111001001010000100110010001010100000100110100\n",
+            "expected": "1699",
+            "actual": "1394",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "10 3\n0100011000\n",
+            "expected": "120",
+            "actual": "82",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "5 1\n00011\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "52 11\n0110011111001000010000100010010101010100100100110100\n",
+            "expected": "318132228",
+            "actual": "50106372",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "81 8\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+            "expected": "33638279",
+            "actual": "28161446",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "459 6\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+            "expected": "57312",
+            "actual": "38474",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "105 21\n110101000111100001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "305450807",
+            "actual": "129671461",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "10 1\n0100011000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "52 11\n0110011111101000010000100010010101010100100100110100\n",
+            "expected": "962276979",
+            "actual": "754486826",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "105 21\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "713393410",
+            "actual": "500876859",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "10 1\n0100111000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "105 1\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+            "expected": "90",
+            "actual": "90",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "10 1\n0000111000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 13,
+    "failed": 37,
+    "errors": 0,
+    "pass_rate": 0.26,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "10 8\n0010011000\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "5 0\n10010\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "8 1\n10001000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "7 2\n1100110\n",
+        "expected": "16",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "5 2\n00011\n",
+        "expected": "10",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "5 4\n11011\n",
+        "expected": "5",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "81 5\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+        "expected": "187538",
+        "actual": "154378",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "4 3\n1011\n",
+        "expected": "4",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "47 25\n11110011111001110100101010011000110111011011101\n",
+        "expected": "314445058",
+        "actual": "736483421",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "291 159\n011001110111110110001111000110001001111100010001011000110100110010001101100110111010101111100111110000110111001100111010001000011001010011011100101000101011010110010011010100100101111010111000",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "459 15\n1010101010101010101010101010101010101010101011111111111111111111110101010101010101010101010111111111111111111111010101010101010101011111111111111111111111010101010101010101111111111111111111111",
+        "expected": "0",
+        "actual": "394690152",
+        "stderr": "",
+        "runtime_ms": 109,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "105 58\n110101000111100000011011011101110100001000110011010101100010111001011111010010111101011011010110011011110\n",
+        "expected": "132732930",
+        "actual": "13517188",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "52 11\n0110011111001000010000100010010001010100000100110100\n",
+        "expected": "478323746",
+        "actual": "362392027",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "5 2\n00010\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "81 7\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+        "expected": "5742546",
+        "actual": "4753253",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "643",
+        "actual": "463",
+        "stderr": "",
+        "runtime_ms": 87,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "52 11\n0110011111001001010000100010010001010100000100110100\n",
+        "expected": "839081463",
+        "actual": "183415071",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "5 1\n10010\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "5 1\n00010\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "459 2\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "647",
+        "actual": "465",
+        "stderr": "",
+        "runtime_ms": 105,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "105 58\n110101000111100001011011011101110100001000110011010101100010111001011111010000111101011011010110011011110\n",
+        "expected": "132732930",
+        "actual": "13517188",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "52 11\n0110011111001001010000100110010001010100000100110100\n",
+        "expected": "434050274",
+        "actual": "162182846",
+        "stderr": "",
+        "runtime_ms": 95,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "636",
+        "actual": "456",
+        "stderr": "",
+        "runtime_ms": 162,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "52 18\n0110011111001001010000100110010001010100000100110100\n",
+        "expected": "599691991",
+        "actual": "613046671",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "459 2\n10101010101010101010101010101010111010101010111111111111111111111101110101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "626",
+        "actual": "448",
+        "stderr": "",
+        "runtime_ms": 169,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "52 19\n0110011111001001010000100110010001010100000100110100\n",
+        "expected": "952723258",
+        "actual": "353031268",
+        "stderr": "",
+        "runtime_ms": 80,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "52 19\n0110111111001001010000100110010001010100000100110100\n",
+        "expected": "195718917",
+        "actual": "616636893",
+        "stderr": "",
+        "runtime_ms": 74,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "52 6\n0110111111001001010000100110010001010100000100110100\n",
+        "expected": "255778",
+        "actual": "205480",
+        "stderr": "",
+        "runtime_ms": 74,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "81 2\n100000101000000011001101010100001010111000000110000000001000101101111000001000110\n",
+        "expected": "775",
+        "actual": "670",
+        "stderr": "",
+        "runtime_ms": 78,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "47 25\n11110011111001110100101110011000110111011011101\n",
+        "expected": "219763798",
+        "actual": "759149855",
+        "stderr": "",
+        "runtime_ms": 75,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "459 1\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "181",
+        "actual": "181",
+        "stderr": "",
+        "runtime_ms": 176,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "105 58\n110101000111100000011011011101110100001010110011010101100010111001011111010010111101011011010110011011110\n",
+        "expected": "549888257",
+        "actual": "332037115",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "52 11\n0110011111001000010000100010010001010100100100110100\n",
+        "expected": "830263808",
+        "actual": "227532812",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "81 7\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+        "expected": "5476834",
+        "actual": "4533839",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "459 3\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "2059",
+        "actual": "1413",
+        "stderr": "",
+        "runtime_ms": 105,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "52 11\n0110011111001001010000101110010001010100000100110100\n",
+        "expected": "535232724",
+        "actual": "441383837",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "52 16\n0110011111001001010000100110010001010100000100110100\n",
+        "expected": "627816599",
+        "actual": "691436985",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "52 3\n0110111111001001010000100110010001010100000100110100\n",
+        "expected": "1699",
+        "actual": "1394",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "10 3\n0100011000\n",
+        "expected": "120",
+        "actual": "82",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "5 1\n00011\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "52 11\n0110011111001000010000100010010101010100100100110100\n",
+        "expected": "318132228",
+        "actual": "50106372",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "81 8\n100000111000000011001101010100001010111000000110000000001000101101111000001000110\n",
+        "expected": "33638279",
+        "actual": "28161446",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "459 6\n10101010101010101010101010101010101010101010111111111111111111111101010101010101010101010101111111111111111111110101010101010101010111111111111111111111110101010101010101011111111111111111111111",
+        "expected": "57312",
+        "actual": "38474",
+        "stderr": "",
+        "runtime_ms": 83,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "105 21\n110101000111100001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+        "expected": "305450807",
+        "actual": "129671461",
+        "stderr": "",
+        "runtime_ms": 75,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "10 1\n0100011000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "52 11\n0110011111101000010000100010010101010100100100110100\n",
+        "expected": "962276979",
+        "actual": "754486826",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "105 21\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+        "expected": "713393410",
+        "actual": "500876859",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "10 1\n0100111000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "105 1\n110101000111110001011011011101110100001000110011010101100010111011011111010000111101011011010110011011110\n",
+        "expected": "90",
+        "actual": "90",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "10 1\n0000111000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.24792825000000002,
+  "total_latency_ms": 266899,
+  "iterations_used": null,
+  "early_stopped": null
+}

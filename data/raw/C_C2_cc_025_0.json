@@ -1,0 +1,1201 @@
+{
+  "study": "C",
+  "condition": "C2",
+  "task_id": "cc_025",
+  "replica": 0,
+  "strategy_family": "debate",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    # f[i][j]: max staircase length ending at (i,j) with last move Right (type1: RDRD, type2: DRDR - last R)\n    # g[i][j]: max staircase length ending at (i,j) with last move Down\n    # For type1: f[i][j] = g[i][j-1]+1 if both free; g[i][j] = f[i-1][j]+1 if both free\n    # For type2: same recurrence! Because type2 starts D, but the recurrences are the same.\n    # Wait, type1 and type2 are actually captured by the same f,g if we think of it as:\n    # any staircase path (alternating R and D) - the recurrence is the same regardless of which comes first.\n    \n    f = [[0]*(m+2) for _ in range(n+2)]  # last move Right\n    g = [[0]*(m+2) for _ in range(n+2)]  # last move Down\n    \n    # Initialize: all free\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1  # came from left\n            g[i][j] = f[i-1][j] + 1  # came from above\n    \n    # total = n*m + sum(f[i][j]-1 + g[i][j]-1) for all i,j\n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            total += f[i][j] - 1 + g[i][j] - 1\n    \n    def recompute(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return\n        # recompute f[i][j] and g[i][j]\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1\n            # Actually f[i][j] = g[i][j-1]+1 if j>1 and cell (i,j-1) is free, else 1\n            # Wait: f[i][j] = length of staircase ending at (i,j) last move R\n            # This means (i,j-1) must be free AND g[i][j-1] >= 1 (i.e., (i,j-1) is free)\n            # g[i][j-1] is 0 if (i,j-1) is locked\n            f[i][j] = g[i][j-1] + 1  # g[i][j-1] is 0 if locked, so f becomes 1\n            g[i][j] = f[i-1][j] + 1  # f[i-1][j] is 0 if locked\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        if f[i][j] != old_f or g[i][j] != old_g:\n            # propagate: next cell that uses f[i][j] is g[i+1][j] (down)\n            # next cell that uses g[i][j] is f[i][j+1] (right)\n            recompute(i+1, j)  # g[i+1][j] uses f[i][j]... wait\n            recompute(i, j+1)  # f[i][j+1] uses g[i][j]\n    \n    # Hmm, recursion might be deep. Let me think about the propagation more carefully.\n    # When f[i][j] changes, g[i+1][j] might change (since g[i+1][j] = f[i][j]+1 if free)\n    # When g[i][j] changes, f[i][j+1] might change (since f[i][j+1] = g[i][j]+1 if free)\n    # So the chain goes: f[i][j] -> g[i+1][j] -> f[i+1][j+1] -> g[i+2][j+1] -> ...\n    # This is a diagonal chain! Length O(min(n,m)).\n    \n    # Let me redo without recursion.\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            # cell became locked, need to update f[x][y], g[x][y] and propagate\n            total -= (f[x][y] - 1) + (g[x][y] - 1) + 1  # remove single cell staircase too\n            f[x][y] = 0\n            g[x][y] = 0\n            # propagate via two chains\n            # Chain 1: g[x+1][y] depends on f[x][y], then f[x+1][y+1] depends on g[x+1][y], etc.\n            # Chain 2: f[x][y+1] depends on g[x][y], then g[x+1][y+1] depends on f[x][y+1], etc.\n            # But also need to recompute f[x][y] and g[x][y] themselves first... done above\n            # Now propagate chain starting from (x+1, y) for g, and (x, y+1) for f\n            # Actually let me just recompute all affected cells\n            \n            # After (x,y) is locked:\n            # - g[x+1][y] = f[x][y]+1 = 1 (if x+1,y free), was possibly more\n            # - f[x][y+1] = g[x][y]+1 = 1 (if x,y+1 free), was possibly more\n            # Then propagate\n            \n            # Let me do two separate diagonal propagations\n            # Propagation 1: starting from cell (x+1, y), update g, then f at (x+1,y+1), then g at (x+2,y+1)...\n            ci, cj = x+1, y\n            update_g = True  # next update is g\n            while ci <= n and cj <= m:\n                if update_g:\n                    if not locked[ci][cj]:\n                        new_val = f[ci-1][cj] + 1\n                        if new_val == g[ci][cj]:\n                            break\n                        old = g[ci][cj]\n                        total += new_val - old\n                        g[ci][cj] = new_val\n                        ci += 0; cj += 1; update_g = False\n                        # next: f[ci][cj+1]... wait\n                        # after updating g[ci][cj], next affected is f[ci][cj+1]\n                        cj_next = cj  # already incremented? No.\n                        # Let me restructure\n                    else:\n                        break\n                else:\n                    if not locked[ci][cj]:\n                        new_val = g[ci][cj-1] + 1\n                        if new_val == f[ci][cj]:\n                            break\n                        old = f[ci][cj]\n                        total += new_val - old\n                        f[ci][cj] = new_val\n                        ci += 1; update_g = True\n                    else:\n                        break\n        # This is getting complicated. Let me restructure completely.\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "input_tokens": 738,
+      "output_tokens": 8192,
+      "cost_usd": 0.125094,
+      "latency_ms": 97722
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "attacker",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 5,
+          "bugs": [
+            {
+              "description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.",
+              "triggering_input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+              "expected_output": "5\n10\n5\n2\n5\n3\n1\n0\n",
+              "actual_behavior": "The program prints completely different numbers (or may even raise an exception) because the total is mis\u2011computed. For the given input it does not match the expected sequence.",
+              "severity": "critical"
+            },
+            {
+              "description": "The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).",
+              "triggering_input": "1 2 1\n1 2\n",
+              "expected_output": "2\n",
+              "actual_behavior": "The program outputs an incorrect count (e.g., 3) because the neighbour\u2011locked condition is ignored, leading to an over\u2011estimation of staircase lengths.",
+              "severity": "major"
+            },
+            {
+              "description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+              "triggering_input": "2 2 2\n1 1\n1 1\n",
+              "expected_output": "5\n10\n",
+              "actual_behavior": "The program prints `5` for the first query (correct) but prints the same `5` for the second query instead of `10`, because the unlock case is not processed.",
+              "severity": "major"
+            },
+            {
+              "description": "The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.",
+              "triggering_input": "3 3 1\n2 2\n",
+              "expected_output": "13\n",
+              "actual_behavior": "The program crashes with a `NameError: name 'ci' is not defined' or hangs indefinitely due to the faulty loop.",
+              "severity": "critical"
+            },
+            {
+              "description": "The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.",
+              "triggering_input": "1 1 1\n1 1\n",
+              "expected_output": "0\n",
+              "actual_behavior": "The program may produce a negative total (e.g., `-1`) or raise an exception due to the incorrect subtraction.",
+              "severity": "major"
+            }
+          ],
+          "raw_response": "{\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.\",\n      \"triggering_input\": \"2 2 8\\n1 1\\n1 1\\n1 1\\n2 2\\n1 1\\n1 2\\n2 1\\n1 1\\n\",\n      \"expected_output\": \"5\\n10\\n5\\n2\\n5\\n3\\n1\\n0\\n\",\n      \"actual_behavior\": \"The program prints completely different numbers (or may even raise an exception) because the total is mis\u2011computed. For the given input it does not match the expected sequence.\",\n      \"severity\": \"critical\"\n    },\n    {\n      \"description\": \"The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).\",\n      \"triggering_input\": \"1 2 1\\n1 2\\n\",\n      \"expected_output\": \"2\\n\",\n      \"actual_behavior\": \"The program outputs an incorrect count (e.g., 3) because the neighbour\u2011locked condition is ignored, leading to an over\u2011estimation of staircase lengths.\",\n      \"severity\": \"major\"\n    },\n    {\n      \"description\": \"The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.\",\n      \"triggering_input\": \"2 2 2\\n1 1\\n1 1\\n\",\n      \"expected_output\": \"5\\n10\\n\",\n      \"actual_behavior\": \"The program prints `5` for the first query (correct) but prints the same `5` for the second query instead of `10`, because the unlock case is not processed.\",\n      \"severity\": \"major\"\n    },\n    {\n      \"description\": \"The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.\",\n      \"triggering_input\": \"3 3 1\\n2 2\\n\",\n      \"expected_output\": \"13\\n\",\n      \"actual_behavior\": \"The program crashes with a `NameError: name 'ci' is not defined' or hangs indefinitely due to the faulty loop.\",\n      \"severity\": \"critical\"\n    },\n    {\n      \"description\": \"The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.\",\n      \"triggering_input\": \"1 1 1\\n1 1\\n\",\n      \"expected_output\": \"0\\n\",\n      \"actual_behavior\": \"The program may produce a negative total (e.g., `-1`) or raise an exception due to the incorrect subtraction.\",\n      \"severity\": \"major\"\n    }\n  ]\n}",
+          "parsed": {
+            "bugs": [
+              {
+                "description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.",
+                "triggering_input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+                "expected_output": "5\n10\n5\n2\n5\n3\n1\n0\n",
+                "actual_behavior": "The program prints completely different numbers (or may even raise an exception) because the total is mis\u2011computed. For the given input it does not match the expected sequence.",
+                "severity": "critical"
+              },
+              {
+                "description": "The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).",
+                "triggering_input": "1 2 1\n1 2\n",
+                "expected_output": "2\n",
+                "actual_behavior": "The program outputs an incorrect count (e.g., 3) because the neighbour\u2011locked condition is ignored, leading to an over\u2011estimation of staircase lengths.",
+                "severity": "major"
+              },
+              {
+                "description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+                "triggering_input": "2 2 2\n1 1\n1 1\n",
+                "expected_output": "5\n10\n",
+                "actual_behavior": "The program prints `5` for the first query (correct) but prints the same `5` for the second query instead of `10`, because the unlock case is not processed.",
+                "severity": "major"
+              },
+              {
+                "description": "The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.",
+                "triggering_input": "3 3 1\n2 2\n",
+                "expected_output": "13\n",
+                "actual_behavior": "The program crashes with a `NameError: name 'ci' is not defined' or hangs indefinitely due to the faulty loop.",
+                "severity": "critical"
+              },
+              {
+                "description": "The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.",
+                "triggering_input": "1 1 1\n1 1\n",
+                "expected_output": "0\n",
+                "actual_behavior": "The program may produce a negative total (e.g., `-1`) or raise an exception due to the incorrect subtraction.",
+                "severity": "major"
+              }
+            ]
+          },
+          "input_tokens": 2359,
+          "output_tokens": 809,
+          "cost_usd": 0.0011965,
+          "latency_ms": 3668
+        },
+        {
+          "role": "defender",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 5,
+          "bugs": [
+            {
+              "bug_description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.",
+              "verdict": "CONFIRMED",
+              "reasoning": "The number of distinct staircases is not equal to n*m + \u03a3(f[i][j]\u20111 + g[i][j]\u20111). f[i][j] (resp. g[i][j]) stores the length of the longest alternating path ending at (i,j) with a right (resp. down) last move, not the count of all paths that end there. Summing these lengths massively over\u2011counts paths and misses many shorter ones. Hence the total computation is mathematically wrong for the problem."
+            },
+            {
+              "bug_description": "The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).",
+              "verdict": "CONFIRMED",
+              "reasoning": "Inside `recompute` the line `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` is instantly replaced by `f[i][j] = g[i][j-1] + 1`, discarding the condition that the left neighbour must be free. The same pattern occurs for `g`. Consequently the DP values are computed as if the neighbour were always free, which is incorrect when that neighbour is locked."
+            },
+            {
+              "bug_description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+              "verdict": "CONFIRMED",
+              "reasoning": "After toggling `locked[x][y]`, the code executes the block `if locked[x][y]:` and does nothing in the `else` branch. Therefore when a cell changes from locked to free, no DP values are updated and `total` is not adjusted, leaving the answer unchanged from the previous query. This directly contradicts the required behavior."
+            },
+            {
+              "bug_description": "The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.",
+              "verdict": "CONFIRMED",
+              "reasoning": "Inside the locked\u2011cell handling block the code defines `ci, cj = x+1, y` and then enters `while ci <= n and cj <= m:`. Inside the loop it references `cj_next` (which is never defined) and mixes increments of `ci` and `cj` inconsistently, also toggling `update_g` incorrectly. The loop can either never break (causing a hang) or raise a `NameError` due to the undefined variable. Hence the propagation is broken."
+            },
+            {
+              "bug_description": "The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.",
+              "verdict": "CONFIRMED",
+              "reasoning": "The subtraction attempts to remove the contribution of the locked cell from `total`, but the contribution of a cell is not simply `(f-1)+(g-1)+1`. Because `f` and `g` are lengths of longest paths, not counts, the expression does not represent the number of distinct staircases that include the cell. Moreover, when `f` or `g` is zero (cell already locked), the subtraction can become negative, breaking the invariant that `total` is non\u2011negative."
+            }
+          ],
+          "raw_response": "{\n  \"evaluations\": [\n    {\n      \"bug_description\": \"The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"The number of distinct staircases is not equal to n*m + \u03a3(f[i][j]\u20111 + g[i][j]\u20111). f[i][j] (resp. g[i][j]) stores the length of the longest alternating path ending at (i,j) with a right (resp. down) last move, not the count of all paths that end there. Summing these lengths massively over\u2011counts paths and misses many shorter ones. Hence the total computation is mathematically wrong for the problem.\"\n    },\n    {\n      \"bug_description\": \"The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"Inside `recompute` the line `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` is instantly replaced by `f[i][j] = g[i][j-1] + 1`, discarding the condition that the left neighbour must be free. The same pattern occurs for `g`. Consequently the DP values are computed as if the neighbour were always free, which is incorrect when that neighbour is locked.\"\n    },\n    {\n      \"bug_description\": \"The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"After toggling `locked[x][y]`, the code executes the block `if locked[x][y]:` and does nothing in the `else` branch. Therefore when a cell changes from locked to free, no DP values are updated and `total` is not adjusted, leaving the answer unchanged from the previous query. This directly contradicts the required behavior.\"\n    },\n    {\n      \"bug_description\": \"The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"Inside the locked\u2011cell handling block the code defines `ci, cj = x+1, y` and then enters `while ci <= n and cj <= m:`. Inside the loop it references `cj_next` (which is never defined) and mixes increments of `ci` and `cj` inconsistently, also toggling `update_g` incorrectly. The loop can either never break (causing a hang) or raise a `NameError` due to the undefined variable. Hence the propagation is broken.\"\n    },\n    {\n      \"bug_description\": \"The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"The subtraction attempts to remove the contribution of the locked cell from `total`, but the contribution of a cell is not simply `(f-1)+(g-1)+1`. Because `f` and `g` are lengths of longest paths, not counts, the expression does not represent the number of distinct staircases that include the cell. Moreover, when `f` or `g` is zero (cell already locked), the subtraction can become negative, breaking the invariant that `total` is non\u2011negative.\"\n    }\n  ]\n}",
+          "parsed": {
+            "evaluations": [
+              {
+                "bug_description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating\u2011R/D paths, and the total formula double\u2011counts many paths.",
+                "verdict": "CONFIRMED",
+                "reasoning": "The number of distinct staircases is not equal to n*m + \u03a3(f[i][j]\u20111 + g[i][j]\u20111). f[i][j] (resp. g[i][j]) stores the length of the longest alternating path ending at (i,j) with a right (resp. down) last move, not the count of all paths that end there. Summing these lengths massively over\u2011counts paths and misses many shorter ones. Hence the total computation is mathematically wrong for the problem."
+              },
+              {
+                "bug_description": "The `recompute` function contains duplicated and contradictory assignments to `f[i][j]`. It first assigns `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` and immediately overwrites it with `f[i][j] = g[i][j-1] + 1`. This ignores the locked\u2011neighbor check and makes the function produce wrong values for `f` (and similarly for `g`).",
+                "verdict": "CONFIRMED",
+                "reasoning": "Inside `recompute` the line `f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1` is instantly replaced by `f[i][j] = g[i][j-1] + 1`, discarding the condition that the left neighbour must be free. The same pattern occurs for `g`. Consequently the DP values are computed as if the neighbour were always free, which is incorrect when that neighbour is locked."
+              },
+              {
+                "bug_description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute `f`, `g` or `total`. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+                "verdict": "CONFIRMED",
+                "reasoning": "After toggling `locked[x][y]`, the code executes the block `if locked[x][y]:` and does nothing in the `else` branch. Therefore when a cell changes from locked to free, no DP values are updated and `total` is not adjusted, leaving the answer unchanged from the previous query. This directly contradicts the required behavior."
+              },
+              {
+                "bug_description": "The propagation logic after locking a cell uses variables `ci` and `cj` that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment `ci` and `cj` but the logic is broken (e.g., `cj_next` is referenced but never used). This leads to an infinite loop or a `NameError` at runtime.",
+                "verdict": "CONFIRMED",
+                "reasoning": "Inside the locked\u2011cell handling block the code defines `ci, cj = x+1, y` and then enters `while ci <= n and cj <= m:`. Inside the loop it references `cj_next` (which is never defined) and mixes increments of `ci` and `cj` inconsistently, also toggling `update_g` incorrectly. The loop can either never break (causing a hang) or raise a `NameError` due to the undefined variable. Hence the propagation is broken."
+              },
+              {
+                "bug_description": "The total update when a cell becomes locked subtracts an incorrect amount: `total -= (f[x][y] - 1) + (g[x][y] - 1) + 1`. This formula does not correspond to the number of staircases that involve the locked cell and can make `total` negative or otherwise inconsistent.",
+                "verdict": "CONFIRMED",
+                "reasoning": "The subtraction attempts to remove the contribution of the locked cell from `total`, but the contribution of a cell is not simply `(f-1)+(g-1)+1`. Because `f` and `g` are lengths of longest paths, not counts, the expression does not represent the number of distinct staircases that include the cell. Moreover, when `f` or `g` is zero (cell already locked), the subtraction can become negative, breaking the invariant that `total` is non\u2011negative."
+              }
+            ]
+          },
+          "input_tokens": 3262,
+          "output_tokens": 1008,
+          "cost_usd": 0.0015715,
+          "latency_ms": 3418
+        },
+        {
+          "role": "judge",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 5,
+          "bugs": [
+            {
+              "description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating R/D paths, and the total formula double\u2011counts many paths.",
+              "triggering_input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+              "fix": "Replace the whole DP\u2011based counting with a correct combinatorial solution. For each free cell compute the number of maximal alternating rectangles that can start at that cell (or use prefix\u2011sum of free\u2011cell runs) and sum contributions of all possible lengths. Or use the known formula: the number of staircases equals the sum over all cells of (right_free[i][j] * down_free[i][j]) where right_free and down_free are lengths of consecutive free cells to the right and down. This counts each staircase exactly once. Ensure updates are performed in O(1) or O(log n) per toggle using a Fenwick/segment tree or by recomputing only the affected rows/columns.",
+              "confirmed": true,
+              "reasoning": "Summing longest\u2011path lengths (f and g) does not count distinct paths; it over\u2011counts and misses many shorter staircases. The problem requires counting every possible alternating R/D sequence, not just the longest one ending at each cell. Therefore the total computation is mathematically wrong."
+            },
+            {
+              "description": "The recompute function contains duplicated and contradictory assignments to f[i][j]. It first assigns f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1 and immediately overwrites it with f[i][j] = g[i][j-1] + 1. This ignores the locked\u2011neighbor check and makes the function produce wrong values for f (and similarly for g).",
+              "triggering_input": "1 2 1\n1 2\n",
+              "fix": "Remove the redundant assignment and keep the conditional version:\n```\nif locked[i][j]:\n    f[i][j] = g[i][j] = 0\nelse:\n    f[i][j] = (g[i][j-1] + 1) if j > 1 and not locked[i][j-1] else 1\n    g[i][j] = (f[i-1][j] + 1) if i > 1 and not locked[i-1][j] else 1\n```\nMake sure the neighbour\u2011locked check is applied for both f and g.",
+              "confirmed": true,
+              "reasoning": "The second assignment overwrites the result of the first, discarding the neighbour\u2011locked condition. Consequently f and g are computed as if the left/up neighbour were always free, producing incorrect DP values whenever a neighbour is locked."
+            },
+            {
+              "description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute f, g or total. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+              "triggering_input": "2 2 2\n1 1\n1 1\n",
+              "fix": "Add an `else` branch that mirrors the lock\u2011handling logic but in reverse: recompute f[x][y] and g[x][y] based on neighbours, add their contributions to total, and propagate updates along the two diagonal chains (right\u2011down and down\u2011right) to refresh all dependent cells. Use a queue or iterative loop to avoid recursion depth issues.",
+              "confirmed": true,
+              "reasoning": "The code toggles `locked[x][y]` and then executes only the `if locked[x][y]:` block. When the cell becomes free, the `else` block is empty, leaving DP values unchanged and causing the answer to stay the same as before the toggle."
+            },
+            {
+              "description": "The propagation logic after locking a cell uses variables ci and cj that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment ci and cj but the logic is broken (e.g., cj_next is referenced but never used). This leads to an infinite loop or a NameError at runtime.",
+              "triggering_input": "3 3 1\n2 2\n",
+              "fix": "Rewrite the propagation as a clear diagonal walk:\n```\nci, cj = x + 1, y\nwhile ci <= n and cj <= m and not locked[ci][cj]:\n    new_g = f[ci-1][cj] + 1\n    if new_g == g[ci][cj]: break\n    total += new_g - g[ci][cj]\n    g[ci][cj] = new_g\n    ci += 1; cj += 1\n```\nDo a symmetric walk for the other diagonal starting at (x, y+1). Ensure all indices are updated consistently and break when no change occurs.",
+              "confirmed": true,
+              "reasoning": "The loop references an undefined variable `cj_next` and mixes increments of ci and cj incorrectly, causing either a runtime error or an endless loop. The propagation therefore never completes correctly."
+            },
+            {
+              "description": "The total update when a cell becomes locked subtracts an incorrect amount: total -= (f[x][y] - 1) + (g[x][y] - 1) + 1. This formula does not correspond to the number of staircases that involve the locked cell and can make total negative or otherwise inconsistent.",
+              "triggering_input": "1 1 1\n1 1\n",
+              "fix": "When a cell is locked, recompute the contributions of all cells whose DP values change (including the locked cell itself) using the same formula that was used for addition. For each affected cell, subtract its old contribution before updating and add the new contribution after updating. Do not use a hard\u2011coded expression based on f and g lengths; instead, recompute the contribution from the underlying combinatorial count (e.g., right_free * down_free) for each affected cell.",
+              "confirmed": true,
+              "reasoning": "The subtraction assumes that a cell contributes exactly (f\u20111)+(g\u20111)+1 staircases, which is false because f and g are longest\u2011path lengths, not counts. When f or g is zero the expression can become negative, breaking the invariant that total stays non\u2011negative."
+            }
+          ],
+          "raw_response": "{\n  \"final_bugs\": [\n    {\n      \"description\": \"The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating R/D paths, and the total formula double\u2011counts many paths.\",\n      \"triggering_input\": \"2 2 8\\n1 1\\n1 1\\n1 1\\n2 2\\n1 1\\n1 2\\n2 1\\n1 1\\n\",\n      \"fix\": \"Replace the whole DP\u2011based counting with a correct combinatorial solution. For each free cell compute the number of maximal alternating rectangles that can start at that cell (or use prefix\u2011sum of free\u2011cell runs) and sum contributions of all possible lengths. Or use the known formula: the number of staircases equals the sum over all cells of (right_free[i][j] * down_free[i][j]) where right_free and down_free are lengths of consecutive free cells to the right and down. This counts each staircase exactly once. Ensure updates are performed in O(1) or O(log n) per toggle using a Fenwick/segment tree or by recomputing only the affected rows/columns.\",\n      \"confirmed\": true,\n      \"reasoning\": \"Summing longest\u2011path lengths (f and g) does not count distinct paths; it over\u2011counts and misses many shorter staircases. The problem requires counting every possible alternating R/D sequence, not just the longest one ending at each cell. Therefore the total computation is mathematically wrong.\"\n    },\n    {\n      \"description\": \"The recompute function contains duplicated and contradictory assignments to f[i][j]. It first assigns f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1 and immediately overwrites it with f[i][j] = g[i][j-1] + 1. This ignores the locked\u2011neighbor check and makes the function produce wrong values for f (and similarly for g).\",\n      \"triggering_input\": \"1 2 1\\n1 2\\n\",\n      \"fix\": \"Remove the redundant assignment and keep the conditional version:\\n```\\nif locked[i][j]:\\n    f[i][j] = g[i][j] = 0\\nelse:\\n    f[i][j] = (g[i][j-1] + 1) if j > 1 and not locked[i][j-1] else 1\\n    g[i][j] = (f[i-1][j] + 1) if i > 1 and not locked[i-1][j] else 1\\n```\\nMake sure the neighbour\u2011locked check is applied for both f and g.\",\n      \"confirmed\": true,\n      \"reasoning\": \"The second assignment overwrites the result of the first, discarding the neighbour\u2011locked condition. Consequently f and g are computed as if the left/up neighbour were always free, producing incorrect DP values whenever a neighbour is locked.\"\n    },\n    {\n      \"description\": \"The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute f, g or total. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.\",\n      \"triggering_input\": \"2 2 2\\n1 1\\n1 1\\n\",\n      \"fix\": \"Add an `else` branch that mirrors the lock\u2011handling logic but in reverse: recompute f[x][y] and g[x][y] based on neighbours, add their contributions to total, and propagate updates along the two diagonal chains (right\u2011down and down\u2011right) to refresh all dependent cells. Use a queue or iterative loop to avoid recursion depth issues.\",\n      \"confirmed\": true,\n      \"reasoning\": \"The code toggles `locked[x][y]` and then executes only the `if locked[x][y]:` block. When the cell becomes free, the `else` block is empty, leaving DP values unchanged and causing the answer to stay the same as before the toggle.\"\n    },\n    {\n      \"description\": \"The propagation logic after locking a cell uses variables ci and cj that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment ci and cj but the logic is broken (e.g., cj_next is referenced but never used). This leads to an infinite loop or a NameError at runtime.\",\n      \"triggering_input\": \"3 3 1\\n2 2\\n\",\n      \"fix\": \"Rewrite the propagation as a clear diagonal walk:\\n```\\nci, cj = x + 1, y\\nwhile ci <= n and cj <= m and not locked[ci][cj]:\\n    new_g = f[ci-1][cj] + 1\\n    if new_g == g[ci][cj]: break\\n    total += new_g - g[ci][cj]\\n    g[ci][cj] = new_g\\n    ci += 1; cj += 1\\n```\\nDo a symmetric walk for the other diagonal starting at (x, y+1). Ensure all indices are updated consistently and break when no change occurs.\",\n      \"confirmed\": true,\n      \"reasoning\": \"The loop references an undefined variable `cj_next` and mixes increments of ci and cj incorrectly, causing either a runtime error or an endless loop. The propagation therefore never completes correctly.\"\n    },\n    {\n      \"description\": \"The total update when a cell becomes locked subtracts an incorrect amount: total -= (f[x][y] - 1) + (g[x][y] - 1) + 1. This formula does not correspond to the number of staircases that involve the locked cell and can make total negative or otherwise inconsistent.\",\n      \"triggering_input\": \"1 1 1\\n1 1\\n\",\n      \"fix\": \"When a cell is locked, recompute the contributions of all cells whose DP values change (including the locked cell itself) using the same formula that was used for addition. For each affected cell, subtract its old contribution before updating and add the new contribution after updating. Do not use a hard\u2011coded expression based on f and g lengths; instead, recompute the contribution from the underlying combinatorial count (e.g., right_free * down_free) for each affected cell.\",\n      \"confirmed\": true,\n      \"reasoning\": \"The subtraction assumes that a cell contributes exactly (f\u20111)+(g\u20111)+1 staircases, which is false because f and g are longest\u2011path lengths, not counts. When f or g is zero the expression can become negative, breaking the invariant that total stays non\u2011negative.\"\n    }\n  ]\n}",
+          "parsed": {
+            "final_bugs": [
+              {
+                "description": "The algorithm for counting staircases is fundamentally incorrect. The code tries to compute the total number of staircases by summing f[i][j] and g[i][j] values, but this does not correspond to the required count of distinct staircase paths. The recurrence used for f and g does not correctly enumerate all alternating R/D paths, and the total formula double\u2011counts many paths.",
+                "triggering_input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+                "fix": "Replace the whole DP\u2011based counting with a correct combinatorial solution. For each free cell compute the number of maximal alternating rectangles that can start at that cell (or use prefix\u2011sum of free\u2011cell runs) and sum contributions of all possible lengths. Or use the known formula: the number of staircases equals the sum over all cells of (right_free[i][j] * down_free[i][j]) where right_free and down_free are lengths of consecutive free cells to the right and down. This counts each staircase exactly once. Ensure updates are performed in O(1) or O(log n) per toggle using a Fenwick/segment tree or by recomputing only the affected rows/columns.",
+                "confirmed": true,
+                "reasoning": "Summing longest\u2011path lengths (f and g) does not count distinct paths; it over\u2011counts and misses many shorter staircases. The problem requires counting every possible alternating R/D sequence, not just the longest one ending at each cell. Therefore the total computation is mathematically wrong."
+              },
+              {
+                "description": "The recompute function contains duplicated and contradictory assignments to f[i][j]. It first assigns f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1 and immediately overwrites it with f[i][j] = g[i][j-1] + 1. This ignores the locked\u2011neighbor check and makes the function produce wrong values for f (and similarly for g).",
+                "triggering_input": "1 2 1\n1 2\n",
+                "fix": "Remove the redundant assignment and keep the conditional version:\n```\nif locked[i][j]:\n    f[i][j] = g[i][j] = 0\nelse:\n    f[i][j] = (g[i][j-1] + 1) if j > 1 and not locked[i][j-1] else 1\n    g[i][j] = (f[i-1][j] + 1) if i > 1 and not locked[i-1][j] else 1\n```\nMake sure the neighbour\u2011locked check is applied for both f and g.",
+                "confirmed": true,
+                "reasoning": "The second assignment overwrites the result of the first, discarding the neighbour\u2011locked condition. Consequently f and g are computed as if the left/up neighbour were always free, producing incorrect DP values whenever a neighbour is locked."
+              },
+              {
+                "description": "The main query loop only handles the case where a cell becomes locked. When a cell is unlocked the code does nothing to recompute f, g or total. Consequently, after a cell is unlocked the internal state remains stale and the reported totals are wrong.",
+                "triggering_input": "2 2 2\n1 1\n1 1\n",
+                "fix": "Add an `else` branch that mirrors the lock\u2011handling logic but in reverse: recompute f[x][y] and g[x][y] based on neighbours, add their contributions to total, and propagate updates along the two diagonal chains (right\u2011down and down\u2011right) to refresh all dependent cells. Use a queue or iterative loop to avoid recursion depth issues.",
+                "confirmed": true,
+                "reasoning": "The code toggles `locked[x][y]` and then executes only the `if locked[x][y]:` block. When the cell becomes free, the `else` block is empty, leaving DP values unchanged and causing the answer to stay the same as before the toggle."
+              },
+              {
+                "description": "The propagation logic after locking a cell uses variables ci and cj that are not correctly initialized or updated inside the while\u2011loops. The code attempts to increment ci and cj but the logic is broken (e.g., cj_next is referenced but never used). This leads to an infinite loop or a NameError at runtime.",
+                "triggering_input": "3 3 1\n2 2\n",
+                "fix": "Rewrite the propagation as a clear diagonal walk:\n```\nci, cj = x + 1, y\nwhile ci <= n and cj <= m and not locked[ci][cj]:\n    new_g = f[ci-1][cj] + 1\n    if new_g == g[ci][cj]: break\n    total += new_g - g[ci][cj]\n    g[ci][cj] = new_g\n    ci += 1; cj += 1\n```\nDo a symmetric walk for the other diagonal starting at (x, y+1). Ensure all indices are updated consistently and break when no change occurs.",
+                "confirmed": true,
+                "reasoning": "The loop references an undefined variable `cj_next` and mixes increments of ci and cj incorrectly, causing either a runtime error or an endless loop. The propagation therefore never completes correctly."
+              },
+              {
+                "description": "The total update when a cell becomes locked subtracts an incorrect amount: total -= (f[x][y] - 1) + (g[x][y] - 1) + 1. This formula does not correspond to the number of staircases that involve the locked cell and can make total negative or otherwise inconsistent.",
+                "triggering_input": "1 1 1\n1 1\n",
+                "fix": "When a cell is locked, recompute the contributions of all cells whose DP values change (including the locked cell itself) using the same formula that was used for addition. For each affected cell, subtract its old contribution before updating and add the new contribution after updating. Do not use a hard\u2011coded expression based on f and g lengths; instead, recompute the contribution from the underlying combinatorial count (e.g., right_free * down_free) for each affected cell.",
+                "confirmed": true,
+                "reasoning": "The subtraction assumes that a cell contributes exactly (f\u20111)+(g\u20111)+1 staircases, which is false because f and g are longest\u2011path lengths, not counts. When f or g is zero the expression can become negative, breaking the invariant that total stays non\u2011negative."
+              }
+            ]
+          },
+          "input_tokens": 4314,
+          "output_tokens": 1451,
+          "cost_usd": 0.00216675,
+          "latency_ms": 3314
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    f = [[0]*(m+2) for _ in range(n+2)]\n    g = [[0]*(m+2) for _ in range(n+2)]\n    \n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            if j > 1:\n                f[i][j] = g[i][j-1] + 1\n            if i > 1:\n                g[i][j] = f[i-1][j] + 1\n            total += f[i][j] + g[i][j]\n    \n    def propagate(i, j):\n        nonlocal total\n        # recompute f[i][j] and g[i][j], then propagate\n        # We'll do iterative diagonal propagation\n        # First update (i,j) itself\n        cells = [(i, j)]\n        # Also need to propagate: when f[i][j] changes -> g[i+1][j] changes -> f[i+1][j+1]...\n        # when g[i][j] changes -> f[i][j+1] changes -> g[i+1][j+1]...\n        # Process in order along diagonals\n        ci, cj = i, j\n        while ci <= n and cj <= m:\n            old_f = f[ci][cj]\n            old_g = g[ci][cj]\n            if locked[ci][cj]:\n                f[ci][cj] = 0\n                g[ci][cj] = 0\n            else:\n                f[ci][cj] = (g[ci][cj-1] + 1) if cj > 1 and not locked[ci][cj-1] else 1\n                g[ci][cj] = (f[ci-1][cj] + 1) if ci > 1 and not locked[ci-1][cj] else 1\n            total += (f[ci][cj] - old_f) + (g[ci][cj] - old_g)\n            if f[ci][cj] == old_f and g[ci][cj] == old_g:\n                break\n            ci += 1\n            cj += 1\n        # Also propagate the other chain: (i, j+1) then (i+1, j+1) etc\n        ci, cj = i, j+1\n        while ci <= n and cj <= m:\n            old_f = f[ci][cj]\n            old_g = g[ci][cj]\n            if locked[ci][cj]:\n                f[ci][cj] = 0\n                g[ci][cj] = 0\n            else:\n                f[ci][cj] = (g[ci][cj-1] + 1) if cj > 1 and not locked[ci][cj-1] else 1\n                g[ci][cj] = (f[ci-1][cj] + 1) if ci > 1 and not locked[ci-1][cj] else 1\n            total += (f[ci][cj] - old_f) + (g[ci][cj] - old_g)\n            if f[ci][cj] == old_f and g[ci][cj] == old_g:\n                break\n            ci += 1\n            cj += 1\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            total -= 1  # remove single cell\n        else:\n            total += 1  # add single cell\n        propagate(x, y)\n        results.append(total)\n    \n    sys.stdout.write('\\n'.join(map(str, results)) + '\\n')\n\nsolve()",
+          "input_tokens": 4492,
+          "output_tokens": 1932,
+          "cost_usd": 0.042456,
+          "latency_ms": 22442
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    f = [[0]*(m+2) for _ in range(n+2)]\n    g = [[0]*(m+2) for _ in range(n+2)]\n    \n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            if j > 1:\n                f[i][j] = g[i][j-1] + 1\n            if i > 1:\n                g[i][j] = f[i-1][j] + 1\n            total += f[i][j] + g[i][j]\n    \n    def propagate(i, j):\n        nonlocal total\n        # recompute f[i][j] and g[i][j], then propagate\n        # We'll do iterative diagonal propagation\n        # First update (i,j) itself\n        cells = [(i, j)]\n        # Also need to propagate: when f[i][j] changes -> g[i+1][j] changes -> f[i+1][j+1]...\n        # when g[i][j] changes -> f[i][j+1] changes -> g[i+1][j+1]...\n        # Process in order along diagonals\n        ci, cj = i, j\n        while ci <= n and cj <= m:\n            old_f = f[ci][cj]\n            old_g = g[ci][cj]\n            if locked[ci][cj]:\n                f[ci][cj] = 0\n                g[ci][cj] = 0\n            else:\n                f[ci][cj] = (g[ci][cj-1] + 1) if cj > 1 and not locked[ci][cj-1] else 1\n                g[ci][cj] = (f[ci-1][cj] + 1) if ci > 1 and not locked[ci-1][cj] else 1\n            total += (f[ci][cj] - old_f) + (g[ci][cj] - old_g)\n            if f[ci][cj] == old_f and g[ci][cj] == old_g:\n                break\n            ci += 1\n            cj += 1\n        # Also propagate the other chain: (i, j+1) then (i+1, j+1) etc\n        ci, cj = i, j+1\n        while ci <= n and cj <= m:\n            old_f = f[ci][cj]\n            old_g = g[ci][cj]\n            if locked[ci][cj]:\n                f[ci][cj] = 0\n                g[ci][cj] = 0\n            else:\n                f[ci][cj] = (g[ci][cj-1] + 1) if cj > 1 and not locked[ci][cj-1] else 1\n                g[ci][cj] = (f[ci-1][cj] + 1) if ci > 1 and not locked[ci-1][cj] else 1\n            total += (f[ci][cj] - old_f) + (g[ci][cj] - old_g)\n            if f[ci][cj] == old_f and g[ci][cj] == old_g:\n                break\n            ci += 1\n            cj += 1\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            total -= 1  # remove single cell\n        else:\n            total += 1  # add single cell\n        propagate(x, y)\n        results.append(total)\n    \n    sys.stdout.write('\\n'.join(map(str, results)) + '\\n')\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 1,
+        "failed": 49,
+        "errors": 0,
+        "pass_rate": 0.02,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+            "actual": "51\n49\n41\n45\n53\n44\n40\n32\n36\n34",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1000 1000 2\n239 634\n239 634\n",
+            "expected": "1332632508\n1333333000",
+            "actual": "1333331570\n1333332048",
+            "stderr": "",
+            "runtime_ms": 632,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+            "actual": "10\n14\n11\n5\n9\n5\n3\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "1 1 1\n1 1\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n245\n243\n242\n232\n222\n220\n213\n204\n202\n181\n172\n168\n180\n159\n148\n150\n149",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+            "actual": "34\n31\n23\n26\n22\n12\n17\n27\n23\n20",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1 1 2\n1 1\n1 1\n",
+            "expected": "0\n1",
+            "actual": "0\n3",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n215\n210\n200\n198\n177\n176\n172\n184\n160\n149\n156\n155",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+            "actual": "51\n49\n45\n48\n41\n29\n25\n15\n19\n17",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+            "actual": "10\n14\n11\n7\n11\n7\n12\n9",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n206\n196\n194\n173\n172\n167\n179\n155\n144\n151\n150",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+            "actual": "51\n49\n46\n50\n42\n31\n27\n17\n21\n24",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+            "actual": "47\n46\n43\n47\n38\n27\n24\n17\n22\n25",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "34\n31\n23\n26\n22\n12\n8\n13\n16\n13",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+            "actual": "51\n49\n41\n45\n53\n44\n40\n32\n31\n29",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1000 1000 2\n252 634\n239 634\n",
+            "expected": "1332594366\n1331893874",
+            "actual": "1333331492\n1333330062",
+            "stderr": "",
+            "runtime_ms": 688,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n215\n210\n200\n198\n177\n172\n168\n180\n159\n148\n155\n154",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+            "actual": "51\n48\n45\n42\n35\n23\n26\n16\n13\n11",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n204\n194\n192\n171\n173\n168\n180\n156\n145\n152\n151",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+            "actual": "34\n31\n23\n26\n23\n11\n16\n25\n30\n27",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1000 1000 2\n59 634\n239 634\n",
+            "expected": "1333160628\n1332460136",
+            "actual": "1333332650\n1333331220",
+            "stderr": "",
+            "runtime_ms": 601,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n226\n216\n215\n210\n200\n198\n177\n172\n175\n186\n165\n154\n161\n160",
+            "stderr": "",
+            "runtime_ms": 156,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n204\n191\n185\n164\n166\n161\n167\n143\n132\n133\n132",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "34\n31\n33\n30\n25\n13\n8\n13\n16\n13",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23",
+            "actual": "34\n31\n33\n30",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n35",
+            "actual": "34\n31\n33\n37",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+            "expected": "25\n20\n26\n22",
+            "actual": "34\n33\n37\n33",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+            "actual": "114\n112\n104\n108\n116\n107\n103\n95\n99\n95",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "1000 1000 2\n239 634\n418 634\n",
+            "expected": "1332632508\n1331406830",
+            "actual": "1333331570\n1333329066",
+            "stderr": "",
+            "runtime_ms": 1303,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+            "actual": "10\n14\n11\n5\n9\n5\n9\n6",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n206\n196\n194\n173\n172\n167\n172\n148\n137\n144\n143",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+            "actual": "34\n31\n23\n26\n22\n12\n9\n16\n20\n17",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n245\n243\n238\n227\n217\n215\n210\n200\n197\n176\n171\n167\n179\n158\n147\n154\n154",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49",
+            "actual": "51",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "1000 1000 2\n59 323\n239 634\n",
+            "expected": "1333014458\n1332313966",
+            "actual": "1333332650\n1333331220",
+            "stderr": "",
+            "runtime_ms": 864,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n289\n269\n255\n252\n247\n245\n239\n227\n217\n211\n204\n191\n185\n164\n166\n161\n167\n143\n132\n133\n132",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+            "actual": "114\n112\n109\n111\n104\n92\n96\n86\n82\n78",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n281\n267\n264\n256\n254\n246\n235\n225\n223\n218\n214\n211\n190\n185\n181\n193\n166\n155\n134\n134",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "22",
+            "actual": "24",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "1000 1000 2\n59 323\n239 999\n",
+            "expected": "1333014458\n1333011116",
+            "actual": "1333332650\n1333331220",
+            "stderr": "",
+            "runtime_ms": 939,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n313\n309\n289\n275\n272\n267\n265\n259\n247\n237\n231\n224\n211\n205\n184\n186\n181\n187\n163\n152\n153\n152",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n89",
+            "actual": "88\n85\n87\n91",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+            "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n281\n267\n266\n259\n257\n249\n238\n228\n226\n221\n217\n214\n193\n187\n183\n195\n168\n157\n136\n140",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+            "actual": "406\n381\n363\n362\n336\n335\n315\n307\n319\n315\n295\n281\n278\n273\n271\n265\n253\n243\n252\n245\n232\n226\n205\n207\n202\n181\n157\n146\n147\n146",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+            "actual": "400\n382\n400\n399\n373\n372\n352\n344\n336\n333\n324\n310\n309\n302\n300\n292\n281\n271\n269\n264\n260\n257\n236\n230\n226\n238\n211\n200\n179\n183",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n77",
+            "actual": "88\n85\n87\n82",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+            "actual": "400\n382\n400\n399\n373\n372\n352\n344\n336\n333\n324\n299\n298\n291\n289\n281\n270\n260\n258\n253\n249\n246\n232\n226\n222\n234\n214\n218\n197\n201",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n63\n61",
+            "actual": "88\n85\n77\n74",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "2 1 2\n1 1\n1 1\n",
+            "expected": "1\n3",
+            "actual": "2\n5",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+            "actual": "51\n48\n40\n38\n42\n33\n36\n28\n25\n23",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 1,
+    "failed": 49,
+    "errors": 0,
+    "pass_rate": 0.02,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+        "actual": "51\n49\n41\n45\n53\n44\n40\n32\n36\n34",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "1000 1000 2\n239 634\n239 634\n",
+        "expected": "1332632508\n1333333000",
+        "actual": "1333331570\n1333332048",
+        "stderr": "",
+        "runtime_ms": 632,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+        "actual": "10\n14\n11\n5\n9\n5\n3\n0",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "1 1 1\n1 1\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n245\n243\n242\n232\n222\n220\n213\n204\n202\n181\n172\n168\n180\n159\n148\n150\n149",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+        "actual": "34\n31\n23\n26\n22\n12\n17\n27\n23\n20",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "1 1 2\n1 1\n1 1\n",
+        "expected": "0\n1",
+        "actual": "0\n3",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n215\n210\n200\n198\n177\n176\n172\n184\n160\n149\n156\n155",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+        "actual": "51\n49\n45\n48\n41\n29\n25\n15\n19\n17",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+        "actual": "10\n14\n11\n7\n11\n7\n12\n9",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n206\n196\n194\n173\n172\n167\n179\n155\n144\n151\n150",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+        "actual": "51\n49\n46\n50\n42\n31\n27\n17\n21\n24",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+        "actual": "47\n46\n43\n47\n38\n27\n24\n17\n22\n25",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "34\n31\n23\n26\n22\n12\n8\n13\n16\n13",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+        "actual": "51\n49\n41\n45\n53\n44\n40\n32\n31\n29",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "1000 1000 2\n252 634\n239 634\n",
+        "expected": "1332594366\n1331893874",
+        "actual": "1333331492\n1333330062",
+        "stderr": "",
+        "runtime_ms": 688,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n215\n210\n200\n198\n177\n172\n168\n180\n159\n148\n155\n154",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+        "actual": "51\n48\n45\n42\n35\n23\n26\n16\n13\n11",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n204\n194\n192\n171\n173\n168\n180\n156\n145\n152\n151",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+        "actual": "34\n31\n23\n26\n23\n11\n16\n25\n30\n27",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "1000 1000 2\n59 634\n239 634\n",
+        "expected": "1333160628\n1332460136",
+        "actual": "1333332650\n1333331220",
+        "stderr": "",
+        "runtime_ms": 601,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n226\n216\n215\n210\n200\n198\n177\n172\n175\n186\n165\n154\n161\n160",
+        "stderr": "",
+        "runtime_ms": 156,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n204\n191\n185\n164\n166\n161\n167\n143\n132\n133\n132",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "34\n31\n33\n30\n25\n13\n8\n13\n16\n13",
+        "stderr": "",
+        "runtime_ms": 77,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23",
+        "actual": "34\n31\n33\n30",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n35",
+        "actual": "34\n31\n33\n37",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+        "expected": "25\n20\n26\n22",
+        "actual": "34\n33\n37\n33",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+        "actual": "114\n112\n104\n108\n116\n107\n103\n95\n99\n95",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "1000 1000 2\n239 634\n418 634\n",
+        "expected": "1332632508\n1331406830",
+        "actual": "1333331570\n1333329066",
+        "stderr": "",
+        "runtime_ms": 1303,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+        "actual": "10\n14\n11\n5\n9\n5\n9\n6",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n246\n244\n238\n227\n217\n211\n206\n196\n194\n173\n172\n167\n172\n148\n137\n144\n143",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+        "actual": "34\n31\n23\n26\n22\n12\n9\n16\n20\n17",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n270\n256\n253\n245\n243\n238\n227\n217\n215\n210\n200\n197\n176\n171\n167\n179\n158\n147\n154\n154",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49",
+        "actual": "51",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "1000 1000 2\n59 323\n239 634\n",
+        "expected": "1333014458\n1332313966",
+        "actual": "1333332650\n1333331220",
+        "stderr": "",
+        "runtime_ms": 864,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n289\n269\n255\n252\n247\n245\n239\n227\n217\n211\n204\n191\n185\n164\n166\n161\n167\n143\n132\n133\n132",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+        "actual": "114\n112\n109\n111\n104\n92\n96\n86\n82\n78",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n281\n267\n264\n256\n254\n246\n235\n225\n223\n218\n214\n211\n190\n185\n181\n193\n166\n155\n134\n134",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "22",
+        "actual": "24",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "1000 1000 2\n59 323\n239 999\n",
+        "expected": "1333014458\n1333011116",
+        "actual": "1333332650\n1333331220",
+        "stderr": "",
+        "runtime_ms": 939,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n313\n309\n289\n275\n272\n267\n265\n259\n247\n237\n231\n224\n211\n205\n184\n186\n181\n187\n163\n152\n153\n152",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n89",
+        "actual": "88\n85\n87\n91",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+        "actual": "400\n375\n357\n356\n330\n329\n309\n301\n293\n290\n281\n267\n266\n259\n257\n249\n238\n228\n226\n221\n217\n214\n193\n187\n183\n195\n168\n157\n136\n140",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+        "actual": "406\n381\n363\n362\n336\n335\n315\n307\n319\n315\n295\n281\n278\n273\n271\n265\n253\n243\n252\n245\n232\n226\n205\n207\n202\n181\n157\n146\n147\n146",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+        "actual": "400\n382\n400\n399\n373\n372\n352\n344\n336\n333\n324\n310\n309\n302\n300\n292\n281\n271\n269\n264\n260\n257\n236\n230\n226\n238\n211\n200\n179\n183",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n77",
+        "actual": "88\n85\n87\n82",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+        "actual": "400\n382\n400\n399\n373\n372\n352\n344\n336\n333\n324\n299\n298\n291\n289\n281\n270\n260\n258\n253\n249\n246\n232\n226\n222\n234\n214\n218\n197\n201",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n63\n61",
+        "actual": "88\n85\n77\n74",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "2 1 2\n1 1\n1 1\n",
+        "expected": "1\n3",
+        "actual": "2\n5",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+        "actual": "51\n48\n40\n38\n42\n33\n36\n28\n25\n23",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.17248475,
+  "total_latency_ms": 130564,
+  "iterations_used": null,
+  "early_stopped": null
+}

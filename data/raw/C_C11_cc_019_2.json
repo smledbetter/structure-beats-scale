@@ -1,0 +1,2846 @@
+{
+  "study": "C",
+  "condition": "C11",
+  "task_id": "cc_019",
+  "replica": 2,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me verify: if we add a[1] to front, a[2] to front, a[3] to back: deque is [a[2], a[1], a[3]]. This matches k=2: a[2], a[1], a[3]. Yes!\n\nSo the answer is: for each k from 0 to n, compute inversions in the sequence [a[k], a[k-1], ..., a[1], a[k+1], ..., a[n]] and take the minimum.\n\nNow I need to efficiently compute inversions for all these sequences.\n\nFor k=0: sequence is a[1], a[2], ..., a[n] (all to back).\nFor k=n: sequence is a[n], a[n-1], ..., a[1] (all to front).\n\nWhen we go from split k to k+1, we move a[k+1] from the right part to the front of the left part. The sequence changes from [a[k],...,a[1], a[k+1], a[k+2],...,a[n]] to [a[k+1], a[k],...,a[1], a[k+2],...,a[n]].\n\nSo a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1] (these become new inversions since a[k+1] is now before them) minus how many elements in positions 1..k are less than a[k+1] (these were inversions before, now they're not). Wait, let me be more careful.\n\nWhen a[k+1] moves from position k+1 to position 1, it passes over a[k], a[k-1], ..., a[1]. For each a[i] (i=1..k) it was previously after a[i], now it's before a[i]. The change in inversions for each pair (a[i], a[k+1]):\n- If a[i] > a[k+1]: was not an inversion (a[k+1] was after), now IS an inversion (a[k+1] before a[i]). Wait no: inversion is i<j and d[i]>d[j]. If a[k+1] moves to front, it's now at a smaller index. So pair (a[k+1], a[i]): a[k+1] < a[i] means no inversion. If a[k+1] > a[i], that's an inversion.\n\nDelta = (number of a[1..k] < a[k+1]) - (number of a[1..k] > a[k+1]).\n\nI'll use a BIT/Fenwick tree to compute this efficiently.\n\nimport sys\nfrom collections import defaultdict\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n = int(input_data[idx]); idx+=1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n        \n        # coordinate compress\n        sorted_vals = sorted(set(a))\n        rank = {v:i+1 for i,v in enumerate(sorted_vals)}\n        m = len(sorted_vals)\n        \n        bit = [0]*(m+2)\n        def update(i, delta=1):\n            while i<=m:\n                bit[i]+=delta\n                i+=i&(-i)\n        def query(i):\n            s=0\n            while i>0:\n                s+=bit[i]\n                i-=i&(-i)\n            return s\n        def query_range(l,r):\n            if l>r: return 0\n            return query(r)-query(l-1)\n        \n        # compute inversions for k=0: sequence a[0],a[1],...,a[n-1]\n        inv = 0\n        for i in range(n):\n            r = rank[a[i]]\n            inv += query_range(r+1, m)\n            update(r)\n        \n        best = inv\n        \n        # reset BIT\n        bit = [0]*(m+2)\n        # rebuild with a[0] in front part\n        # For transition from k to k+1:\n        # current left part is a[k],...,a[0], right part is a[k+1],...\n        # We move a[k+1] to front\n        # delta = (count of left part < a[k+1]) - (count of left part > a[k+1])\n        # left part has k elements\n        \n        # We need BIT of left part elements\n        for i in range(n-1):\n            r = rank[a[i]]\n            less = query(r-1) if r>1 else 0\n            greater = i - query(r)  # i elements so far, query(r) includes equal\n            # Actually equal elements: query(r) - query(r-1)\n            # less = query(r-1), greater = i - query(r)\n            delta = less - greater\n            inv += delta\n            update(r)\n            if inv < best:\n                best = inv\n        \n        print(best)\n\nsolve()",
+      "input_tokens": 1076,
+      "output_tokens": 1771,
+      "cost_usd": 0.029793,
+      "latency_ms": 25733
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "The final deque = [a[ik], ..., a[i1], a[j1], ..., a[jm]].\n\nSo we need to partition the array into two subsequences F and B, where F appears reversed at the front and B appears in order at the back, minimizing total inversions.\n\nGiven n \u2264 2*10^5, we need an efficient approach. But n can be large...\n\nLet me think about a DP approach. State: dp[l][r] = min inversions when we've processed some elements and the current deque spans indices l..r in some representation. \n\nActually the deque after processing first i elements always looks like a contiguous block. Let's say after processing i elements, the deque is d[1..i]. When we add a[i+1] to front, new deque is [a[i+1], d[1], ..., d[i]]. When we add to back, it's [d[1], ..., d[i], a[i+1]].\n\nDP state: after processing i elements, the deque content. But the content varies too much.\n\nKey insight: The deque after i steps is always a sequence where some prefix is \"front-added\" (reversed) and some suffix is \"back-added\". The structure is determined by which elements went front vs back.\n\nLet dp[i][j] = min inversions for first i elements where j elements went to the front (so i-j went to back). The front part is a[front_indices reversed] and back part is a[back_indices in order].\n\nThis is still complex. Let me look for patterns with small n and think about the structure differently.\n\nAfter all insertions, the deque = reverse(front_subsequence) + back_subsequence. We want to minimize inversions in this concatenated sequence.\n\nWith n up to 2*10^5 and sum of n up to 2*10^5, maybe O(n^2) per test case is acceptable? Sum is 2*10^5, so O(n^2) total could be 4*10^10... no.\n\nWait, sum of n \u2264 2*10^5. So total work across all test cases is bounded. O(n^2) per test case with sum n = 2*10^5 means worst case one test case with n=2*10^5, giving O(n^2) = 4*10^10. Too slow.\n\nLet me think of O(n log n) approach. DP with 2 states per position?\n\ndp[i][0] = min inversions after i elements, where a[i] was added to back\ndp[i][1] = min inversions after i elements, where a[i] was added to front\n\nTransition requires knowing how many inversions adding a[i+1] creates, which depends on the entire current deque.\n\nThis seems hard without more state. Let me look at the problem rating (1700) and think of a cleaner approach.\n\nAfter more thought, I'll implement an O(n^2) DP since sum of n \u2264 2*10^5.\n\nimport sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n = int(input_data[idx]); idx+=1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n        # dp[l][r]: processed a[0..n-1-(r-l)] elements, deque is a[l..r] (indices into result)\n        # Actually let's do interval DP\n        # After processing i elements, deque has i elements\n        # State: (left_ptr, right_ptr) where the deque occupies positions [left..right] in final array of size n\n        # But we don't know final array positions ahead of time\n        \n        # Let me try: dp[i][j] = min inversions when i elements processed, j went to front\n        # front part: a[f1], a[f2], ..., a[fj] where f1<f2<...<fj, appears as a[fj],...,a[f1]\n        # back part: a[b1],...,a[b_{i-j}] in order\n        # This is O(n^2) states, transition O(n)... too slow\n        \n        # Interval DP: after processing first i elements with j at front,\n        # the deque looks like [front_j_reversed | back_{i-j}]\n        # When we add a[i] to front: new inversions = inversions(a[i], current deque)\n        # When we add a[i] to back: new inversions = inversions(current deque, a[i])\n        # \n        # inversions with front: count elements in deque < a[i] (they'll be to the right)\n        # inversions with back: count elements in deque > a[i] (they'll be to the left)\n        \n        # State dp[j] after i elements with j at front, we need to know the multiset\n        # but also the ORDER matters for counting inversions within the deque\n        \n        # Hmm. Let me think differently.\n        # \n        # The key insight: the final deque is reverse(F) + B where F and B are subsequences.\n        # Inversions = inv(reverse(F)) + inv(B) + cross_inversions(reverse(F), B)\n        # inv(reverse(F)) = inv(F) [same count]... wait no.\n        # inv(reverse(F)): pairs (i,j) with i<j in reversed sequence, reversed[i]>reversed[j]\n        # = pairs in F where F[k]<F[l] for k>l (original order), i.e., non-inversions in F\n        # Actually inv(reverse(F)) = C(|F|,2) - inv(F)... no wait.\n        # \n        # If F = [f1,f2,...,fk], reverse(F) = [fk,...,f1]\n        # inv(reverse(F)) = #{(i,j): i<j, fk+1-i > fk+1-j} = #{(i,j): i<j in original, fi < fj}\n        # = C(k,2) - inv(F) - #{equal pairs}... for distinct elements = C(k,2) - inv(F)\n        # \n        # This approach might lead somewhere but cross inversions are hard.\n        \n        # Given the constraints (sum n <= 2e5), let me just try O(n^2) DP carefully.\n        \n        # dp[j] = min inversions when current deque has j elements at front, rest at back\n        # after processing i elements total\n        # Transition from i to i+1:\n        # add a[i] to front (j -> j+1): new inversions = #{elements in back > a[i]} + #{elements in front < a[i]}\n        # But we don't track which elements are in front vs back!\n        \n        # We need more info. Let me think about what determines the inversion count.\n        \n        # After processing elements a[0..i-1] with j at front:\n        # Front (reversed): the j front elements in reverse insertion order\n        # Back: the i-j back elements in insertion order\n        # \n        # The front elements are a subsequence of a[0..i-1], and they appear reversed.\n        # The back elements are another subsequence, appearing in order.\n        # \n        # When we add a[i] to front: it becomes the new leftmost element.\n        # New inversions from a[i]: elements in deque that are less than a[i] (they're to its right... wait)\n        # a[i] is at position 0 (leftmost). Elements to its right: all current deque elements.\n        # New inversions: #{x in deque: x < a[i]} ... no, inversion means d[i]>d[j] for i<j.\n        # a[i] is at position 0, others at positions 1..i.\n        # New inversions added: #{x in deque: a[i] > x} = #{x in deque: x < a[i]}\n        # \n        # When we add a[i] to back: it's at position i (rightmost).\n        # New inversions: #{x in deque: x > a[i]}\n        # \n        # So the transition only depends on the multiset of current deque elements!\n        # But we also need to track the internal inversions of the deque.\n        # \n        # Wait - the internal inversions of the deque also change when we add to front?\n        # No! Adding to front doesn't change relative order of existing elements.\n        # Adding to back doesn't change relative order of existing elements.\n        # So internal inversions are cumulative!\n        # \n        # So: dp[i][j] = min inversions in deque after i elements with j at front\n        # But we need to know the multiset to compute new inversions when adding a[i+1].\n        # \n        # The multiset is determined by WHICH elements went to front vs back,\n        # not just HOW MANY. So dp[i][j] doesn't fully capture the state.\n        # \n        # UNLESS... the multiset of front elements and back elements can be determined\n        # from j alone? No, that's not true in general.\n        # \n        # Hmm. Let me reconsider.\n        # \n        # Wait - the total multiset of the deque after i steps is always {a[0],...,a[i-1]}\n        # regardless of choices! Only the ORDER differs.\n        # \n        # So when adding a[i+1] to front: new inversions = #{k<i: a[k] < a[i+1]}... \n        # wait no, it's #{elements currently in deque that are < a[i+1]}\n        # = #{k in 0..i-1: a[k] < a[i+1]} (since all a[0..i-1] are in deque)\n        # \n        # This is FIXED regardless of the choices made so far!\n        # Similarly, adding to back: new inversions = #{k<i: a[k] > a[i+1]} also fixed!\n        # \n        # So the number of new inversions when adding a[i] depends only on i, not on previous choices!\n        # \n        # But wait, we also need to track the INTERNAL inversions that accumulate.\n        # Those depend on the order (choices made).\n        # \n        # Hmm, but if we're minimizing total inversions, and the new inversions added at each step\n        # are determined by the choice (front or back) but the OPTIONS only differ by a fixed amount...\n        # \n        # Let me define:\n        # add_front(i) = #{k < i: a[k] < a[i]} (inversions created by putting a[i] at front)\n        # add_back(i) = #{k < i: a[k] > a[i]} (inversions created by putting a[i] at back)\n        # \n        # Wait, but these counts are based on the multiset {a[0],...,a[i-1]}, which is fixed.\n        # \n        # But the INTERNAL inversions of the deque also matter!\n        # When we add a[i] to front or back, the internal inversions of the existing deque don't change.\n        # Only the new inversions involving a[i] are added.\n        # \n        # So: total_inversions = sum over each element a[i] of (inversions it creates when inserted)\n        # \n        # And the inversions a[i] creates = \n        #   if added to front: #{j < i: a[j] < a[i]} (a[i] > these, and a[i] is to their left... wait)\n        # \n        # Hmm wait. Let me re-examine.\n        # When a[i] is added to front, it's at position 0. All previous elements are at positions 1..i.\n        # Inversions involving a[i]: pairs (0, k) for k in 1..i where a[i] > deque[k].\n        # deque[1..i] = all previous elements in some order.\n        # #{k: a[i] > deque[k]} = #{k < i: a[i] > a[k]} (since multiset is the same)\n        # \n        # When a[i] is added to back, it's at position i. All previous at 0..i-1.\n        # Inversions involving a[i]: pairs (k, i) for k in 0..i-1 where deque[k] > a[i].\n        # = #{k < i: a[k] > a[i]}\n        # \n        # So:\n        # add_front(i) = #{k < i: a[k] < a[i]}  [a[i] > these elements, a[i] is to their left]\n        # add_back(i) = #{k < i: a[k] > a[i]}   [these elements > a[i], they're to a[i]'s left]\n        # \n        # And total inversions = sum of chosen costs!\n        # \n        # This means the choices are INDEPENDENT! We just pick min(add_front(i), add_back(i)) for each i!\n        # \n        # Wait, is this right? Let me verify with the examples.\n        # \n        # Example 1: a = [3, 7, 5, 5]\n        # i=0: first element, no inversions. Cost = 0.\n        # i=1 (a[1]=7): add_front = #{3<7}=1, add_back = #{3>7}=0. Choose back. Cost=0.\n        # i=2 (a[2]=5): add_front = #{3<5,7<5}=#{3<5}=1, add_back=#{3>5,7>5}=#{7>5}=1. Either=1.\n        # i=3 (a[3]=5): add_front=#{3<5,7<5,5<5}=1, add_back=#{3>5,7>5,5>5}=1. Either=1.\n        # Total = 0+0+1+1 = 2. Matches!\n        # \n        # Example 2: a = [3, 2, 1]\n        # i=0: 0\n        # i=1 (2): front=#{3<2}=0, back=#{3>2}=1. Choose front=0.\n        # i=2 (1): front=#{3<1,2<1}=0, back=#{3>1,2>1}=2. Choose front=0.\n        # Total=0. Matches!\n        # \n        # Example 3: a=[3,1,2]\n        # i=0:0\n        # i=1(1): front=#{3<1}=0, back=#{3>1}=1. front=0.\n        # i=2(2): front=#{3<2,1<2}=1, back=#{3>2,1>2}=1. Either=1.\n        # Total=1. Matches!\n        # \n        # Example 4: a=[-1,2,2,-1]\n        # i=0:0\n        # i=1(2): front=#{-1<2}=1, back=#{-1>2}=0. back=0.\n        # i=2(2): front=#{-1<2,2<2}=1, back=#{-1>2,2>2}=0. back=0.\n        # i=3(-1): front=#{-1<-1,2<-1,2<-1}=0, back=#{-1>-1,2>-1,2>-1}=2. front=0.\n        # Total=0. Matches!\n        # \n        # Example 5: a=[4,5,1,3]\n        # i=0:0\n        # i=1(5): front=#{4<5}=1, back=#{4>5}=0. back=0.\n        # i=2(1): front=#{4<1,5<1}=0, back=#{4>1,5>1}=2. front=0.\n        # i=3(3): front=#{4<3,5<3,1<3}=1, back=#{4>3,5>3,1>3}=2. front=1.\n        # Total=1. Matches!\n        # \n        # Example 6: a=[1,3,1,3,2]\n        # i=0:0\n        # i=1(3): front=#{1<3}=1, back=#{1>3}=0. back=0.\n        # i=2(1): front=#{1<1,3<1}=0, back=#{1>1,3>1}=1. front=0.\n        # i=3(3): front=#{1<3,3<3,1<3}=2, back=#{1>3,3>3,1>3}=0. back=0.\n        # i=4(2): front=#{1<2,3<2,1<2,3<2}=2, back=#{1>2,3>2,1>2,3>2}=2. Either=2.\n        # Total=0+0+0+0+2=2. Matches!\n        # \n        # Great! So the answer is just sum of min(add_front(i), add_back(i)) for each i.\n        # \n        # Now I need to compute add_front(i) and add_back(i) efficiently.\n        # add_front(i) = #{k<i: a[k] < a[i]}\n        # add_back(i) = #{k<i: a[k] > a[i]}\n        # These can be computed with a BIT/Fenwick tree in O(n log n).\n        \n        # Implementation:\n        from sortedcontainers import SortedList\n        sl = SortedList()\n        ans = 0\n        for i in range(n):\n            v = a[i]\n            less = sl.bisect_left(v)  # #{k<i: a[k] < v}\n            greater = len(sl) - sl.bisect_right(v)  # #{k<i: a[k] > v}\n            ans += min(less, greater)\n            sl.add(v)\n        print(ans)\n\nsolve()",
+      "input_tokens": 1076,
+      "output_tokens": 5029,
+      "cost_usd": 0.078663,
+      "latency_ms": 76265
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me think about DP state: `dp[l][r]` = minimum inversions where `l` is the index of the leftmost element and `r` is the index of the rightmost element. Since elements are added in order 0..n-1, and each element goes to front or back, after processing i elements, l+r = i-1 (0-indexed: l elements added to front, r elements added to back, l+r = i). The leftmost element is a[l-1] added to front... \n\nActually: after processing first `i` elements (0-indexed: 0..i-1), if `f` went to front and `b` went to back (f+b=i), the front element is `a[f-1]` (last added to front) and back element is `a[i - something]`... \n\nThe state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elements are added in reverse, if k elements went to front among first i, the leftmost is `a[k-1]` (0-indexed). The rightmost is `a[i-1]` if last went to back, or the previous back element.\n\nState: `dp[i][k]` = min inversions after placing i elements, where k went to the front. The deque is `a[k-1], a[k-2], ..., a[0], a[k], a[k+1], ..., a[i-1]` (front part reversed, then back part). Left end = `a[k-1]` (or -inf if k=0), right end = `a[i-1]` if last went to back, else... \n\nWhen adding `a[i]` (0-indexed), either add to front (new left = a[i]) or back (new right = a[i]). Inversions added = number of elements in deque greater than a[i] (if adding to back, a[i] is at right, so count elements > a[i]) or number of elements less than a[i] (if adding to front, a[i] is at left, so count elements < a[i]).\n\nState `dp[k]` after i elements where k went to front. Transition: add a[i] to front \u2192 dp_new[k+1] = dp[k] + count(elements in deque < a[i]); add to back \u2192 dp_new[k] = dp[k] + count(elements in deque > a[i]).\n\nCount of elements < a[i] in deque (front: a[0..k-1] reversed + back: a[k..i-1]) = count of elements in a[0..i-1] that are < a[i]. Similarly > a[i].\n\nThese counts don't depend on k! So dp_new[k+1] = dp[k] + less[i], dp_new[k] = dp[k] + greater[i].\n\nSo all dp[k] differ by constants based on choices. The minimum is achieved by always picking the smaller addition!\n\nimport sys\nfrom bisect import bisect_left, bisect_right, insort\n\ninput_data = sys.stdin.read().split()\nidx = 0\nt = int(input_data[idx]); idx+=1\nfor _ in range(t):\n    n = int(input_data[idx]); idx+=1\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    sorted_so_far = []\n    ans = 0\n    for i in range(n):\n        v = a[i]\n        less = bisect_left(sorted_so_far, v)\n        greater = len(sorted_so_far) - bisect_right(sorted_so_far, v)\n        ans += min(less, greater)\n        insort(sorted_so_far, v)\n    print(ans)",
+      "input_tokens": 1076,
+      "output_tokens": 1352,
+      "cost_usd": 0.023508,
+      "latency_ms": 22801
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import deque\ninput = sys.stdin.readline\n\ndef count_inversions(arr):\n    if len(arr) <= 1:\n        return 0\n    mid = len(arr) // 2\n    left = arr[:mid]\n    right = arr[mid:]\n    inv = count_inversions(left) + count_inversions(right)\n    i = j = k = 0\n    while i < len(left) and j < len(right):\n        if left[i] <= right[j]:\n            arr[k] = left[i]; i += 1\n        else:\n            arr[k] = right[j]; j += 1\n            inv += len(left) - i\n        k += 1\n    arr[k:] = left[i:] if i < len(left) else right[j:]\n    return inv\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    a = list(map(int, input().split()))\n    best = float('inf')\n    for k in range(n+1):\n        arr = list(reversed(a[:k])) + a[k:]\n        best = min(best, count_inversions(arr))\n    print(best)",
+      "input_tokens": 1076,
+      "output_tokens": 1389,
+      "cost_usd": 0.024063,
+      "latency_ms": 21963
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import defaultdict\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    # Try all splits: first k to front (reversed), rest to back\n    # Use coordinate compression + BIT\n    ...",
+      "input_tokens": 1076,
+      "output_tokens": 1092,
+      "cost_usd": 0.019608,
+      "latency_ms": 24228
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Let me verify: if we add a[1] to front, a[2] to front, a[3] to back: deque is [a[2], a[1], a[3]]. This matches k=2: a[2], a[1], a[3]. Yes!\n\nSo the answer is: for each k from 0 to n, compute inversions in the sequence [a[k], a[k-1], ..., a[1], a[k+1], ..., a[n]] and take the minimum.\n\nNow I need to efficiently compute inversions for all these sequences.\n\nFor k=0: sequence is a[1], a[2], ..., a[n] (all to back).\nFor k=n: sequence is a[n], a[n-1], ..., a[1] (all to front).\n\nWhen we go from split k to k+1, we move a[k+1] from the right part to the front of the left part. The sequence changes from [a[k],...,a[1], a[k+1], a[k+2],...,a[n]] to [a[k+1], a[k],...,a[1], a[k+2],...,a[n]].\n\nSo a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1] (these become new inversions since a[k+1] is now before them) minus how many elements in positions 1..k are less than a[k+1] (these were inversions before, now they're not). Wait, let me be more careful.\n\nWhen a[k+1] moves from position k+1 to position 1, it passes over a[k], a[k-1], ..., a[1]. For each a[i] (i=1..k) it was previously after a[i], now it's before a[i]. The change in inversions for each pair (a[i], a[k+1]):\n- If a[i] > a[k+1]: was not an inversion (a[k+1] was after), now IS an inversion (a[k+1] before a[i]). Wait no: inversion is i<j and d[i]>d[j]. If a[k+1] moves to front, it's now at a smaller index. So pair (a[k+1], a[i]): a[k+1] < a[i] means no inversion. If a[k+1] > a[i], that's an inversion.\n\nDelta = (number of a[1..k] < a[k+1]) - (number of a[1..k] > a[k+1]).\n\nI'll use a BIT/Fenwick tree to compute this efficiently.\n\nimport sys\nfrom collections import defaultdict\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n = int(input_data[idx]); idx+=1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n        \n        # coordinate compress\n        sorted_vals = sorted(set(a))\n        rank = {v:i+1 for i,v in enumerate(sorted_vals)}\n        m = len(sorted_vals)\n        \n        bit = [0]*(m+2)\n        def update(i, delta=1):\n            while i<=m:\n                bit[i]+=delta\n                i+=i&(-i)\n        def query(i):\n            s=0\n            while i>0:\n                s+=bit[i]\n                i-=i&(-i)\n            return s\n        def query_range(l,r):\n            if l>r: return 0\n            return query(r)-query(l-1)\n        \n        # compute inversions for k=0: sequence a[0],a[1],...,a[n-1]\n        inv = 0\n        for i in range(n):\n            r = rank[a[i]]\n            inv += query_range(r+1, m)\n            update(r)\n        \n        best = inv\n        \n        # reset BIT\n        bit = [0]*(m+2)\n        # rebuild with a[0] in front part\n        # For transition from k to k+1:\n        # current left part is a[k],...,a[0], right part is a[k+1],...\n        # We move a[k+1] to front\n        # delta = (count of left part < a[k+1]) - (count of left part > a[k+1])\n        # left part has k elements\n        \n        # We need BIT of left part elements\n        for i in range(n-1):\n            r = rank[a[i]]\n            less = query(r-1) if r>1 else 0\n            greater = i - query(r)  # i elements so far, query(r) includes equal\n            # Actually equal elements: query(r) - query(r-1)\n            # less = query(r-1), greater = i - query(r)\n            delta = less - greater\n            inv += delta\n            update(r)\n            if inv < best:\n                best = inv\n        \n        print(best)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 12\n    So a[k+1] moves from position k+1 to position 1. The inversions change: we need to count how many elements in positions 1..k are greater than a[k+1",
+            "runtime_ms": 35,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "The final deque = [a[ik], ..., a[i1], a[j1], ..., a[jm]].\n\nSo we need to partition the array into two subsequences F and B, where F appears reversed at the front and B appears in order at the back, minimizing total inversions.\n\nGiven n \u2264 2*10^5, we need an efficient approach. But n can be large...\n\nLet me think about a DP approach. State: dp[l][r] = min inversions when we've processed some elements and the current deque spans indices l..r in some representation. \n\nActually the deque after processing first i elements always looks like a contiguous block. Let's say after processing i elements, the deque is d[1..i]. When we add a[i+1] to front, new deque is [a[i+1], d[1], ..., d[i]]. When we add to back, it's [d[1], ..., d[i], a[i+1]].\n\nDP state: after processing i elements, the deque content. But the content varies too much.\n\nKey insight: The deque after i steps is always a sequence where some prefix is \"front-added\" (reversed) and some suffix is \"back-added\". The structure is determined by which elements went front vs back.\n\nLet dp[i][j] = min inversions for first i elements where j elements went to the front (so i-j went to back). The front part is a[front_indices reversed] and back part is a[back_indices in order].\n\nThis is still complex. Let me look for patterns with small n and think about the structure differently.\n\nAfter all insertions, the deque = reverse(front_subsequence) + back_subsequence. We want to minimize inversions in this concatenated sequence.\n\nWith n up to 2*10^5 and sum of n up to 2*10^5, maybe O(n^2) per test case is acceptable? Sum is 2*10^5, so O(n^2) total could be 4*10^10... no.\n\nWait, sum of n \u2264 2*10^5. So total work across all test cases is bounded. O(n^2) per test case with sum n = 2*10^5 means worst case one test case with n=2*10^5, giving O(n^2) = 4*10^10. Too slow.\n\nLet me think of O(n log n) approach. DP with 2 states per position?\n\ndp[i][0] = min inversions after i elements, where a[i] was added to back\ndp[i][1] = min inversions after i elements, where a[i] was added to front\n\nTransition requires knowing how many inversions adding a[i+1] creates, which depends on the entire current deque.\n\nThis seems hard without more state. Let me look at the problem rating (1700) and think of a cleaner approach.\n\nAfter more thought, I'll implement an O(n^2) DP since sum of n \u2264 2*10^5.\n\nimport sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n = int(input_data[idx]); idx+=1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n        # dp[l][r]: processed a[0..n-1-(r-l)] elements, deque is a[l..r] (indices into result)\n        # Actually let's do interval DP\n        # After processing i elements, deque has i elements\n        # State: (left_ptr, right_ptr) where the deque occupies positions [left..right] in final array of size n\n        # But we don't know final array positions ahead of time\n        \n        # Let me try: dp[i][j] = min inversions when i elements processed, j went to front\n        # front part: a[f1], a[f2], ..., a[fj] where f1<f2<...<fj, appears as a[fj],...,a[f1]\n        # back part: a[b1],...,a[b_{i-j}] in order\n        # This is O(n^2) states, transition O(n)... too slow\n        \n        # Interval DP: after processing first i elements with j at front,\n        # the deque looks like [front_j_reversed | back_{i-j}]\n        # When we add a[i] to front: new inversions = inversions(a[i], current deque)\n        # When we add a[i] to back: new inversions = inversions(current deque, a[i])\n        # \n        # inversions with front: count elements in deque < a[i] (they'll be to the right)\n        # inversions with back: count elements in deque > a[i] (they'll be to the left)\n        \n        # State dp[j] after i elements with j at front, we need to know the multiset\n        # but also the ORDER matters for counting inversions within the deque\n        \n        # Hmm. Let me think differently.\n        # \n        # The key insight: the final deque is reverse(F) + B where F and B are subsequences.\n        # Inversions = inv(reverse(F)) + inv(B) + cross_inversions(reverse(F), B)\n        # inv(reverse(F)) = inv(F) [same count]... wait no.\n        # inv(reverse(F)): pairs (i,j) with i<j in reversed sequence, reversed[i]>reversed[j]\n        # = pairs in F where F[k]<F[l] for k>l (original order), i.e., non-inversions in F\n        # Actually inv(reverse(F)) = C(|F|,2) - inv(F)... no wait.\n        # \n        # If F = [f1,f2,...,fk], reverse(F) = [fk,...,f1]\n        # inv(reverse(F)) = #{(i,j): i<j, fk+1-i > fk+1-j} = #{(i,j): i<j in original, fi < fj}\n        # = C(k,2) - inv(F) - #{equal pairs}... for distinct elements = C(k,2) - inv(F)\n        # \n        # This approach might lead somewhere but cross inversions are hard.\n        \n        # Given the constraints (sum n <= 2e5), let me just try O(n^2) DP carefully.\n        \n        # dp[j] = min inversions when current deque has j elements at front, rest at back\n        # after processing i elements total\n        # Transition from i to i+1:\n        # add a[i] to front (j -> j+1): new inversions = #{elements in back > a[i]} + #{elements in front < a[i]}\n        # But we don't track which elements are in front vs back!\n        \n        # We need more info. Let me think about what determines the inversion count.\n        \n        # After processing elements a[0..i-1] with j at front:\n        # Front (reversed): the j front elements in reverse insertion order\n        # Back: the i-j back elements in insertion order\n        # \n        # The front elements are a subsequence of a[0..i-1], and they appear reversed.\n        # The back elements are another subsequence, appearing in order.\n        # \n        # When we add a[i] to front: it becomes the new leftmost element.\n        # New inversions from a[i]: elements in deque that are less than a[i] (they're to its right... wait)\n        # a[i] is at position 0 (leftmost). Elements to its right: all current deque elements.\n        # New inversions: #{x in deque: x < a[i]} ... no, inversion means d[i]>d[j] for i<j.\n        # a[i] is at position 0, others at positions 1..i.\n        # New inversions added: #{x in deque: a[i] > x} = #{x in deque: x < a[i]}\n        # \n        # When we add a[i] to back: it's at position i (rightmost).\n        # New inversions: #{x in deque: x > a[i]}\n        # \n        # So the transition only depends on the multiset of current deque elements!\n        # But we also need to track the internal inversions of the deque.\n        # \n        # Wait - the internal inversions of the deque also change when we add to front?\n        # No! Adding to front doesn't change relative order of existing elements.\n        # Adding to back doesn't change relative order of existing elements.\n        # So internal inversions are cumulative!\n        # \n        # So: dp[i][j] = min inversions in deque after i elements with j at front\n        # But we need to know the multiset to compute new inversions when adding a[i+1].\n        # \n        # The multiset is determined by WHICH elements went to front vs back,\n        # not just HOW MANY. So dp[i][j] doesn't fully capture the state.\n        # \n        # UNLESS... the multiset of front elements and back elements can be determined\n        # from j alone? No, that's not true in general.\n        # \n        # Hmm. Let me reconsider.\n        # \n        # Wait - the total multiset of the deque after i steps is always {a[0],...,a[i-1]}\n        # regardless of choices! Only the ORDER differs.\n        # \n        # So when adding a[i+1] to front: new inversions = #{k<i: a[k] < a[i+1]}... \n        # wait no, it's #{elements currently in deque that are < a[i+1]}\n        # = #{k in 0..i-1: a[k] < a[i+1]} (since all a[0..i-1] are in deque)\n        # \n        # This is FIXED regardless of the choices made so far!\n        # Similarly, adding to back: new inversions = #{k<i: a[k] > a[i+1]} also fixed!\n        # \n        # So the number of new inversions when adding a[i] depends only on i, not on previous choices!\n        # \n        # But wait, we also need to track the INTERNAL inversions that accumulate.\n        # Those depend on the order (choices made).\n        # \n        # Hmm, but if we're minimizing total inversions, and the new inversions added at each step\n        # are determined by the choice (front or back) but the OPTIONS only differ by a fixed amount...\n        # \n        # Let me define:\n        # add_front(i) = #{k < i: a[k] < a[i]} (inversions created by putting a[i] at front)\n        # add_back(i) = #{k < i: a[k] > a[i]} (inversions created by putting a[i] at back)\n        # \n        # Wait, but these counts are based on the multiset {a[0],...,a[i-1]}, which is fixed.\n        # \n        # But the INTERNAL inversions of the deque also matter!\n        # When we add a[i] to front or back, the internal inversions of the existing deque don't change.\n        # Only the new inversions involving a[i] are added.\n        # \n        # So: total_inversions = sum over each element a[i] of (inversions it creates when inserted)\n        # \n        # And the inversions a[i] creates = \n        #   if added to front: #{j < i: a[j] < a[i]} (a[i] > these, and a[i] is to their left... wait)\n        # \n        # Hmm wait. Let me re-examine.\n        # When a[i] is added to front, it's at position 0. All previous elements are at positions 1..i.\n        # Inversions involving a[i]: pairs (0, k) for k in 1..i where a[i] > deque[k].\n        # deque[1..i] = all previous elements in some order.\n        # #{k: a[i] > deque[k]} = #{k < i: a[i] > a[k]} (since multiset is the same)\n        # \n        # When a[i] is added to back, it's at position i. All previous at 0..i-1.\n        # Inversions involving a[i]: pairs (k, i) for k in 0..i-1 where deque[k] > a[i].\n        # = #{k < i: a[k] > a[i]}\n        # \n        # So:\n        # add_front(i) = #{k < i: a[k] < a[i]}  [a[i] > these elements, a[i] is to their left]\n        # add_back(i) = #{k < i: a[k] > a[i]}   [these elements > a[i], they're to a[i]'s left]\n        # \n        # And total inversions = sum of chosen costs!\n        # \n        # This means the choices are INDEPENDENT! We just pick min(add_front(i), add_back(i)) for each i!\n        # \n        # Wait, is this right? Let me verify with the examples.\n        # \n        # Example 1: a = [3, 7, 5, 5]\n        # i=0: first element, no inversions. Cost = 0.\n        # i=1 (a[1]=7): add_front = #{3<7}=1, add_back = #{3>7}=0. Choose back. Cost=0.\n        # i=2 (a[2]=5): add_front = #{3<5,7<5}=#{3<5}=1, add_back=#{3>5,7>5}=#{7>5}=1. Either=1.\n        # i=3 (a[3]=5): add_front=#{3<5,7<5,5<5}=1, add_back=#{3>5,7>5,5>5}=1. Either=1.\n        # Total = 0+0+1+1 = 2. Matches!\n        # \n        # Example 2: a = [3, 2, 1]\n        # i=0: 0\n        # i=1 (2): front=#{3<2}=0, back=#{3>2}=1. Choose front=0.\n        # i=2 (1): front=#{3<1,2<1}=0, back=#{3>1,2>1}=2. Choose front=0.\n        # Total=0. Matches!\n        # \n        # Example 3: a=[3,1,2]\n        # i=0:0\n        # i=1(1): front=#{3<1}=0, back=#{3>1}=1. front=0.\n        # i=2(2): front=#{3<2,1<2}=1, back=#{3>2,1>2}=1. Either=1.\n        # Total=1. Matches!\n        # \n        # Example 4: a=[-1,2,2,-1]\n        # i=0:0\n        # i=1(2): front=#{-1<2}=1, back=#{-1>2}=0. back=0.\n        # i=2(2): front=#{-1<2,2<2}=1, back=#{-1>2,2>2}=0. back=0.\n        # i=3(-1): front=#{-1<-1,2<-1,2<-1}=0, back=#{-1>-1,2>-1,2>-1}=2. front=0.\n        # Total=0. Matches!\n        # \n        # Example 5: a=[4,5,1,3]\n        # i=0:0\n        # i=1(5): front=#{4<5}=1, back=#{4>5}=0. back=0.\n        # i=2(1): front=#{4<1,5<1}=0, back=#{4>1,5>1}=2. front=0.\n        # i=3(3): front=#{4<3,5<3,1<3}=1, back=#{4>3,5>3,1>3}=2. front=1.\n        # Total=1. Matches!\n        # \n        # Example 6: a=[1,3,1,3,2]\n        # i=0:0\n        # i=1(3): front=#{1<3}=1, back=#{1>3}=0. back=0.\n        # i=2(1): front=#{1<1,3<1}=0, back=#{1>1,3>1}=1. front=0.\n        # i=3(3): front=#{1<3,3<3,1<3}=2, back=#{1>3,3>3,1>3}=0. back=0.\n        # i=4(2): front=#{1<2,3<2,1<2,3<2}=2, back=#{1>2,3>2,1>2,3>2}=2. Either=2.\n        # Total=0+0+0+0+2=2. Matches!\n        # \n        # Great! So the answer is just sum of min(add_front(i), add_back(i)) for each i.\n        # \n        # Now I need to compute add_front(i) and add_back(i) efficiently.\n        # add_front(i) = #{k<i: a[k] < a[i]}\n        # add_back(i) = #{k<i: a[k] > a[i]}\n        # These can be computed with a BIT/Fenwick tree in O(n log n).\n        \n        # Implementation:\n        from sortedcontainers import SortedList\n        sl = SortedList()\n        ans = 0\n        for i in range(n):\n            v = a[i]\n            less = sl.bisect_left(v)  # #{k<i: a[k] < v}\n            greater = len(sl) - sl.bisect_right(v)  # #{k<i: a[k] > v}\n            ans += min(less, greater)\n            sl.add(v)\n        print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    Given n \u2264 2*10^5, we need an efficient approach. But n can be large...\n            ^\nSyntaxError: invalid character '\u2264' (U+2264)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Let me think about DP state: `dp[l][r]` = minimum inversions where `l` is the index of the leftmost element and `r` is the index of the rightmost element. Since elements are added in order 0..n-1, and each element goes to front or back, after processing i elements, l+r = i-1 (0-indexed: l elements added to front, r elements added to back, l+r = i). The leftmost element is a[l-1] added to front... \n\nActually: after processing first `i` elements (0-indexed: 0..i-1), if `f` went to front and `b` went to back (f+b=i), the front element is `a[f-1]` (last added to front) and back element is `a[i - something]`... \n\nThe state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elements are added in reverse, if k elements went to front among first i, the leftmost is `a[k-1]` (0-indexed). The rightmost is `a[i-1]` if last went to back, or the previous back element.\n\nState: `dp[i][k]` = min inversions after placing i elements, where k went to the front. The deque is `a[k-1], a[k-2], ..., a[0], a[k], a[k+1], ..., a[i-1]` (front part reversed, then back part). Left end = `a[k-1]` (or -inf if k=0), right end = `a[i-1]` if last went to back, else... \n\nWhen adding `a[i]` (0-indexed), either add to front (new left = a[i]) or back (new right = a[i]). Inversions added = number of elements in deque greater than a[i] (if adding to back, a[i] is at right, so count elements > a[i]) or number of elements less than a[i] (if adding to front, a[i] is at left, so count elements < a[i]).\n\nState `dp[k]` after i elements where k went to front. Transition: add a[i] to front \u2192 dp_new[k+1] = dp[k] + count(elements in deque < a[i]); add to back \u2192 dp_new[k] = dp[k] + count(elements in deque > a[i]).\n\nCount of elements < a[i] in deque (front: a[0..k-1] reversed + back: a[k..i-1]) = count of elements in a[0..i-1] that are < a[i]. Similarly > a[i].\n\nThese counts don't depend on k! So dp_new[k+1] = dp[k] + less[i], dp_new[k] = dp[k] + greater[i].\n\nSo all dp[k] differ by constants based on choices. The minimum is achieved by always picking the smaller addition!\n\nimport sys\nfrom bisect import bisect_left, bisect_right, insort\n\ninput_data = sys.stdin.read().split()\nidx = 0\nt = int(input_data[idx]); idx+=1\nfor _ in range(t):\n    n = int(input_data[idx]); idx+=1\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    sorted_so_far = []\n    ans = 0\n    for i in range(n):\n        v = a[i]\n        less = bisect_left(sorted_so_far, v)\n        greater = len(sorted_so_far) - bisect_right(sorted_so_far, v)\n        ans += min(less, greater)\n        insort(sorted_so_far, v)\n    print(ans)",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 5\n    The state: after processing i elements, the deque's left end is `a[l]` and right end is `a[r]` where the deque spans some elements. Since front elem",
+            "runtime_ms": 34,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 3,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import deque\ninput = sys.stdin.readline\n\ndef count_inversions(arr):\n    if len(arr) <= 1:\n        return 0\n    mid = len(arr) // 2\n    left = arr[:mid]\n    right = arr[mid:]\n    inv = count_inversions(left) + count_inversions(right)\n    i = j = k = 0\n    while i < len(left) and j < len(right):\n        if left[i] <= right[j]:\n            arr[k] = left[i]; i += 1\n        else:\n            arr[k] = right[j]; j += 1\n            inv += len(left) - i\n        k += 1\n    arr[k:] = left[i:] if i < len(left) else right[j:]\n    return inv\n\nt = int(input())\nfor _ in range(t):\n    n = int(input())\n    a = list(map(int, input().split()))\n    best = float('inf')\n    for k in range(n+1):\n        arr = list(reversed(a[:k])) + a[k:]\n        best = min(best, count_inversions(arr))\n    print(best)",
+      "test_results": {
+        "total": 50,
+        "passed": 6,
+        "failed": 44,
+        "errors": 0,
+        "pass_rate": 0.12,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "2\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n1\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "0\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "2\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "2\n0\n1\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "2\n1\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "2\n0\n0\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "2\n0\n0\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "2\n0\n1\n2\n1\n4",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "0\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "2\n1\n0\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "1\n0\n0\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "1\n0\n0\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "0\n0\n0\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "3\n0\n0\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "1\n0\n0\n3\n1\n3",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "1\n0\n0\n3\n1\n3",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "0\n0\n0\n3\n1\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "3\n0\n0\n2\n2\n2",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "0\n0\n0\n3\n1\n3",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "0\n0\n0\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "2\n0\n1\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "1\n0\n1\n2\n1\n4",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "0\n0\n1\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "1\n0\n0\n2\n0\n3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "2\n0\n1\n2\n0\n4",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "1\n0\n0\n3\n0\n3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "3\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "1\n0\n1\n2\n2\n2",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "1\n0\n0\n2\n1\n4",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "0\n0\n0\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "0\n1\n1\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "2\n1\n1\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "0\n0\n0\n3\n2\n3",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "2\n1\n1\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "2\n1\n1\n2\n1\n4",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "1\n1\n1\n2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "0\n0\n0\n2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "1\n0\n0\n1\n0\n3",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "1\n0\n0\n3\n2\n3",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 4,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import defaultdict\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    # Try all splits: first k to front (reversed), rest to back\n    # Use coordinate compression + BIT\n    ...",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 3,
+  "final_test_results": {
+    "total": 50,
+    "passed": 6,
+    "failed": 44,
+    "errors": 0,
+    "pass_rate": 0.12,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n2",
+        "actual": "2\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n1\n-1000000000\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n1\n-1090552905\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n1",
+        "actual": "2\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n2",
+        "actual": "2\n1\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+        "expected": "1",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+        "expected": "0\n0\n1\n0\n1\n1",
+        "actual": "0\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+        "expected": "1\n0\n1\n0\n1\n1",
+        "actual": "2\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n1\n1\n1\n1",
+        "actual": "2\n0\n1\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n1\n1\n2",
+        "actual": "2\n1\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n0\n0\n1\n1",
+        "actual": "2\n0\n0\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n0\n1\n1\n1",
+        "actual": "2\n0\n0\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "2\n0\n1\n0\n1\n0",
+        "actual": "2\n0\n1\n2\n1\n4",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n1\n0\n1\n0",
+        "actual": "0\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "0\n0\n1\n1\n1\n1",
+        "actual": "0\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n0\n1\n1\n2",
+        "actual": "2\n1\n0\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "1\n0\n0\n1\n1\n1",
+        "actual": "1\n0\n0\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+        "expected": "1\n0\n0\n1\n1\n2",
+        "actual": "1\n0\n0\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+        "expected": "0\n0\n0\n1\n1\n2",
+        "actual": "0\n0\n0\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+        "expected": "0\n0\n0\n1\n2\n2",
+        "actual": "3\n0\n0\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n2\n1\n2",
+        "actual": "1\n0\n0\n3\n1\n3",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+        "expected": "1\n0\n0\n2\n1\n1",
+        "actual": "1\n0\n0\n3\n1\n3",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+        "expected": "0\n0\n0\n2\n1\n1",
+        "actual": "0\n0\n0\n3\n1\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+        "expected": "0\n0\n0\n1\n2\n1",
+        "actual": "3\n0\n0\n2\n2\n2",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n2\n1\n0",
+        "actual": "0\n0\n0\n3\n1\n3",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n1\n1\n0",
+        "actual": "0\n0\n0\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n1\n0\n2\n1",
+        "actual": "2\n0\n1\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "0\n0\n1\n1\n1\n0",
+        "actual": "1\n0\n1\n2\n1\n4",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n1\n0\n0\n0",
+        "actual": "0\n0\n1\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n1\n0\n2",
+        "actual": "1\n0\n0\n2\n0\n3",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+        "expected": "2\n0\n1\n0\n0\n0",
+        "actual": "2\n0\n1\n2\n0\n4",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n2\n0\n2",
+        "actual": "1\n0\n0\n3\n0\n3",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+        "expected": "0\n0\n0\n1\n2\n0",
+        "actual": "3\n0\n0\n2\n2\n0",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+        "expected": "0\n0\n1\n0\n1\n2",
+        "actual": "1\n0\n1\n2\n2\n2",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "1\n0\n0\n1\n1\n0",
+        "actual": "1\n0\n0\n2\n1\n4",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n0\n0\n1\n0",
+        "actual": "0\n0\n0\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+        "expected": "0\n1\n1\n0\n1\n0",
+        "actual": "0\n1\n1\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n1\n1\n0\n1\n1",
+        "actual": "2\n1\n1\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n2\n2\n0",
+        "actual": "0\n0\n0\n3\n2\n3",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+        "expected": "2\n1\n1\n0\n1\n2",
+        "actual": "2\n1\n1\n2\n1\n2",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+        "expected": "2\n1\n1\n0\n1\n0",
+        "actual": "2\n1\n1\n2\n1\n4",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "1\n0\n1\n1\n1\n1",
+        "actual": "1\n1\n1\n2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+        "expected": "0\n0\n0\n1\n0\n0",
+        "actual": "0\n0\n0\n2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n0\n0\n2",
+        "actual": "1\n0\n0\n1\n0\n3",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+        "expected": "1\n0\n0\n2\n2\n0",
+        "actual": "1\n0\n0\n3\n2\n3",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.17563499999999999,
+  "total_latency_ms": 170990,
+  "iterations_used": null,
+  "early_stopped": null
+}

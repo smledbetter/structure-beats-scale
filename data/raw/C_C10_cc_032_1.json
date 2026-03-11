@@ -1,0 +1,621 @@
+{
+  "study": "C",
+  "condition": "C10",
+  "task_id": "cc_032",
+  "replica": 1,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let's define the positions 0..n-m where b could match. For each position i, let `match[i]` = 1 if b currently matches at i, 0 otherwise.\n\nWe need to choose a subset S of exactly k positions to be matches, and minimize the total number of character changes in `a`.\n\nThe difficulty is that changing a character in `a` can affect multiple match positions simultaneously.\n\nThis looks like it could be solved with interval DP or some covering approach.\n\nLet me think of it differently. We have positions in `a` (0..n-1). Each position `j` in `a` affects match positions `max(0, j-m+1)` to `min(n-m, j)`.\n\nThis is essentially: choose which of the n-m+1 windows are \"active\" (match b), and find minimum changes to `a` to achieve exactly k active windows.\n\nWith n\u2264500, m\u2264500, and n-m+1 up to 500 windows, we need an efficient DP.\n\nLet me think of a DP over positions in `a`, tracking which recent windows are \"committed\" (decided to match or not match).\n\nAt each position j in `a`, we decide the value of `a[j]`. This affects windows starting at positions `j-m+1` to `j`. A window starting at position `i` is fully determined once we've decided `a[i], ..., a[i+m-1]`.\n\nLet me use DP where state is (position in a, number of matches so far, state of current \"open\" windows).\n\nThe open windows at position j are windows i where i \u2264 j < i+m, i.e., i from max(0,j-m+1) to j. That's up to m windows open at once, which is too many to track.\n\nAlternative: Since windows overlap by at most m-1 positions, and we need to track which of the last m-1 window outcomes are fixed... \n\nActually, let me look for a DP where we process window by window. When we move from window i to i+1, they share m-1 characters. \n\nLet me try: DP[i][k] = minimum cost to fix windows 0..i such that exactly k of them match, considering only changes in positions 0..i+m-1... but overlaps make this tricky.\n\nLet me think of a segment-based DP. Process windows left to right. When we \"set\" window i to match or not match, we fix characters i..i+m-1. But characters i+1..i+m-1 are shared with future windows.\n\nThis seems like it needs tracking the \"committed\" characters in the overlap region.\n\nWith m up to 500, tracking the overlap state is infeasible directly.\n\nLet me look for a known approach: this is similar to \"exact pattern matching count\" DP problems. \n\nKey insight: use DP[i][j] = min cost where i = current window index (0..n-m), j = number of matches so far. But we need to handle overlaps.\n\nWhen windows don't overlap (distance \u2265 m), they're independent. When they overlap, changing one affects the other.\n\nLet me try a DP that processes each window and tracks the \"tail\" of the previous window that overlaps with the current one. But the tail can be up to m-1 bits long.\n\nGiven n,m \u2264 500, perhaps an O(n^3) or O(n^2 * m) solution works within 3 seconds.\n\nLet me look at this as: for each pair of consecutive \"forced match\" positions, compute the cost. Then use DP over which positions are matches.\n\nI'll implement a DP where `dp[i][k]` = min cost considering windows 0..i with exactly k matches, where we track what the last match position was to handle overlaps properly.\n\nAfter research, I believe the right approach involves computing costs for segments between forced matches.\n\nLet me implement a solution with `dp[i][k]` = min cost for first i windows with k matches, tracking last match position.\n\nGiven complexity constraints, let me code this up:\n\n```python\nimport sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    a = input_data[2]\n    b = input_data[3]\n    \n    W = n - m + 1  # number of windows\n    \n    # cost[i] = cost to make window i match b\n    cost_match = []\n    cost_nomatch = []  # min cost to make window i NOT match b (change at least 1 char) -- but this interacts with others\n    \n    for i in range(W):\n        c = sum(1 for j in range(m) if a[i+j] != b[j])\n        cost_match.append(c)\n    \n    # For exact k matches, we need to select exactly k windows to be matches\n    # and ensure all other windows are NOT matches.\n    # \n    # The problem: changes interact. If we change a[j], it affects all windows containing j.\n    \n    # Let's use DP: dp[i][k] = min changes to positions 0..i+m-1 such that\n    # windows 0..i have exactly k matches, AND window i is a match.\n    # Also track dp_no[i][k] = same but window i is NOT a match.\n    # But \"not a match\" needs at least one char in window i to differ from b,\n    # which might already be satisfied by changes made for other windows.\n    \n    # This is getting complex. Let me think of a cleaner formulation.\n    #\n    # Key observation: if we decide the exact set S of windows that match,\n    # the minimum cost is determined by the minimum number of character changes\n    # to satisfy: for i in S, a'[i..i+m-1] = b; for i not in S, a'[i..i+m-1] != b.\n    #\n    # The constraints \"a'[i..i+m-1] = b\" for i in S might conflict if two windows\n    # in S overlap and require different characters at the same position.\n    # (This happens when b[j] != b[j + (i2-i1)] for overlapping positions)\n    #\n    # So first: check feasibility of a set S.\n    # If two windows i1 < i2 in S overlap (i2 < i1+m), they require:\n    #   b[j] = b[j + (i2-i1)] for j in [0, i1+m-i2)\n    # i.e., b has a period of (i2-i1) in the overlap region.\n    \n    # For non-conflicting sets S, the \"match\" constraints fix some characters of a'.\n    # Then \"non-match\" constraints say: for each i not in S, at least one char in\n    # window i differs from b. Some of these might already be violated by the fixed chars.\n    # If not, we need to change one more char.\n    \n    # This is still complex. Let me look for a DP solution.\n    \n    # DP approach:\n    # Process windows 0 to W-1 left to right.\n    # State: (window index i, number of matches k, last match window index or -inf)\n    # \n    # When we decide window i is a match:\n    #   - If last match was at position p, and i < p+m (overlap):\n    #     Check if b[i-p:] == b[:p+m-i] (consistency). If not, infeasible.\n    #     The overlap region is already fixed, cost to make window i match = \n    #     sum of changes needed in non-overlap part (positions p+m to i+m-1)\n    #   - If no overlap: cost = cost_match[i]\n    #\n    # When window i is NOT a match:\n    #   - If it's already forced to not match (due to overlap with a match window that\n    #     creates an inconsistency), cost = 0 extra.\n    #   - Otherwise, we need to ensure at least one char differs.\n    #     But this interacts with future decisions...\n    \n    # This is really tricky because \"not match\" windows might need changes that\n    # affect future \"match\" windows.\n    \n    # Let me look at small cases and think about the structure.\n    \n    # Alternative: model this as an ILP or min-cost flow? Probably too slow.\n    \n    # Let me look at this from a different angle.\n    # \n    # The characters of a' are a[0..n-1] (each can be 0 or 1).\n    # We want to minimize sum of (a'[j] != a[j]) subject to:\n    #   - exactly k windows match b.\n    #\n    # This is a combinatorial optimization problem.\n    # \n    # With n <= 500, maybe we can use a DP over positions in a',\n    # tracking the \"match state\" of recent windows.\n    #\n    # Specifically, at position j in a', the windows that are \"active\" \n    # (started but not finished) are those starting at max(0, j-m+1) to j.\n    # A window i is completed when we process position i+m-1.\n    #\n    # State: (j, k_so_far, pattern_of_last_m_bits_of_a')\n    # But last m bits is 2^500 states - way too many.\n    \n    # Hmm. Let me think about this differently.\n    # \n    # Key insight from competitive programming:\n    # \n    # We can use DP where we process windows and the state captures\n    # what we've \"committed\" in the overlap with the next window.\n    # \n    # Specifically, when we process window i and decide it matches or not,\n    # we've fixed characters i..i+m-1. The overlap with window i+1 is\n    # characters i+1..i+m-1 (if m > 1), which is m-1 characters.\n    # \n    # But tracking m-1 characters as state is 2^(m-1) which is too large.\n    \n    # Let me think about what information we actually need.\n    # \n    # When processing window i+1, we need to know:\n    # 1. How many characters in positions i+1..i+m-1 are already fixed \n    #    (and what they are) due to previous decisions.\n    # 2. Whether window i+1 is forced to match or not match b due to these fixed chars.\n    \n    # Actually, the key insight might be:\n    # \n    # If we decide that windows i1, i2, ..., ik (sorted) all match b,\n    # then all characters in the union of these windows are determined.\n    # For any window i not in the set, we need at least one character\n    # in window i to differ from b[0..m-1].\n    # \n    # If window i overlaps with some match window i_p (i_p in set, |i - i_p| < m),\n    # then characters in the overlap are fixed. We need to check if they already\n    # make window i not match b. If they do, great. If not (i.e., the overlap\n    # is consistent with window i matching b), then we need to change one of the\n    # non-overlap characters of window i (or the overlap characters, but changing\n    # those would break the match window i_p).\n    # \n    # Wait, we can change overlap characters but that would break the match window.\n    # So if a non-match window i is \"forced\" to match b by overlap constraints,\n    # we have a contradiction (infeasible).\n    \n    # Let me formalize:\n    # \n    # Given a set S of match windows:\n    # - Feasibility: For any two windows i1, i2 in S with |i1-i2| < m,\n    #   b must be consistent (b[j] = b[j + (i2-i1)] for appropriate j).\n    #   Also, for any window i not in S that overlaps with some i_p in S,\n    #   the overlap must not force window i to match b entirely.\n    #   (If i not in S and i_p in S with i_p < i < i_p + m:\n    #    The characters i_p..i_p+m-1 are fixed to b[0..m-1].\n    #    Window i uses characters i..i+m-1.\n    #    Overlap: characters i..i_p+m-1 are fixed to b[i-i_p..m-1].\n    #    For window i to not match, we need some character in i..i+m-1 to differ from b.\n    #    Characters i..i_p+m-1 are fixed to b[i-i_p..m-1] = b[0..i_p+m-1-i].\n    #    Hmm, b[i-i_p + j] for j=0..i_p+m-1-i should equal b[j] for window i to match in overlap.\n    #    If b[i-i_p..m-1] != b[0..i_p+m-i-1], then window i already doesn't match in overlap -> OK.\n    #    If b[i-i_p..m-1] == b[0..i_p+m-i-1] (i.e., b has period i-i_p), then\n    #    we need to change a character in the non-overlap part i_p+m..i+m-1.\n    #    If i_p+m > i+m-1 (i.e., window i is fully contained in window i_p), \n    #    then there's no non-overlap part -> infeasible (unless i == i_p, but i not in S).\n    \n    # This is getting very involved. Let me look for a cleaner DP.\n    \n    # After more thought, I think the right approach is:\n    # \n    # DP[i][k] = minimum cost to handle windows 0..i with exactly k matches,\n    # where we've optimally set characters 0..i+m-1, AND window i is a match.\n    # \n    # Transition: from DP[j][k-1] (window j is the previous match) to DP[i][k]:\n    # - i > j\n    # - If i >= j+m (no overlap): cost = DP[j][k-1] + cost_match[i] + \n    #   (cost to ensure windows j+1..i-1 don't match, given chars j..j+m-1 fixed to b\n    #    and chars i..i+m-1 fixed to b, and chars j+m..i-1 can be set freely)\n    # - If i < j+m (overlap): need b to be consistent in overlap, \n    #   cost = DP[j][k-1] + (cost to fix chars i+overlap_start..i+m-1 to match b)\n    #   + (cost to ensure windows j+1..i-1 don't match)\n    \n    # The \"cost to ensure windows don't match\" part is the hard part.\n    \n    # For the gap between two consecutive match windows j and i (no overlap):\n    # Characters j..j+m-1 are fixed to b (from match j).\n    # Characters i..i+m-1 are fixed to b (from match i).\n    # Characters j+m..i-1 are free.\n    # Windows j+1..i-1 must not match.\n    # \n    # For window p in j+1..i-1:\n    # - Characters p..min(j+m-1, p+m-1) are fixed (from match j, if p < j+m).\n    # - Characters max(i, p)..p+m-1 are fixed (from match i, if p+m > i).\n    # - We need window p to not match b.\n    \n    # Given the constraints n,m <= 500, total windows W <= 500,\n    # maybe we can precompute for each pair (j, i) the cost",
+      "input_tokens": 513,
+      "output_tokens": 4096,
+      "cost_usd": 0.062979,
+      "latency_ms": 66187
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The code never produces any output; the solve() function is incomplete and does not implement the required algorithm or print results. This is a critical bug as the program will not solve the problem.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\"verdict\":\"FAIL\",\"bugs\":[{\"description\":\"The code never produces any output; the solve() function is incomplete and does not implement the required algorithm or print results. This is a critical bug as the program will not solve the problem.\",\"line\":1,\"severity\":\"critical\",\"triggering_input\":\"any\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code never produces any output; the solve() function is incomplete and does not implement the required algorithm or print results. This is a critical bug as the program will not solve the problem.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 3854,
+          "output_tokens": 63,
+          "cost_usd": 0.00101075,
+          "latency_ms": 1085
+        },
+        {
+          "role": "generalist_iter2",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"gap_cost assumes each non\u2011matching window can be broken independently with cost 1, ignoring that a single character change can break multiple windows simultaneously. This overestimates the required changes and yields incorrect minimal costs.\",\n      \"line\": 35,\n      \"severity\": \"major\",\n      \"triggering_input\": \"4 2\\n0000\\n00\"\n    },\n    {\n      \"description\": \"The algorithm's time complexity is far too high: gap_cost is O(W*m) and is called inside three nested loops over k, i, and last (each up to W). This results in roughly O(W^4*m) operations, which will TLE for n=500.\",\n      \"line\": 70,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"500 250\\n\" + \"0\"*500 + \"\\n\" + \"0\"*250\n    },\n    {\n      \"description\": \"Inconsistent encoding of the sentinel last=-1: full_dp[0][W] is set as the base state, but later li = last + 1 maps last=-1 to index 0, never to W. This mismatch causes the DP to miss valid states and produce wrong answers.\",\n      \"line\": 68,\n      \"severity\": \"major\",\n      \"triggering_input\": \"3 2\\n101\\n10\"\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 1407,
+          "output_tokens": 289,
+          "cost_usd": 0.0005685,
+          "latency_ms": 5152
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef solve():\n    data = sys.stdin.read().split()\n    n, m = int(data[0]), int(data[1])\n    a = data[2]\n    b = data[3]\n    \n    W = n - m + 1\n    INF = float('inf')\n    \n    # cost to make window i match b\n    cost_match = [sum(1 for j in range(m) if a[i+j] != b[j]) for i in range(W)]\n    \n    # For a window p that must NOT match b, given some characters are fixed,\n    # compute min additional cost. If already not matching due to fixed chars -> 0\n    # Otherwise need to change one free character (cost 1 if original differs, else 1)\n    # We'll compute: given window p must not match, and characters from prev_match and next_match are fixed,\n    # what's the min cost?\n    \n    # Precompute: for each window p, if we force it to not match,\n    # and characters from a match at position lm (lm < p, lm+m > p) are fixed to b,\n    # and characters from a match at position rm (rm > p, rm < p+m) are fixed to b,\n    # what's the min cost to break window p?\n    \n    # Simpler: dp[last_match][k] = min cost\n    # Transition handles the \"gap\" windows\n    \n    def gap_cost(prev, nxt):\n        # prev = last match window index (-1 means none), nxt = next match window index (W means none)\n        # Windows between prev+1 and nxt-1 must not match\n        # Characters prev..prev+m-1 fixed to b (if prev >= 0)\n        # Characters nxt..nxt+m-1 fixed to b (if nxt < W)\n        cost = 0\n        for p in range(max(0, prev+1), min(W, nxt)):\n            # Check if window p already doesn't match due to fixed characters\n            already_broken = False\n            extra = 0\n            for j in range(m):\n                pos = p + j\n                fixed_val = None\n                if prev >= 0 and prev <= pos <= prev + m - 1:\n                    fixed_val = int(b[pos - prev])\n                if nxt < W and nxt <= pos <= nxt + m - 1:\n                    fv2 = int(b[pos - nxt])\n                    if fixed_val is not None and fixed_val != fv2:\n                        already_broken = True\n                        break\n                    fixed_val = fv2\n                if fixed_val is not None and fixed_val != int(b[j]):\n                    already_broken = True\n                    break\n            if not already_broken:\n                cost += 1\n        return cost\n    \n    # dp[k][last] where last is the index of last match window\n    dp = [[INF] * (W + 1) for _ in range(W + 2)]\n    # sentinel: last = -1 (no match yet)\n    # dp[k][-1+1] = dp[k][0 index as W]\n    \n    ans = [INF] * (W + 1)\n    \n    # Use dp[last_match+1][k] \n    prev_dp = {-1: 0}  # last_match -> cost\n    \n    full_dp = [[INF] * (W + 2) for _ in range(W + 1)]\n    full_dp[0][W] = 0  # 0 matches, last=-1 encoded as W\n    \n    for k in range(1, W + 1):\n        for i in range(W):\n            for last in range(-1, W):\n                li = last + 1\n                if full_dp[k-1][li] == INF:\n                    continue\n                prev_cost = full_dp[k-1][li]\n                gc = gap_cost(last, i)\n                mc = cost_match[i]\n                full_dp[k][i+1] = min(full_dp[k][i+1], prev_cost + gc + mc)\n    \n    for k in range(W + 1):\n        for last in range(-1, W):\n            li = last + 1\n            if full_dp[k][li] == INF:\n                continue\n            gc = gap_cost(last, W)\n            ans[k] = min(ans[k], full_dp[k][li] + gc)\n    \n    result = []\n    for k in range(W + 1):\n        result.append(ans[k] if ans[k] != INF else -1)\n    print(*result)\n\nsolve()",
+          "input_tokens": 4532,
+          "output_tokens": 1349,
+          "cost_usd": 0.033831,
+          "latency_ms": 20016
+        }
+      ],
+      "final_code": "import sys\n\ndef solve():\n    data = sys.stdin.read().split()\n    n, m = int(data[0]), int(data[1])\n    a = data[2]\n    b = data[3]\n    \n    W = n - m + 1\n    INF = float('inf')\n    \n    # cost to make window i match b\n    cost_match = [sum(1 for j in range(m) if a[i+j] != b[j]) for i in range(W)]\n    \n    # For a window p that must NOT match b, given some characters are fixed,\n    # compute min additional cost. If already not matching due to fixed chars -> 0\n    # Otherwise need to change one free character (cost 1 if original differs, else 1)\n    # We'll compute: given window p must not match, and characters from prev_match and next_match are fixed,\n    # what's the min cost?\n    \n    # Precompute: for each window p, if we force it to not match,\n    # and characters from a match at position lm (lm < p, lm+m > p) are fixed to b,\n    # and characters from a match at position rm (rm > p, rm < p+m) are fixed to b,\n    # what's the min cost to break window p?\n    \n    # Simpler: dp[last_match][k] = min cost\n    # Transition handles the \"gap\" windows\n    \n    def gap_cost(prev, nxt):\n        # prev = last match window index (-1 means none), nxt = next match window index (W means none)\n        # Windows between prev+1 and nxt-1 must not match\n        # Characters prev..prev+m-1 fixed to b (if prev >= 0)\n        # Characters nxt..nxt+m-1 fixed to b (if nxt < W)\n        cost = 0\n        for p in range(max(0, prev+1), min(W, nxt)):\n            # Check if window p already doesn't match due to fixed characters\n            already_broken = False\n            extra = 0\n            for j in range(m):\n                pos = p + j\n                fixed_val = None\n                if prev >= 0 and prev <= pos <= prev + m - 1:\n                    fixed_val = int(b[pos - prev])\n                if nxt < W and nxt <= pos <= nxt + m - 1:\n                    fv2 = int(b[pos - nxt])\n                    if fixed_val is not None and fixed_val != fv2:\n                        already_broken = True\n                        break\n                    fixed_val = fv2\n                if fixed_val is not None and fixed_val != int(b[j]):\n                    already_broken = True\n                    break\n            if not already_broken:\n                cost += 1\n        return cost\n    \n    # dp[k][last] where last is the index of last match window\n    dp = [[INF] * (W + 1) for _ in range(W + 2)]\n    # sentinel: last = -1 (no match yet)\n    # dp[k][-1+1] = dp[k][0 index as W]\n    \n    ans = [INF] * (W + 1)\n    \n    # Use dp[last_match+1][k] \n    prev_dp = {-1: 0}  # last_match -> cost\n    \n    full_dp = [[INF] * (W + 2) for _ in range(W + 1)]\n    full_dp[0][W] = 0  # 0 matches, last=-1 encoded as W\n    \n    for k in range(1, W + 1):\n        for i in range(W):\n            for last in range(-1, W):\n                li = last + 1\n                if full_dp[k-1][li] == INF:\n                    continue\n                prev_cost = full_dp[k-1][li]\n                gc = gap_cost(last, i)\n                mc = cost_match[i]\n                full_dp[k][i+1] = min(full_dp[k][i+1], prev_cost + gc + mc)\n    \n    for k in range(W + 1):\n        for last in range(-1, W):\n            li = last + 1\n            if full_dp[k][li] == INF:\n                continue\n            gc = gap_cost(last, W)\n            ans[k] = min(ans[k], full_dp[k][li] + gc)\n    \n    result = []\n    for k in range(W + 1):\n        result.append(ans[k] if ans[k] != INF else -1)\n    print(*result)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 1,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 2,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 3,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 4,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 5,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 6,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 7,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 8,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 9,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 10,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 11,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 12,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 13,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 14,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 15,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 16,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 17,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 18,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 19,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 20,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 21,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 22,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 23,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 24,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 25,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 26,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 27,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 28,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 29,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 30,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 31,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 32,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 33,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 34,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 35,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 36,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 37,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 38,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 39,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 40,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 41,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 42,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 43,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 44,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 45,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 46,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 47,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 48,
+            "status": "error",
+            "error": "harness error: "
+          },
+          {
+            "test_index": 49,
+            "status": "error",
+            "error": "harness error: "
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 1,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 2,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 3,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 4,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 5,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 6,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 7,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 8,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 9,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 10,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 11,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 12,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 13,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 14,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 15,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 16,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 17,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 18,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 19,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 20,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 21,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 22,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 23,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 24,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 25,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 26,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 27,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 28,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 29,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 30,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 31,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 32,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 33,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 34,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 35,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 36,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 37,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 38,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 39,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 40,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 41,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 42,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 43,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 44,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 45,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 46,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 47,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 48,
+        "status": "error",
+        "error": "harness error: "
+      },
+      {
+        "test_index": 49,
+        "status": "error",
+        "error": "harness error: "
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 1,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.03484175,
+      "cumulative_cost": 0.09782075
+    },
+    {
+      "iteration": 2,
+      "bugs_found": 0,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.0005685,
+      "cumulative_cost": 0.09838925
+    }
+  ],
+  "total_cost_usd": 0.09838925,
+  "total_latency_ms": 92440,
+  "iterations_used": 2,
+  "early_stopped": true
+}

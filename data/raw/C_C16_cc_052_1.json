@@ -1,0 +1,3794 @@
+{
+  "study": "C",
+  "condition": "C16",
+  "task_id": "cc_052",
+  "replica": 1,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    a = list(map(int, input().split()))\n    \n    # dp[i][j][d] = max number of elements equal to their index\n    # considering first i elements, j elements deleted so far, d elements kept\n    # Actually let's think differently\n    # \n    # We want to select a subset of elements to keep (in order), deleting some elements before them\n    # If we keep elements at original positions p1 < p2 < ... < pm,\n    # and we delete 'd' elements before position pi (from original positions not in kept set),\n    # then the new index of element at original position pi is pi - (number of deleted elements before pi)\n    # \n    # We want to maximize the number of kept elements where a[pi] == pi - deleted_before_pi\n    # \n    # Let's define: for each element i (0-indexed), if we delete 'd' elements before it (from positions < i that we also delete),\n    # its new index = (i+1) - d (1-indexed)\n    # We want a[i] == (i+1) - d, i.e., d == (i+1) - a[i]\n    # \n    # So we need to find maximum number of elements we can \"fix\" (make equal to index)\n    # by choosing which elements to delete.\n    # \n    # Key insight: if we decide to fix elements at original positions p1 < p2 < ... < pk,\n    # then for each pj, the number of deletions before pj must equal (pj+1) - a[pj] = pj+1 - a[pj]\n    # These deletions must be non-decreasing and each step increase by at most (p_{j+1} - p_j) (elements between them can be deleted)\n    # Also d_j >= 0 for all j, and d_j <= pj (can't delete more than pj elements before position pj)\n    # \n    # Let d_j = (p_j + 1) - a[p_j] (0-indexed p_j, so original index is p_j+1)\n    # Constraints: 0 <= d_1 <= d_2 <= ... <= d_k\n    # d_{j+1} - d_j <= p_{j+1} - p_j (the deletions can increase by at most the gap)\n    # Also d_j <= p_j (can't delete more elements than exist before position p_j)\n    \n    # dp[i][d] = max fixed elements considering elements 0..i-1, with d deletions made so far\n    # among elements we've processed (either kept or deleted)\n    \n    INF = float('inf')\n    # dp[d] after processing first i elements = max fixed elements with d deletions from first i elements\n    # Transition: for element i (0-indexed):\n    #   Delete it: dp_new[d+1] = dp[d] (d+1 deletions)\n    #   Keep it without fixing: dp_new[d] = dp[d]\n    #   Keep it with fixing (if a[i] == i+1-d, i.e., d == i+1-a[i]): dp_new[d] = dp[d] + 1\n    \n    # dp[d] = max fixed when we've processed some elements and made d deletions\n    dp = [-1] * (n + 1)\n    dp[0] = 0\n    \n    for i in range(n):\n        new_dp = [-1] * (n + 1)\n        for d in range(i + 1):\n            if dp[d] < 0:\n                continue\n            # Delete element i\n            if d + 1 <= n:\n                new_dp[d + 1] = max(new_dp[d + 1], dp[d])\n            # Keep element i without fixing\n            new_dp[d] = max(new_dp[d], dp[d])\n            # Keep element i with fixing\n            needed_d = (i + 1) - a[i]  # 1-indexed position is i+1, need i+1 - a[i] deletions before\n            if needed_d == d and 0 <= needed_d:\n                new_dp[d] = max(new_dp[d], dp[d] + 1)\n        dp = new_dp\n    \n    # Find minimum deletions d such that dp[d] >= k\n    ans = -1\n    for d in range(n + 1):\n        if dp[d] >= k:\n            ans = d\n            break\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 841,
+      "output_tokens": 1169,
+      "cost_usd": 0.020058,
+      "latency_ms": 18783
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want element a[j] (0-indexed) to be at position\n        # (j+1 - removed_before_j) in the new sequence (1-indexed)\n        # So b_i = i means a[j] = j + 1 - (number of elements deleted before position j)\n        # Let removed_before[j] = number of deleted elements among a[0..j-1]\n        # Then position of a[j] in new sequence = j + 1 - removed_before[j]\n        # We want a[j] = j + 1 - removed_before[j]\n        # => removed_before[j] = j + 1 - a[j]\n        \n        # We want to choose a set S of indices to delete (|S| = d minimized)\n        # such that at least k indices j (not in S) satisfy:\n        #   |{i < j : i in S}| = j + 1 - a[j]  (0-indexed j, 1-indexed positions)\n        \n        # Let's think differently: \n        # For each element a[j] (0-indexed), if it stays and removed_before[j] = r,\n        # then its new position is j+1-r, and we need a[j] = j+1-r\n        # So r = j+1 - a[j]. This must be >= 0 and <= j (can't remove more than j elements before it)\n        # Also r must be non-negative: j+1 >= a[j], i.e., a[j] <= j+1\n        \n        # We want to select at least k elements to \"keep as fixed points\"\n        # For each such element j, we need exactly r_j = j+1 - a[j] deletions before it\n        # r_j must be non-negative integer\n        \n        # The total deletions d >= max r_j among chosen elements (actually d can be anything >= r_j for elements after)\n        # We need to find minimum d such that we can choose k elements j1 < j2 < ... < jk\n        # where r_ji = ji+1 - a[ji] >= 0, and r_j1 <= r_j2 <= ... <= r_jk (non-decreasing, since removed_before is non-decreasing)\n        # and r_ji <= ji (at most ji removals before position ji)\n        # and also r_ji <= d (total deletions >= r_ji)\n        # and d - r_ji <= n - ji - 1 ... wait, we also need enough elements after ji to not over-delete\n        \n        # Actually the constraint is just: r values are non-decreasing for chosen indices in order,\n        # and r_j = j+1 - a[j] >= 0.\n        # The minimum d is the maximum r among chosen elements plus possibly more if needed,\n        # but actually d = total deletions. We want to minimize d.\n        # d must be >= r_jk (last chosen element's r value)\n        # But we also need: the number of deletions before j is exactly r_j, \n        # which means we must delete exactly r_j elements from [0..j-1] not in chosen set.\n        # This is feasible as long as r values are non-decreasing and r_j <= j - (number of chosen before j)\n        \n        # DP: dp[j][r] = max number of fixed points achievable considering first j elements,\n        # with r deletions so far among non-chosen elements... \n        # Let's do dp[j][r] = max fixed points using elements 0..j-1 with r deletions before index j\n        \n        INF = float('inf')\n        # dp[r] = max fixed points with r deletions so far, after processing some elements\n        dp = [-1] * (n + 1)\n        dp[0] = 0\n        \n        for j in range(n):\n            new_dp = dp[:]\n            # Option 1: delete a[j], r increases by 1\n            for r in range(n):\n                if dp[r] >= 0 and r + 1 <= n:\n                    new_dp[r+1] = max(new_dp[r+1], dp[r])\n            # Option 2: keep a[j] as fixed point if r == j+1-a[j]\n            req = j + 1 - a[j]\n            if req >= 0 and req <= j:\n                if dp[req] >= 0:\n                    new_dp[req] = max(new_dp[req], dp[req] + 1)\n            # Option 3: keep a[j] but not as fixed point (r stays same)\n            # already handled in new_dp = dp[:]\n            dp = new_dp\n        \n        ans = -1\n        for d in range(n+1):\n            if dp[d] >= k:\n                ans = d\n                break\n        \n        print(ans)\n\nsolve()",
+      "input_tokens": 841,
+      "output_tokens": 1365,
+      "cost_usd": 0.022998,
+      "latency_ms": 20999
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want to find which elements remain\n        # An element a[j] (1-indexed: j+1) can be at position p in the resulting sequence\n        # if exactly (j - p) elements before it (in original) are deleted\n        # So if we delete exactly d_j elements from positions 1..j-1, then a[j] is at position j - d_j\n        # We need a[j] = j - d_j, i.e., d_j = j - a[j] (using 1-indexed j)\n        \n        # For element at original position j (1-indexed), with value v = a[j-1]:\n        # It can be at position p = j - (number of deletions before it)\n        # We need p = v, so deletions before it = j - v\n        # This requires: 0 <= j - v <= j-1 (can't delete more than j-1 elements before position j)\n        # So 1 <= v <= j and j - v >= 0, i.e., v <= j\n        # Also v >= 1 (given)\n        \n        # DP approach: dp[j][d] = maximum number of \"fixed points\" we can get\n        # considering first j elements with d total deletions so far\n        # But we want minimum total deletions to get at least k fixed points\n        \n        # Let's think differently:\n        # We want to choose a subset S of elements to keep (in order), \n        # such that for at least k elements in S, the kept element's position equals its value.\n        # Minimize deletions = n - |S|, but we want minimum deletions so maximize |S| while getting k fixed points... \n        # Actually minimize deletions = minimize (n - |S|) = maximize |S|... no wait\n        # We want minimum deletions, which means maximum elements kept, but with constraint >= k fixed points.\n        \n        # Actually we want minimum deletions = n - (size of kept subsequence)\n        # But we need at least k fixed points in kept subsequence.\n        # To minimize deletions, maximize size of kept subsequence with at least k fixed points.\n        \n        # dp[i][j] = maximum elements we can keep from first i original elements,\n        # where j = number of deletions made so far among first i elements\n        # and we track fixed points somehow... this gets complex\n        \n        # Alternative: for each possible set of \"fixed point\" elements, find minimum deletions\n        # dp[i][fp] = minimum deletions to process first i elements with fp fixed points achieved\n        # where we track deletions before each element\n        \n        # dp[i][fp] = min deletions in first i elements such that fp fixed points from first i elements\n        # When processing element i (1-indexed), with current deletions d before it:\n        # - delete it: dp[i][fp] = dp[i-1][fp] + ... we need to track deletions\n        \n        # Let dp[i][d] = max fixed points using first i elements with exactly d deletions among them\n        INF = float('inf')\n        # dp[i][d] = max fixed points\n        dp = [[-1]*(n+1) for _ in range(n+1)]\n        dp[0][0] = 0\n        \n        for i in range(1, n+1):\n            v = a[i-1]  # value of i-th element (1-indexed)\n            for d in range(i+1):\n                # Option 1: delete element i (d must be >= 1 to delete this one)\n                if d >= 1 and dp[i-1][d-1] >= 0:\n                    dp[i][d] = max(dp[i][d], dp[i-1][d-1])\n                # Option 2: keep element i, it's at position i - d\n                if dp[i-1][d] >= 0:\n                    pos = i - d\n                    fp_gain = 1 if pos == v else 0\n                    dp[i][d] = max(dp[i][d], dp[i-1][d] + fp_gain)\n        \n        ans = -1\n        for d in range(n+1):\n            if dp[n][d] >= k:\n                ans = d\n                break\n        \n        print(ans)\n\nsolve()",
+      "input_tokens": 841,
+      "output_tokens": 1194,
+      "cost_usd": 0.020433,
+      "latency_ms": 17853
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    a = list(map(int, input().split()))\n    \n    # dp[i][j][d] = can we achieve j fixed points considering first i elements,\n    # having deleted d elements so far\n    # After deleting d elements from the first i elements, element originally at position i\n    # (1-indexed) is now at position i - d\n    # We want a[i-1] == i - d, i.e., d == i - a[i-1]\n    \n    # Let's think: we process elements left to right\n    # For each element a[i] (1-indexed), if we've deleted d elements before it,\n    # its new index is i - d\n    # It contributes a fixed point if a[i] == i - d, i.e., d = i - a[i]\n    \n    # We want to choose a subset of elements to delete (minimizing count)\n    # such that at least k remaining elements are fixed points\n    \n    # dp[i][j] = minimum deletions in first i elements to get j fixed points\n    # where d = deletions so far\n    \n    # State: dp[j][d] = True/False after processing i elements\n    # j = number of fixed points so far, d = deletions so far\n    \n    # Transition for element i (1-indexed):\n    # Option 1: delete element i -> d increases by 1, j stays same\n    # Option 2: keep element i -> if a[i-1] == i - d, j increases by 1\n    \n    INF = float('inf')\n    # dp[j][d] = minimum total deletions to have j fixed points after processing some elements\n    # with d deletions made\n    # But d IS the number of deletions, so dp[j][d] just means \"is it possible\"\n    # We want minimum d such that j >= k\n    \n    # dp[j][d] = True if after processing all i elements, we have j fixed points and d deletions\n    # We want min d such that j >= k\n    \n    # Size: j up to k, d up to n\n    # dp is boolean array [k+1][n+1]\n    \n    dp = [[False] * (n + 1) for _ in range(k + 1)]\n    dp[0][0] = True\n    \n    for i in range(1, n + 1):\n        ai = a[i - 1]\n        # Process in reverse to avoid using same element twice\n        new_dp = [[False] * (n + 1) for _ in range(k + 1)]\n        for j in range(k + 1):\n            for d in range(i):  # d can be at most i-1 (deleted some of first i-1)\n                if not dp[j][d]:\n                    continue\n                # Option 1: delete element i\n                if d + 1 <= n:\n                    new_dp[j][d + 1] = True\n                # Option 2: keep element i\n                new_pos = i - d\n                if ai == new_pos:\n                    if j + 1 <= k:\n                        new_dp[j + 1][d] = True\n                    else:\n                        new_dp[k][d] = True\n                else:\n                    new_dp[j][d] = True\n        dp = new_dp\n    \n    ans = INF\n    for d in range(n + 1):\n        if dp[k][d]:\n            ans = min(ans, d)\n    \n    if ans == INF:\n        print(-1)\n    else:\n        print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 841,
+      "output_tokens": 920,
+      "cost_usd": 0.016323,
+      "latency_ms": 12129
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We want to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want element a[j] (0-indexed) to be at position i (1-indexed)\n        # then exactly (j - (i-1)) = j - i + 1 elements before position j must be deleted\n        # So if we keep a subset of elements, element originally at index j (0-indexed) \n        # ends up at position (j+1 - deleted_before_j) in the new sequence\n        # We want a[j] = j+1 - deleted_before_j\n        # i.e., deleted_before_j = j+1 - a[j]\n        # deleted_before_j must be >= 0 and <= j\n        # Also deleted_before_j must be non-decreasing as j increases\n        \n        # So for each element j, let d_j = j + 1 - a[j]\n        # We need d_j >= 0, d_j <= j\n        # We want to find maximum number of elements we can \"keep as fixed points\"\n        # such that their d values are non-decreasing\n        # and total deletions = max of d values used + additional deletions\n        # Wait, the total deletions must be >= d_j for all kept fixed points\n        # and we want to minimize total deletions\n        \n        # Actually total deletions D must satisfy:\n        # For each kept fixed point at original index j, exactly d_j = j+1-a[j] elements before j are deleted\n        # The d_j values must be non-decreasing (since we can only delete more as we go right)\n        # Total deletions D >= max(d_j) for all kept fixed points\n        # We want to minimize D while having at least k fixed points\n        \n        # For a given D (total deletions), can we find k fixed points?\n        # We need to find k indices j such that:\n        # 1. 0 <= d_j <= j (valid)\n        # 2. d_j is non-decreasing among chosen indices\n        # 3. d_j <= D for all chosen\n        # 4. Also n - D >= a[j] - d_j ... wait\n        # Actually we also need: the position in new sequence = j+1-d_j <= n-D (length of new seq)\n        # j+1-d_j <= n-D => j+1-(j+1-a[j]) <= n-D => a[j] <= n-D\n        \n        # So for fixed D, valid elements are those where:\n        # d_j = j+1-a[j] >= 0, d_j <= D, a[j] <= n-D, d_j <= j\n        # Then we need longest non-decreasing subsequence of d values >= k\n        \n        # Try all D from 0 to n\n        best = -1\n        for D in range(n+1):\n            # Find max number of fixed points achievable with exactly D deletions\n            # valid indices\n            valid = []\n            for j in range(n):\n                dj = j + 1 - a[j]\n                if dj >= 0 and dj <= D and a[j] <= n - D and dj <= j:\n                    valid.append(dj)\n            \n            # Find longest non-decreasing subsequence\n            # dp[i] = min last value of non-decreasing subseq of length i+1\n            if not valid:\n                count = 0\n            else:\n                dp = []\n                for v in valid:\n                    # binary search for first element in dp > v\n                    lo, hi = 0, len(dp)\n                    while lo < hi:\n                        mid = (lo + hi) // 2\n                        if dp[mid] <= v:\n                            lo = mid + 1\n                        else:\n                            hi = mid\n                    if lo == len(dp):\n                        dp.append(v)\n                    else:\n                        dp[lo] = v\n                count = len(dp)\n            \n            if count >= k:\n                best = D\n                break\n        \n        print(best)\n\nsolve()",
+      "input_tokens": 841,
+      "output_tokens": 1139,
+      "cost_usd": 0.019608,
+      "latency_ms": 18181
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # dp[i][j][d] = can we achieve j fixed points using first i elements,\n        # having deleted d elements so far\n        # If we keep element a[i] (0-indexed), its new index is i+1-d (1-indexed)\n        # So a[i] == i+1-d means it's a fixed point\n        # We want to minimize d (deletions) such that j >= k\n        \n        # dp[i][j] = minimum deletions needed considering first i elements with j fixed points\n        # At each element, we can delete it (d increases by 1) or keep it\n        \n        # State: after processing i elements (0-indexed), j fixed points achieved, d deletions made\n        # Transition: keep a[i]: new index = (i+1) - d, if a[i] == i+1-d, j+1 fixed points\n        #             delete a[i]: d+1 deletions, j fixed points\n        \n        # dp[j][d] = True/False: can we process some prefix with j fixed points and d deletions\n        # We want minimum d such that j >= k after processing all n elements\n        # But we don't need to process all elements - we just need at least k fixed points\n        # in the resulting sequence\n        \n        # Actually we need to find minimum deletions total\n        # dp[i][j][d] - too many states? n=2000, so n^3 is too much\n        \n        # Better: dp[i][j] = minimum d (deletions) to have j fixed points in first i elements\n        # i up to 2000, j up to 2000, so 2000*2000 = 4M states, fine\n        \n        INF = float('inf')\n        # dp[j] = min deletions to have j fixed points, processing elements one by one\n        dp = [INF] * (k + 1)\n        dp[0] = 0\n        \n        for i in range(n):\n            # Process element a[i] (0-indexed), currently have dp[j] = min d\n            new_dp = [INF] * (k + 1)\n            for j in range(k + 1):\n                if dp[j] == INF:\n                    continue\n                d = dp[j]\n                # Option 1: delete a[i], d becomes d+1\n                if d + 1 <= n:\n                    new_dp[j] = min(new_dp[j], d + 1)\n                # Option 2: keep a[i], new index = (i+1) - d (1-indexed)\n                new_idx = (i + 1) - d\n                if new_idx >= 1:\n                    if a[i] == new_idx:\n                        nj = min(j + 1, k)\n                        new_dp[nj] = min(new_dp[nj], d)\n                    else:\n                        new_dp[j] = min(new_dp[j], d)\n            dp = new_dp\n        \n        ans = dp[k]\n        if ans == INF:\n            print(-1)\n        else:\n            print(ans)\n\nsolve()",
+      "input_tokens": 841,
+      "output_tokens": 893,
+      "cost_usd": 0.015918,
+      "latency_ms": 13755
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions so that at least k elements satisfy b_i = i\n        # If we delete 'd' elements before position j (0-indexed), then element at original position j\n        # moves to position j - d (1-indexed: j+1-d)\n        # For b_{j+1-d} = a[j], we need a[j] = j+1-d, i.e., d = j+1 - a[j]\n        \n        # We want to choose a subset S of indices (0-indexed) to keep such that:\n        # - For elements we keep, if we keep elements at original positions i1 < i2 < ... < im\n        #   then element ij gets new index j (1-indexed)\n        # - We want at least k of them to satisfy a[ij] = j\n        # - We want to minimize number of deletions = n - m (maximize m? No, minimize deletions)\n        # Actually minimize deletions = n - (number kept)\n        # But we can also delete elements that don't contribute\n        \n        # Key insight: if we decide which elements will be \"fixed points\" (b_i = i),\n        # say we pick elements at original positions p1 < p2 < ... < pk (0-indexed),\n        # and they become positions q1 < q2 < ... < qk in the new sequence,\n        # then qi = pi + 1 - (number of deletions before pi)\n        # For fixed point: a[pi] = qi = pi + 1 - deletions_before_pi\n        # deletions_before_pi = pi + 1 - a[pi]\n        \n        # For a valid selection of k fixed points p1 < p2 < ... < pk:\n        # d_i = p_i + 1 - a[p_i] must be non-negative integers (d_i >= 0)\n        # and d_1 <= d_2 <= ... <= d_k (deletions before each is non-decreasing)\n        # and d_i <= p_i (can't delete more than p_i elements before position p_i)\n        # Total deletions >= d_k (at least d_k deletions among first p_k+1 elements)\n        # But we can also delete elements after p_k, but that doesn't help\n        # Minimum total deletions = d_k (we need at least d_k deletions, and we can achieve exactly d_k)\n        # Wait: we need exactly d_i deletions before p_i for each i\n        # Since d is non-decreasing, total deletions before p_k = d_k\n        # We can choose to not delete anything after p_k (or delete, doesn't matter for fixed points)\n        # Minimum moves = d_k\n        \n        # So: find k elements from array where d_i = (i_pos + 1 - a[i_pos]) >= 0,\n        # d values are non-decreasing along increasing positions,\n        # and minimize d_k (the last d value).\n        \n        # DP: dp[j][c] = minimum last-d when we've selected c fixed points ending at position j\n        \n        INF = float('inf')\n        # dp[j][c] = min d_j when we selected c elements as fixed points, last one at index j\n        dp = [[INF] * (k+1) for _ in range(n)]\n        \n        ans = INF\n        \n        for j in range(n):\n            d = j + 1 - a[j]\n            if d < 0:\n                continue\n            # Start new chain with just this element\n            dp[j][1] = d\n            # Extend chains ending before j\n            for prev in range(j):\n                d_prev_val = j + 1 - a[j]  # same d\n                # We need dp[prev][c] <= d (non-decreasing)\n                for c in range(1, k):\n                    if dp[prev][c] != INF and dp[prev][c] <= d:\n                        if dp[j][c+1] > d:\n                            dp[j][c+1] = d\n            \n            if dp[j][k] != INF:\n                ans = min(ans, dp[j][k])\n        \n        if ans == INF:\n            print(-1)\n        else:\n            print(ans)\n\nsolve()",
+      "input_tokens": 841,
+      "output_tokens": 1187,
+      "cost_usd": 0.020328,
+      "latency_ms": 21777
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    a = list(map(int, input().split()))\n    \n    # dp[i][j][d] = max number of elements equal to their index\n    # considering first i elements, j elements deleted so far, d elements kept\n    # Actually let's think differently\n    # \n    # We want to select a subset of elements to keep (in order), deleting some elements before them\n    # If we keep elements at original positions p1 < p2 < ... < pm,\n    # and we delete 'd' elements before position pi (from original positions not in kept set),\n    # then the new index of element at original position pi is pi - (number of deleted elements before pi)\n    # \n    # We want to maximize the number of kept elements where a[pi] == pi - deleted_before_pi\n    # \n    # Let's define: for each element i (0-indexed), if we delete 'd' elements before it (from positions < i that we also delete),\n    # its new index = (i+1) - d (1-indexed)\n    # We want a[i] == (i+1) - d, i.e., d == (i+1) - a[i]\n    # \n    # So we need to find maximum number of elements we can \"fix\" (make equal to index)\n    # by choosing which elements to delete.\n    # \n    # Key insight: if we decide to fix elements at original positions p1 < p2 < ... < pk,\n    # then for each pj, the number of deletions before pj must equal (pj+1) - a[pj] = pj+1 - a[pj]\n    # These deletions must be non-decreasing and each step increase by at most (p_{j+1} - p_j) (elements between them can be deleted)\n    # Also d_j >= 0 for all j, and d_j <= pj (can't delete more than pj elements before position pj)\n    # \n    # Let d_j = (p_j + 1) - a[p_j] (0-indexed p_j, so original index is p_j+1)\n    # Constraints: 0 <= d_1 <= d_2 <= ... <= d_k\n    # d_{j+1} - d_j <= p_{j+1} - p_j (the deletions can increase by at most the gap)\n    # Also d_j <= p_j (can't delete more elements than exist before position p_j)\n    \n    # dp[i][d] = max fixed elements considering elements 0..i-1, with d deletions made so far\n    # among elements we've processed (either kept or deleted)\n    \n    INF = float('inf')\n    # dp[d] after processing first i elements = max fixed elements with d deletions from first i elements\n    # Transition: for element i (0-indexed):\n    #   Delete it: dp_new[d+1] = dp[d] (d+1 deletions)\n    #   Keep it without fixing: dp_new[d] = dp[d]\n    #   Keep it with fixing (if a[i] == i+1-d, i.e., d == i+1-a[i]): dp_new[d] = dp[d] + 1\n    \n    # dp[d] = max fixed when we've processed some elements and made d deletions\n    dp = [-1] * (n + 1)\n    dp[0] = 0\n    \n    for i in range(n):\n        new_dp = [-1] * (n + 1)\n        for d in range(i + 1):\n            if dp[d] < 0:\n                continue\n            # Delete element i\n            if d + 1 <= n:\n                new_dp[d + 1] = max(new_dp[d + 1], dp[d])\n            # Keep element i without fixing\n            new_dp[d] = max(new_dp[d], dp[d])\n            # Keep element i with fixing\n            needed_d = (i + 1) - a[i]  # 1-indexed position is i+1, need i+1 - a[i] deletions before\n            if needed_d == d and 0 <= needed_d:\n                new_dp[d] = max(new_dp[d], dp[d] + 1)\n        dp = new_dp\n    \n    # Find minimum deletions d such that dp[d] >= k\n    ans = -1\n    for d in range(n + 1):\n        if dp[d] >= k:\n            ans = d\n            break\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 25,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 25,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 25,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 26,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want element a[j] (0-indexed) to be at position\n        # (j+1 - removed_before_j) in the new sequence (1-indexed)\n        # So b_i = i means a[j] = j + 1 - (number of elements deleted before position j)\n        # Let removed_before[j] = number of deleted elements among a[0..j-1]\n        # Then position of a[j] in new sequence = j + 1 - removed_before[j]\n        # We want a[j] = j + 1 - removed_before[j]\n        # => removed_before[j] = j + 1 - a[j]\n        \n        # We want to choose a set S of indices to delete (|S| = d minimized)\n        # such that at least k indices j (not in S) satisfy:\n        #   |{i < j : i in S}| = j + 1 - a[j]  (0-indexed j, 1-indexed positions)\n        \n        # Let's think differently: \n        # For each element a[j] (0-indexed), if it stays and removed_before[j] = r,\n        # then its new position is j+1-r, and we need a[j] = j+1-r\n        # So r = j+1 - a[j]. This must be >= 0 and <= j (can't remove more than j elements before it)\n        # Also r must be non-negative: j+1 >= a[j], i.e., a[j] <= j+1\n        \n        # We want to select at least k elements to \"keep as fixed points\"\n        # For each such element j, we need exactly r_j = j+1 - a[j] deletions before it\n        # r_j must be non-negative integer\n        \n        # The total deletions d >= max r_j among chosen elements (actually d can be anything >= r_j for elements after)\n        # We need to find minimum d such that we can choose k elements j1 < j2 < ... < jk\n        # where r_ji = ji+1 - a[ji] >= 0, and r_j1 <= r_j2 <= ... <= r_jk (non-decreasing, since removed_before is non-decreasing)\n        # and r_ji <= ji (at most ji removals before position ji)\n        # and also r_ji <= d (total deletions >= r_ji)\n        # and d - r_ji <= n - ji - 1 ... wait, we also need enough elements after ji to not over-delete\n        \n        # Actually the constraint is just: r values are non-decreasing for chosen indices in order,\n        # and r_j = j+1 - a[j] >= 0.\n        # The minimum d is the maximum r among chosen elements plus possibly more if needed,\n        # but actually d = total deletions. We want to minimize d.\n        # d must be >= r_jk (last chosen element's r value)\n        # But we also need: the number of deletions before j is exactly r_j, \n        # which means we must delete exactly r_j elements from [0..j-1] not in chosen set.\n        # This is feasible as long as r values are non-decreasing and r_j <= j - (number of chosen before j)\n        \n        # DP: dp[j][r] = max number of fixed points achievable considering first j elements,\n        # with r deletions so far among non-chosen elements... \n        # Let's do dp[j][r] = max fixed points using elements 0..j-1 with r deletions before index j\n        \n        INF = float('inf')\n        # dp[r] = max fixed points with r deletions so far, after processing some elements\n        dp = [-1] * (n + 1)\n        dp[0] = 0\n        \n        for j in range(n):\n            new_dp = dp[:]\n            # Option 1: delete a[j], r increases by 1\n            for r in range(n):\n                if dp[r] >= 0 and r + 1 <= n:\n                    new_dp[r+1] = max(new_dp[r+1], dp[r])\n            # Option 2: keep a[j] as fixed point if r == j+1-a[j]\n            req = j + 1 - a[j]\n            if req >= 0 and req <= j:\n                if dp[req] >= 0:\n                    new_dp[req] = max(new_dp[req], dp[req] + 1)\n            # Option 3: keep a[j] but not as fixed point (r stays same)\n            # already handled in new_dp = dp[:]\n            dp = new_dp\n        \n        ans = -1\n        for d in range(n+1):\n            if dp[d] >= k:\n                ans = d\n                break\n        \n        print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 100,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 97,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 107,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 88,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 111,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 130,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 89,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 130,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 129,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 150,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 158,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 109,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 135,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 92,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 112,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want to find which elements remain\n        # An element a[j] (1-indexed: j+1) can be at position p in the resulting sequence\n        # if exactly (j - p) elements before it (in original) are deleted\n        # So if we delete exactly d_j elements from positions 1..j-1, then a[j] is at position j - d_j\n        # We need a[j] = j - d_j, i.e., d_j = j - a[j] (using 1-indexed j)\n        \n        # For element at original position j (1-indexed), with value v = a[j-1]:\n        # It can be at position p = j - (number of deletions before it)\n        # We need p = v, so deletions before it = j - v\n        # This requires: 0 <= j - v <= j-1 (can't delete more than j-1 elements before position j)\n        # So 1 <= v <= j and j - v >= 0, i.e., v <= j\n        # Also v >= 1 (given)\n        \n        # DP approach: dp[j][d] = maximum number of \"fixed points\" we can get\n        # considering first j elements with d total deletions so far\n        # But we want minimum total deletions to get at least k fixed points\n        \n        # Let's think differently:\n        # We want to choose a subset S of elements to keep (in order), \n        # such that for at least k elements in S, the kept element's position equals its value.\n        # Minimize deletions = n - |S|, but we want minimum deletions so maximize |S| while getting k fixed points... \n        # Actually minimize deletions = minimize (n - |S|) = maximize |S|... no wait\n        # We want minimum deletions, which means maximum elements kept, but with constraint >= k fixed points.\n        \n        # Actually we want minimum deletions = n - (size of kept subsequence)\n        # But we need at least k fixed points in kept subsequence.\n        # To minimize deletions, maximize size of kept subsequence with at least k fixed points.\n        \n        # dp[i][j] = maximum elements we can keep from first i original elements,\n        # where j = number of deletions made so far among first i elements\n        # and we track fixed points somehow... this gets complex\n        \n        # Alternative: for each possible set of \"fixed point\" elements, find minimum deletions\n        # dp[i][fp] = minimum deletions to process first i elements with fp fixed points achieved\n        # where we track deletions before each element\n        \n        # dp[i][fp] = min deletions in first i elements such that fp fixed points from first i elements\n        # When processing element i (1-indexed), with current deletions d before it:\n        # - delete it: dp[i][fp] = dp[i-1][fp] + ... we need to track deletions\n        \n        # Let dp[i][d] = max fixed points using first i elements with exactly d deletions among them\n        INF = float('inf')\n        # dp[i][d] = max fixed points\n        dp = [[-1]*(n+1) for _ in range(n+1)]\n        dp[0][0] = 0\n        \n        for i in range(1, n+1):\n            v = a[i-1]  # value of i-th element (1-indexed)\n            for d in range(i+1):\n                # Option 1: delete element i (d must be >= 1 to delete this one)\n                if d >= 1 and dp[i-1][d-1] >= 0:\n                    dp[i][d] = max(dp[i][d], dp[i-1][d-1])\n                # Option 2: keep element i, it's at position i - d\n                if dp[i-1][d] >= 0:\n                    pos = i - d\n                    fp_gain = 1 if pos == v else 0\n                    dp[i][d] = max(dp[i][d], dp[i-1][d] + fp_gain)\n        \n        ans = -1\n        for d in range(n+1):\n            if dp[n][d] >= k:\n                ans = d\n                break\n        \n        print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 108,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 320,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 160,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 193,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 202,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 278,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 140,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 133,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 129,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 185,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 157,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 160,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 125,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 214,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 296,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 192,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 140,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 171,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 175,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 136,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 149,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 219,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 112,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 100,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 142,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 181,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 169,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 129,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 220,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 121,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 101,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 97,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 153,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 173,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 168,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 140,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 138,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 163,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 117,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 130,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 111,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 3,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    a = list(map(int, input().split()))\n    \n    # dp[i][j][d] = can we achieve j fixed points considering first i elements,\n    # having deleted d elements so far\n    # After deleting d elements from the first i elements, element originally at position i\n    # (1-indexed) is now at position i - d\n    # We want a[i-1] == i - d, i.e., d == i - a[i-1]\n    \n    # Let's think: we process elements left to right\n    # For each element a[i] (1-indexed), if we've deleted d elements before it,\n    # its new index is i - d\n    # It contributes a fixed point if a[i] == i - d, i.e., d = i - a[i]\n    \n    # We want to choose a subset of elements to delete (minimizing count)\n    # such that at least k remaining elements are fixed points\n    \n    # dp[i][j] = minimum deletions in first i elements to get j fixed points\n    # where d = deletions so far\n    \n    # State: dp[j][d] = True/False after processing i elements\n    # j = number of fixed points so far, d = deletions so far\n    \n    # Transition for element i (1-indexed):\n    # Option 1: delete element i -> d increases by 1, j stays same\n    # Option 2: keep element i -> if a[i-1] == i - d, j increases by 1\n    \n    INF = float('inf')\n    # dp[j][d] = minimum total deletions to have j fixed points after processing some elements\n    # with d deletions made\n    # But d IS the number of deletions, so dp[j][d] just means \"is it possible\"\n    # We want minimum d such that j >= k\n    \n    # dp[j][d] = True if after processing all i elements, we have j fixed points and d deletions\n    # We want min d such that j >= k\n    \n    # Size: j up to k, d up to n\n    # dp is boolean array [k+1][n+1]\n    \n    dp = [[False] * (n + 1) for _ in range(k + 1)]\n    dp[0][0] = True\n    \n    for i in range(1, n + 1):\n        ai = a[i - 1]\n        # Process in reverse to avoid using same element twice\n        new_dp = [[False] * (n + 1) for _ in range(k + 1)]\n        for j in range(k + 1):\n            for d in range(i):  # d can be at most i-1 (deleted some of first i-1)\n                if not dp[j][d]:\n                    continue\n                # Option 1: delete element i\n                if d + 1 <= n:\n                    new_dp[j][d + 1] = True\n                # Option 2: keep element i\n                new_pos = i - d\n                if ai == new_pos:\n                    if j + 1 <= k:\n                        new_dp[j + 1][d] = True\n                    else:\n                        new_dp[k][d] = True\n                else:\n                    new_dp[j][d] = True\n        dp = new_dp\n    \n    ans = INF\n    for d in range(n + 1):\n        if dp[k][d]:\n            ans = min(ans, d)\n    \n    if ans == INF:\n        print(-1)\n    else:\n        print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 88,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 4,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We want to find minimum deletions such that at least k elements satisfy b_i = i\n        # If we delete 'd' elements total, and we want element a[j] (0-indexed) to be at position i (1-indexed)\n        # then exactly (j - (i-1)) = j - i + 1 elements before position j must be deleted\n        # So if we keep a subset of elements, element originally at index j (0-indexed) \n        # ends up at position (j+1 - deleted_before_j) in the new sequence\n        # We want a[j] = j+1 - deleted_before_j\n        # i.e., deleted_before_j = j+1 - a[j]\n        # deleted_before_j must be >= 0 and <= j\n        # Also deleted_before_j must be non-decreasing as j increases\n        \n        # So for each element j, let d_j = j + 1 - a[j]\n        # We need d_j >= 0, d_j <= j\n        # We want to find maximum number of elements we can \"keep as fixed points\"\n        # such that their d values are non-decreasing\n        # and total deletions = max of d values used + additional deletions\n        # Wait, the total deletions must be >= d_j for all kept fixed points\n        # and we want to minimize total deletions\n        \n        # Actually total deletions D must satisfy:\n        # For each kept fixed point at original index j, exactly d_j = j+1-a[j] elements before j are deleted\n        # The d_j values must be non-decreasing (since we can only delete more as we go right)\n        # Total deletions D >= max(d_j) for all kept fixed points\n        # We want to minimize D while having at least k fixed points\n        \n        # For a given D (total deletions), can we find k fixed points?\n        # We need to find k indices j such that:\n        # 1. 0 <= d_j <= j (valid)\n        # 2. d_j is non-decreasing among chosen indices\n        # 3. d_j <= D for all chosen\n        # 4. Also n - D >= a[j] - d_j ... wait\n        # Actually we also need: the position in new sequence = j+1-d_j <= n-D (length of new seq)\n        # j+1-d_j <= n-D => j+1-(j+1-a[j]) <= n-D => a[j] <= n-D\n        \n        # So for fixed D, valid elements are those where:\n        # d_j = j+1-a[j] >= 0, d_j <= D, a[j] <= n-D, d_j <= j\n        # Then we need longest non-decreasing subsequence of d values >= k\n        \n        # Try all D from 0 to n\n        best = -1\n        for D in range(n+1):\n            # Find max number of fixed points achievable with exactly D deletions\n            # valid indices\n            valid = []\n            for j in range(n):\n                dj = j + 1 - a[j]\n                if dj >= 0 and dj <= D and a[j] <= n - D and dj <= j:\n                    valid.append(dj)\n            \n            # Find longest non-decreasing subsequence\n            # dp[i] = min last value of non-decreasing subseq of length i+1\n            if not valid:\n                count = 0\n            else:\n                dp = []\n                for v in valid:\n                    # binary search for first element in dp > v\n                    lo, hi = 0, len(dp)\n                    while lo < hi:\n                        mid = (lo + hi) // 2\n                        if dp[mid] <= v:\n                            lo = mid + 1\n                        else:\n                            hi = mid\n                    if lo == len(dp):\n                        dp.append(v)\n                    else:\n                        dp[lo] = v\n                count = len(dp)\n            \n            if count >= k:\n                best = D\n                break\n        \n        print(best)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 44,
+        "failed": 6,
+        "errors": 0,
+        "pass_rate": 0.88,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 115,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 144,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 107,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 89,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 166,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 135,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 127,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 177,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 137,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 117,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 109,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 95,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 135,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 97,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 108,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 99,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 133,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 134,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 107,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 125,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 106,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 153,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 105,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 136,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 98,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 147,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 170,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 187,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 103,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 139,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 143,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 5,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # dp[i][j][d] = can we achieve j fixed points using first i elements,\n        # having deleted d elements so far\n        # If we keep element a[i] (0-indexed), its new index is i+1-d (1-indexed)\n        # So a[i] == i+1-d means it's a fixed point\n        # We want to minimize d (deletions) such that j >= k\n        \n        # dp[i][j] = minimum deletions needed considering first i elements with j fixed points\n        # At each element, we can delete it (d increases by 1) or keep it\n        \n        # State: after processing i elements (0-indexed), j fixed points achieved, d deletions made\n        # Transition: keep a[i]: new index = (i+1) - d, if a[i] == i+1-d, j+1 fixed points\n        #             delete a[i]: d+1 deletions, j fixed points\n        \n        # dp[j][d] = True/False: can we process some prefix with j fixed points and d deletions\n        # We want minimum d such that j >= k after processing all n elements\n        # But we don't need to process all elements - we just need at least k fixed points\n        # in the resulting sequence\n        \n        # Actually we need to find minimum deletions total\n        # dp[i][j][d] - too many states? n=2000, so n^3 is too much\n        \n        # Better: dp[i][j] = minimum d (deletions) to have j fixed points in first i elements\n        # i up to 2000, j up to 2000, so 2000*2000 = 4M states, fine\n        \n        INF = float('inf')\n        # dp[j] = min deletions to have j fixed points, processing elements one by one\n        dp = [INF] * (k + 1)\n        dp[0] = 0\n        \n        for i in range(n):\n            # Process element a[i] (0-indexed), currently have dp[j] = min d\n            new_dp = [INF] * (k + 1)\n            for j in range(k + 1):\n                if dp[j] == INF:\n                    continue\n                d = dp[j]\n                # Option 1: delete a[i], d becomes d+1\n                if d + 1 <= n:\n                    new_dp[j] = min(new_dp[j], d + 1)\n                # Option 2: keep a[i], new index = (i+1) - d (1-indexed)\n                new_idx = (i + 1) - d\n                if new_idx >= 1:\n                    if a[i] == new_idx:\n                        nj = min(j + 1, k)\n                        new_dp[nj] = min(new_dp[nj], d)\n                    else:\n                        new_dp[j] = min(new_dp[j], d)\n            dp = new_dp\n        \n        ans = dp[k]\n        if ans == INF:\n            print(-1)\n        else:\n            print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 32,
+        "failed": 18,
+        "errors": 0,
+        "pass_rate": 0.64,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 89,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 96,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 96,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n-1",
+            "stderr": "",
+            "runtime_ms": 90,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n-1",
+            "stderr": "",
+            "runtime_ms": 92,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "-1\n0\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 90,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "-1\n-1\n-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "-1\n-1\n-1\n-1",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 89,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 6,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom functools import lru_cache\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, k = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        # We need to find minimum deletions so that at least k elements satisfy b_i = i\n        # If we delete 'd' elements before position j (0-indexed), then element at original position j\n        # moves to position j - d (1-indexed: j+1-d)\n        # For b_{j+1-d} = a[j], we need a[j] = j+1-d, i.e., d = j+1 - a[j]\n        \n        # We want to choose a subset S of indices (0-indexed) to keep such that:\n        # - For elements we keep, if we keep elements at original positions i1 < i2 < ... < im\n        #   then element ij gets new index j (1-indexed)\n        # - We want at least k of them to satisfy a[ij] = j\n        # - We want to minimize number of deletions = n - m (maximize m? No, minimize deletions)\n        # Actually minimize deletions = n - (number kept)\n        # But we can also delete elements that don't contribute\n        \n        # Key insight: if we decide which elements will be \"fixed points\" (b_i = i),\n        # say we pick elements at original positions p1 < p2 < ... < pk (0-indexed),\n        # and they become positions q1 < q2 < ... < qk in the new sequence,\n        # then qi = pi + 1 - (number of deletions before pi)\n        # For fixed point: a[pi] = qi = pi + 1 - deletions_before_pi\n        # deletions_before_pi = pi + 1 - a[pi]\n        \n        # For a valid selection of k fixed points p1 < p2 < ... < pk:\n        # d_i = p_i + 1 - a[p_i] must be non-negative integers (d_i >= 0)\n        # and d_1 <= d_2 <= ... <= d_k (deletions before each is non-decreasing)\n        # and d_i <= p_i (can't delete more than p_i elements before position p_i)\n        # Total deletions >= d_k (at least d_k deletions among first p_k+1 elements)\n        # But we can also delete elements after p_k, but that doesn't help\n        # Minimum total deletions = d_k (we need at least d_k deletions, and we can achieve exactly d_k)\n        # Wait: we need exactly d_i deletions before p_i for each i\n        # Since d is non-decreasing, total deletions before p_k = d_k\n        # We can choose to not delete anything after p_k (or delete, doesn't matter for fixed points)\n        # Minimum moves = d_k\n        \n        # So: find k elements from array where d_i = (i_pos + 1 - a[i_pos]) >= 0,\n        # d values are non-decreasing along increasing positions,\n        # and minimize d_k (the last d value).\n        \n        # DP: dp[j][c] = minimum last-d when we've selected c fixed points ending at position j\n        \n        INF = float('inf')\n        # dp[j][c] = min d_j when we selected c elements as fixed points, last one at index j\n        dp = [[INF] * (k+1) for _ in range(n)]\n        \n        ans = INF\n        \n        for j in range(n):\n            d = j + 1 - a[j]\n            if d < 0:\n                continue\n            # Start new chain with just this element\n            dp[j][1] = d\n            # Extend chains ending before j\n            for prev in range(j):\n                d_prev_val = j + 1 - a[j]  # same d\n                # We need dp[prev][c] <= d (non-decreasing)\n                for c in range(1, k):\n                    if dp[prev][c] != INF and dp[prev][c] <= d:\n                        if dp[j][c+1] > d:\n                            dp[j][c+1] = d\n            \n            if dp[j][k] != INF:\n                ans = min(ans, dp[j][k])\n        \n        if ans == INF:\n            print(-1)\n        else:\n            print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 37,
+        "failed": 13,
+        "errors": 0,
+        "pass_rate": 0.74,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "2\n0",
+            "actual": "2\n0",
+            "stderr": "",
+            "runtime_ms": 95,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n1\n2",
+            "actual": "1\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 110,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+            "expected": "1\n1\n-1\n1",
+            "actual": "1\n1\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "1\n0",
+            "actual": "1\n0",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n3",
+            "actual": "-1\n3",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n0\n-1\n2",
+            "actual": "1\n0\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+            "expected": "1\n1\n1\n2",
+            "actual": "1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+            "expected": "3\n0",
+            "actual": "3\n0",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n-1",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+            "expected": "1\n2\n1\n0",
+            "actual": "1\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+            "expected": "1\n2\n-1\n1",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+            "expected": "1\n2\n-1\n2",
+            "actual": "1\n2\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 87,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+            "expected": "1\n1\n-1\n2",
+            "actual": "1\n1\n-1\n2",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 83,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 90,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+            "expected": "-1\n0",
+            "actual": "8\n0",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+            "expected": "-1\n0",
+            "actual": "-1\n0",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 2,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 2 2 5 5\n",
+        "expected": "1\n2\n-1\n2",
+        "actual": "1\n2\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 108,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 320,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "2\n15 6\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 160,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+        "expected": "1\n2\n-1\n2",
+        "actual": "1\n2\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 116,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+        "expected": "1\n1\n-1\n2",
+        "actual": "1\n1\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 193,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "2\n15 5\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+        "expected": "2\n0",
+        "actual": "2\n0",
+        "stderr": "",
+        "runtime_ms": 202,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+        "expected": "1\n2\n1\n2",
+        "actual": "1\n2\n1\n2",
+        "stderr": "",
+        "runtime_ms": 278,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 7\n",
+        "expected": "1\n1\n-1\n1",
+        "actual": "1\n1\n-1\n1",
+        "stderr": "",
+        "runtime_ms": 140,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "2\n15 2\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+        "expected": "1\n0",
+        "actual": "1\n0",
+        "stderr": "",
+        "runtime_ms": 133,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 2\n1 3 6 3 2 2 4 5\n",
+        "expected": "-1\n1",
+        "actual": "-1\n1",
+        "stderr": "",
+        "runtime_ms": 114,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 3\n1 3 6 3 8 2 4 8\n",
+        "expected": "-1\n3",
+        "actual": "-1\n3",
+        "stderr": "",
+        "runtime_ms": 129,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n7 2\n1 1 2 3 4 5 6\n5 2\n5 2 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+        "expected": "1\n0\n-1\n2",
+        "actual": "1\n0\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 185,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 3 5 4\n8 4\n1 2 4 3 1 2 5 1\n",
+        "expected": "1\n1\n1\n2",
+        "actual": "1\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 157,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "2\n15 5\n10 21 2 14 3 7 5 10 10 7 9 11 9 11 7\n8 1\n1 2 3 3 11 3 2 8\n",
+        "expected": "3\n0",
+        "actual": "3\n0",
+        "stderr": "",
+        "runtime_ms": 160,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 3 3 3 1 2 5 5\n",
+        "expected": "1\n2\n-1\n-1",
+        "actual": "1\n2\n-1\n-1",
+        "stderr": "",
+        "runtime_ms": 125,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "2\n15 3\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "0\n0",
+        "actual": "0\n0",
+        "stderr": "",
+        "runtime_ms": 214,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 3 5 4\n8 4\n1 2 3 3 1 2 5 8\n",
+        "expected": "1\n2\n1\n0",
+        "actual": "1\n2\n1\n0",
+        "stderr": "",
+        "runtime_ms": 296,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 3 5 5 4\n8 4\n1 2 6 3 2 2 5 7\n",
+        "expected": "1\n2\n-1\n1",
+        "actual": "1\n2\n-1\n1",
+        "stderr": "",
+        "runtime_ms": 192,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "2\n15 6\n10 7 3 11 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 140,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 171,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "2\n15 6\n10 7 3 11 9 7 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 131,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 175,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n7 6\n1 2 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 3 3 1 2 5 5\n",
+        "expected": "1\n2\n-1\n2",
+        "actual": "1\n2\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 136,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "2\n15 6\n10 7 3 11 9 5 7 12 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 149,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 219,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 112,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 3 3 8 1 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 100,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 142,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 181,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 169,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 129,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "2\n15 6\n10 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n2 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 220,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 2 3\n5 2\n5 5 5 5 4\n8 4\n1 2 6 3 2 2 5 5\n",
+        "expected": "1\n2\n-1\n2",
+        "actual": "1\n2\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 121,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "2\n15 11\n10 7 3 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 101,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 3 6 3 8 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 104,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "2\n15 6\n10 11 6 7 9 7 7 10 10 11 9 12 11 12 7\n8 1\n1 3 6 3 8 1 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 114,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "2\n15 6\n10 11 10 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 1 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 97,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "2\n15 6\n9 11 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 153,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "2\n15 6\n10 21 6 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 173,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 7 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 168,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "2\n15 6\n5 7 6 7 9 7 7 10 10 7 9 12 11 12 7\n8 1\n1 1 6 3 8 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 138,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n7 6\n1 1 2 3 4 5 6\n5 2\n5 1 3 3 3\n5 2\n5 5 5 5 4\n8 4\n1 2 4 3 1 2 5 5\n",
+        "expected": "1\n1\n-1\n2",
+        "actual": "1\n1\n-1\n2",
+        "stderr": "",
+        "runtime_ms": 140,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "2\n15 6\n9 11 6 7 9 7 5 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 2 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 138,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "2\n15 6\n10 21 3 7 9 7 7 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 163,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "2\n15 11\n10 7 3 7 9 7 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 116,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 12 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 117,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 1 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 91,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 152,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "2\n15 5\n10 21 3 7 9 7 12 10 10 7 9 11 11 12 7\n8 1\n1 2 3 3 8 3 2 8\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 130,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "2\n15 11\n10 7 3 7 9 4 7 11 10 7 9 15 11 12 7\n8 1\n1 3 6 3 2 2 4 5\n",
+        "expected": "-1\n0",
+        "actual": "-1\n0",
+        "stderr": "",
+        "runtime_ms": 111,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.135666,
+  "total_latency_ms": 123477,
+  "iterations_used": null,
+  "early_stopped": null
+}

@@ -1,0 +1,1327 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_049",
+  "replica": 0,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    dp = [0] * (n + 1)\n    dp[1] = 1\n    S = [0] * (n + 2)\n    S[1] = 1\n    diff = [0] * (n + 2)  # difference array for division contributions\n    \n    for x in range(2, n + 1):\n        # division contributions accumulated via diff array\n        div_contrib = diff[x]\n        dp[x] = (S[x-1] + div_contrib) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        # Now update diff for future x': for z=2..x, floor(x/z) could be dp[x] contributing to x*z .. x*z+z-1\n        # For each z >= 2, add dp[x] to diff[x*z] and subtract from diff[x*z + z]\n        q = x\n        z = 2\n        while q * z <= n:\n            lo = q * z\n            hi = min(q * z + z - 1, n)\n            diff[lo] = (diff[lo] + dp[q]) % m\n            if hi + 1 <= n:\n                diff[hi + 1] = (diff[hi + 1] - dp[q]) % m\n            z += 1\n    \n    print(dp[n] % m)\n\nsolve()",
+      "input_tokens": 592,
+      "output_tokens": 8192,
+      "cost_usd": 0.124656,
+      "latency_ms": 121895
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    dp = [0] * (n + 1)\n    dp[1] = 1\n    S = [0] * (n + 1)  # S[i] = sum dp[1..i]\n    S[1] = 1\n    \n    # div_delta[x] will accumulate the extra contribution from division\n    # We'll use a difference-like approach\n    # For each x from 2 to n:\n    # div_sum[x] = div_sum[x-1] + dp[1] + sum_{d|x, 2<=d<=x-1} (dp[x//d] - dp[x//d - 1])\n    \n    div_sum = 0  # running div_sum for current x, but we need per x\n    # Actually div_sum[x] depends on div_sum[x-1], so we track it incrementally\n    \n    # We'll use an array to store pending additions from divisors\n    # delta[x] += (dp[x//d] - dp[x//d-1]) when d|x\n    # But dp values aren't known yet when we do the sieve\n    \n    # So we must compute online with O(sqrt(x)) per x\n    \n    cur_div = 0\n    # Let's store div_sum as running\n    div_arr = [0] * (n + 1)\n    \n    for x in range(2, n + 1):\n        # div_sum[x] = div_sum[x-1] + dp[1] + sum_{d|x, 2<=d<=x-1}(dp[x//d]-dp[x//d-1])\n        delta = dp[1]\n        # find divisors of x between 2 and x-1\n        i = 2\n        while i * i <= x:\n            if x % i == 0:\n                # d=i contributes dp[x//i] - dp[x//i-1]\n                delta += dp[x // i] - dp[x // i - 1]\n                if i != x // i and x // i != x:\n                    # d = x//i contributes dp[i] - dp[i-1]\n                    delta += dp[i] - dp[i - 1]\n            i += 1\n        cur_div = (cur_div + delta) % m\n        dp[x] = (S[x - 1] + cur_div) % m\n        S[x] = (S[x - 1] + dp[x]) % m\n    \n    print(dp[n] % m)\n\nsolve()",
+      "input_tokens": 592,
+      "output_tokens": 1833,
+      "cost_usd": 0.029271,
+      "latency_ms": 27929
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ndef solve():\n    input_data = sys.stdin.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    dp = [0] * (n + 1)\n    dp[1] = 1\n    S = [0] * (n + 1)\n    S[1] = 1\n    divcontrib = [0] * (n + 1)\n    # For each z from 2 to n, for each x from z to n, add dp[floor(x/z)] to divcontrib[x]\n    # But we need dp[floor(x/z)] already computed when we process x\n    # floor(x/z) <= x/2 < x, so dp[floor(x/z)] is already computed if we go x=2..n\n    # Problem: we need to accumulate all z contributions before finalizing dp[x]\n    # Process x in order, for each x compute sum over z=2..x of dp[floor(x/z)]\n    # Use sqrt decomposition per x: O(sqrt(x)) per x, total O(n sqrt(n)) - too slow for n=4e6\n    \n    # Alternative: for each z, iterate x=z..n and add dp[x//z] to divcontrib[x]\n    # But dp[x//z] must be known. Since x//z <= x/2, when we process z in any order,\n    # dp[x//z] for x//z < x is already computed when we compute dp[x].\n    # So we can do: after computing dp[x], for all z where floor(y/z)=x for some y,\n    # add dp[x] to divcontrib[y].\n    # i.e., when dp[x] is computed, for each z>=2, y ranges where floor(y/z)=x:\n    # y in [x*z, (x+1)*z - 1], add dp[x] to divcontrib[x*z .. min((x+1)*z-1, n)]\n    # For each x, z ranges from 2 to n//x (since x*z <= n means z <= n//x)\n    # Total work: sum_{x=1}^{n} (n//x - 1) \u2248 n ln n. \n    \n    # But adding to a range requires a difference array approach.\n    \n    # Let diff[i] = divcontrib[i] - divcontrib[i-1]\n    # When dp[x] is finalized, for each z from 2 to n//x:\n    #   lo = x*z, hi = min((x+1)*z - 1, n)  -- but wait, this isn't right\n    #   Actually for fixed z, floor(y/z) = x when y in [x*z, x*z+z-1]\n    #   So add dp[x] to diff[x*z] and subtract from diff[min(x*z+z, n+1)]\n    # Then divcontrib[y] = prefix sum of diff up to y.\n    # But we need divcontrib[y] when computing dp[y], so we need to process y in order\n    # and maintain a running prefix sum.\n    \n    # This seems workable! Let me think through:\n    # diff array, process x from 1 to n:\n    #   divcontrib[x] = running prefix sum at x\n    #   dp[x] = (S[x-1] + divcontrib[x]) % m  (for x > 1)\n    #   S[x] = (S[x-1] + dp[x]) % m\n    #   Then update diff for future positions:\n    #     for z from 2 to n//x:\n    #       lo = x*z\n    #       hi = min(x*z + z - 1, n)  -- actually hi = min((x+1)*z - 1, n)\n    #       diff[lo] += dp[x]\n    #       if hi+1 <= n: diff[hi+1] -= dp[x]\n    # \n    # Wait, but for each x, z ranges from 2 to n//x, that's O(n/x) per x,\n    # total O(n log n). \n    \n    # Memory: diff array of size n+2. With n=4e6, that's fine.\n    # But we also need to be careful: for z=2..n//x, lo=x*z, hi=min(x*z+z-1,n)\n    # Actually hi = min((x+1)*z - 1, n). Let me verify:\n    # floor(y/z) = x iff x*z <= y <= x*z+z-1 = (x+1)*z-1. Yes.\n    # And we need z >= 2, and lo = x*z <= n.\n    \n    # Let me code this up.\n    \n    diff = [0] * (n + 2)\n    dp = [0] * (n + 1)\n    S = [0] * (n + 1)  # S[i] = sum dp[1..i]\n    \n    dp[1] = 1\n    S[1] = 1\n    \n    # Update diff for x=1: for z from 2 to n//1 = n:\n    # lo = 1*z = z, hi = min(2*z-1, n)\n    # diff[z] += dp[1]=1, diff[min(2z,n+1)] -= 1\n    # This means: for y in [z, 2z-1], floor(y/z)=1, so divcontrib[y] gets +1\n    # But we only want z >= 2, and floor(y/z)=1 means z <= y < 2z, i.e., y/2 < z <= y\n    # So for x=1, z from 2 to n: lo=z, hi=min(2z-1,n)\n    # That's O(n) updates just for x=1, but using diff array it's O(n) total for x=1\n    # Wait no, for x=1, z ranges from 2 to n, so we do n-1 diff updates. That's O(n).\n    # For x=2, z from 2 to n//2, so n/2 updates.\n    # Total: O(n log n). Good.\n    \n    # Running prefix sum for divcontrib\n    running = 0\n    \n    for x in range(1, n + 1):\n        running = (running + diff[x]) % m\n        if x == 1:\n            dp[x] = 1\n        else:\n            dp[x] = (S[x-1] + running) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        \n        # Update diff for future y where floor(y/z) = x for some z >= 2\n        # z from 2 to n//x\n        dpx = dp[x]\n        if dpx == 0:\n            continue\n        limit = n // x\n        for z in range(2, limit + 1):\n            lo = x * z\n            hi = min(x * z + z - 1, n)  # = min((x+1)*z - 1, n)\n            diff[lo] = (diff[lo] + dpx) % m\n            if hi + 1 <= n:\n                diff[hi + 1] = (diff[hi + 1] - dpx) % m\n    \n    print(dp[n] % m)\n\nsolve()",
+      "input_tokens": 592,
+      "output_tokens": 8192,
+      "cost_usd": 0.124656,
+      "latency_ms": 127708
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The code uses diff[x] directly as the division contribution, but diff is a difference array and requires a running prefix sum to obtain the actual contribution at position x. As a result dp[x] is computed incorrectly (e.g., dp[2] becomes 1 instead of 2).",
+              "line": 14,
+              "severity": "critical",
+              "triggering_input": "2 1000000007"
+            },
+            {
+              "description": "The solution allocates three large Python lists (dp, S, diff) of size O(n). For n up to 4\u00b710\u2076 this exceeds typical memory limits (each list element is a Python int object, leading to >400\u202fMB usage).",
+              "line": 6,
+              "severity": "major",
+              "triggering_input": "4000000 1000000007"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code uses diff[x] directly as the division contribution, but diff is a difference array and requires a running prefix sum to obtain the actual contribution at position x. As a result dp[x] is computed incorrectly (e.g., dp[2] becomes 1 instead of 2).\",\n      \"line\": 14,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"2 1000000007\"\n    },\n    {\n      \"description\": \"The solution allocates three large Python lists (dp, S, diff) of size O(n). For n up to 4\u00b710\u2076 this exceeds typical memory limits (each list element is a Python int object, leading to >400\u202fMB usage).\",\n      \"line\": 6,\n      \"severity\": \"major\",\n      \"triggering_input\": \"4000000 1000000007\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code uses diff[x] directly as the division contribution, but diff is a difference array and requires a running prefix sum to obtain the actual contribution at position x. As a result dp[x] is computed incorrectly (e.g., dp[2] becomes 1 instead of 2).",
+                "line": 14,
+                "severity": "critical",
+                "triggering_input": "2 1000000007"
+              },
+              {
+                "description": "The solution allocates three large Python lists (dp, S, diff) of size O(n). For n up to 4\u00b710\u2076 this exceeds typical memory limits (each list element is a Python int object, leading to >400\u202fMB usage).",
+                "line": 6,
+                "severity": "major",
+                "triggering_input": "4000000 1000000007"
+              }
+            ]
+          },
+          "input_tokens": 903,
+          "output_tokens": 198,
+          "cost_usd": 0.00037425,
+          "latency_ms": 4501
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The code uses a difference array `diff` for division contributions but never converts it into a prefix sum. It reads `div_contrib = diff[x]` directly, which does not include contributions from earlier updates. A running cumulative variable (e.g., `cur = (cur + diff[x]) % m`) should be maintained and used as `div_contrib`. This leads to incorrect DP values (e.g., for n=2 the answer should be 2 but the code returns 1).",
+              "line": 14,
+              "severity": "critical",
+              "triggering_input": "2 1000000007"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code uses a difference array `diff` for division contributions but never converts it into a prefix sum. It reads `div_contrib = diff[x]` directly, which does not include contributions from earlier updates. A running cumulative variable (e.g., `cur = (cur + diff[x]) % m`) should be maintained and used as `div_contrib`. This leads to incorrect DP values (e.g., for n=2 the answer should be 2 but the code returns 1).\",\n      \"line\": 14,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"2 1000000007\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code uses a difference array `diff` for division contributions but never converts it into a prefix sum. It reads `div_contrib = diff[x]` directly, which does not include contributions from earlier updates. A running cumulative variable (e.g., `cur = (cur + diff[x]) % m`) should be maintained and used as `div_contrib`. This leads to incorrect DP values (e.g., for n=2 the answer should be 2 but the code returns 1).",
+                "line": 14,
+                "severity": "critical",
+                "triggering_input": "2 1000000007"
+              }
+            ]
+          },
+          "input_tokens": 903,
+          "output_tokens": 150,
+          "cost_usd": 0.00033825,
+          "latency_ms": 3253
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom array import array\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    dp = array('l', [0] * (n + 1))\n    S = array('l', [0] * (n + 2))\n    diff = array('l', [0] * (n + 2))\n    \n    dp[1] = 1\n    S[1] = 1\n    \n    cur_diff = 0  # running prefix sum of diff array\n    \n    for x in range(2, n + 1):\n        cur_diff = (cur_diff + diff[x]) % m\n        dp[x] = (S[x-1] + cur_diff) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        \n        # dp[x] contributes to future x' where floor(x'/z) = x for z >= 2\n        # x' in [x*z, x*z+z-1]\n        q = x\n        z = 2\n        while q * z <= n:\n            lo = q * z\n            hi = min(q * z + z - 1, n)\n            diff[lo] = (diff[lo] + dp[q]) % m\n            if hi + 1 <= n + 1:\n                diff[hi + 1] = (diff[hi + 1] - dp[q]) % m\n            z += 1\n    \n    print(dp[n] % m)\n\nsolve()",
+          "input_tokens": 1237,
+          "output_tokens": 1475,
+          "cost_usd": 0.025836,
+          "latency_ms": 19456
+        }
+      ],
+      "final_code": "import sys\nfrom array import array\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    dp = array('l', [0] * (n + 1))\n    S = array('l', [0] * (n + 2))\n    diff = array('l', [0] * (n + 2))\n    \n    dp[1] = 1\n    S[1] = 1\n    \n    cur_diff = 0  # running prefix sum of diff array\n    \n    for x in range(2, n + 1):\n        cur_diff = (cur_diff + diff[x]) % m\n        dp[x] = (S[x-1] + cur_diff) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        \n        # dp[x] contributes to future x' where floor(x'/z) = x for z >= 2\n        # x' in [x*z, x*z+z-1]\n        q = x\n        z = 2\n        while q * z <= n:\n            lo = q * z\n            hi = min(q * z + z - 1, n)\n            diff[lo] = (diff[lo] + dp[q]) % m\n            if hi + 1 <= n + 1:\n                diff[hi + 1] = (diff[hi + 1] - dp[q]) % m\n            z += 1\n    \n    print(dp[n] % m)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 1,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 2,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 3,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 4,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 5,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 6,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 7,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 8,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 9,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 10,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 11,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 12,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 13,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 14,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 15,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 16,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 17,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 18,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 19,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 20,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 21,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 22,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 23,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 24,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 25,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 26,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 27,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 28,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 29,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 30,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 31,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 32,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 33,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 34,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 35,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 36,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 37,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 38,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 39,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 40,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 41,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 42,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 43,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 44,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 45,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 46,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 47,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 48,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 49,
+            "status": "error",
+            "error": "container timeout"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1164,
+          "output_tokens": 0,
+          "cost_usd": 0.000291,
+          "latency_ms": 8654
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The algorithm enumerates all divisors of each x using a while loop (i*i <= x). This results in O(n * sqrt(n)) time, which is far too slow for n up to 4\u00b710^6 and will cause a Time Limit Exceeded.",
+              "line": 31,
+              "severity": "critical",
+              "triggering_input": "4000000 1000000007"
+            },
+            {
+              "description": "The solution stores three large Python lists (dp, S, div_arr) of size n+1. Each Python int consumes considerable memory, so for n = 4\u00b710^6 the memory usage exceeds typical limits for this problem.",
+              "line": 23,
+              "severity": "critical",
+              "triggering_input": "4000000 1000000007"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm enumerates all divisors of each x using a while loop (i*i <= x). This results in O(n * sqrt(n)) time, which is far too slow for n up to 4\u00b710^6 and will cause a Time Limit Exceeded.\",\n      \"line\": 31,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"4000000 1000000007\"\n    },\n    {\n      \"description\": \"The solution stores three large Python lists (dp, S, div_arr) of size n+1. Each Python int consumes considerable memory, so for n = 4\u00b710^6 the memory usage exceeds typical limits for this problem.\",\n      \"line\": 23,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"4000000 1000000007\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm enumerates all divisors of each x using a while loop (i*i <= x). This results in O(n * sqrt(n)) time, which is far too slow for n up to 4\u00b710^6 and will cause a Time Limit Exceeded.",
+                "line": 31,
+                "severity": "critical",
+                "triggering_input": "4000000 1000000007"
+              },
+              {
+                "description": "The solution stores three large Python lists (dp, S, div_arr) of size n+1. Each Python int consumes considerable memory, so for n = 4\u00b710^6 the memory usage exceeds typical limits for this problem.",
+                "line": 23,
+                "severity": "critical",
+                "triggering_input": "4000000 1000000007"
+              }
+            ]
+          },
+          "input_tokens": 1125,
+          "output_tokens": 191,
+          "cost_usd": 0.0004245,
+          "latency_ms": 6965
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom array import array\n\ndef solve():\n    data = sys.stdin.buffer.read().split()\n    n, m = int(data[0]), int(data[1])\n    \n    dp = array('l', [0] * (n + 1))\n    S = array('l', [0] * (n + 1))\n    pending = array('l', [0] * (n + 1))\n    \n    dp[1] = 1\n    S[1] = 1\n    \n    # After computing dp[1], schedule contributions for multiples of 1 with d>=2\n    # For multiple k*1 = k, d=k contributes dp[1]-dp[0] = 1, but d must be 2..k-1\n    # Actually d=k means floor(k/k)=1, and we need 2<=d<=k, so d=k is included\n    # We schedule: for each multiple j = 2*1, 3*1, ... pending[j] += dp[1]-dp[0]\n    diff = (dp[1] - 0) % m\n    j = 2\n    while j <= n:\n        pending[j] = (pending[j] + diff) % m\n        j += 1\n    \n    cur_div = 0\n    \n    for x in range(2, n + 1):\n        cur_div = (cur_div + pending[x]) % m\n        dp[x] = (S[x-1] + cur_div) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        \n        diff = (dp[x] - dp[x-1]) % m\n        if diff != 0:\n            j = 2 * x\n            while j <= n:\n                pending[j] = (pending[j] + diff) % m\n                j += x\n    \n    print(dp[n] % m)\n\nsolve()",
+          "input_tokens": 1468,
+          "output_tokens": 1511,
+          "cost_usd": 0.027069,
+          "latency_ms": 19582
+        }
+      ],
+      "final_code": "import sys\nfrom array import array\n\ndef solve():\n    data = sys.stdin.buffer.read().split()\n    n, m = int(data[0]), int(data[1])\n    \n    dp = array('l', [0] * (n + 1))\n    S = array('l', [0] * (n + 1))\n    pending = array('l', [0] * (n + 1))\n    \n    dp[1] = 1\n    S[1] = 1\n    \n    # After computing dp[1], schedule contributions for multiples of 1 with d>=2\n    # For multiple k*1 = k, d=k contributes dp[1]-dp[0] = 1, but d must be 2..k-1\n    # Actually d=k means floor(k/k)=1, and we need 2<=d<=k, so d=k is included\n    # We schedule: for each multiple j = 2*1, 3*1, ... pending[j] += dp[1]-dp[0]\n    diff = (dp[1] - 0) % m\n    j = 2\n    while j <= n:\n        pending[j] = (pending[j] + diff) % m\n        j += 1\n    \n    cur_div = 0\n    \n    for x in range(2, n + 1):\n        cur_div = (cur_div + pending[x]) % m\n        dp[x] = (S[x-1] + cur_div) % m\n        S[x] = (S[x-1] + dp[x]) % m\n        \n        diff = (dp[x] - dp[x-1]) % m\n        if diff != 0:\n            j = 2 * x\n            while j <= n:\n                pending[j] = (pending[j] + diff) % m\n                j += x\n    \n    print(dp[n] % m)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 1,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 2,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 3,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 4,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 5,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 6,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 7,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 8,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 9,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 10,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 11,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 12,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 13,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 14,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 15,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 16,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 17,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 18,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 19,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 20,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 21,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 22,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 23,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 24,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 25,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 26,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 27,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 28,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 29,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 30,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 31,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 32,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 33,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 34,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 35,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 36,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 37,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 38,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 39,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 40,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 41,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 42,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 43,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 44,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 45,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 46,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 47,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 48,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 49,
+            "status": "error",
+            "error": "container timeout"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The solution stores three large Python lists (dp, S, diff) of length n+1 (up to 4\u00b710\u2076). Each element is a full Python int object, causing memory usage well above typical limits (hundreds of megabytes). This exceeds the problem's low memory limit and will cause a MemoryError.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "n = 4000000, any valid m"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The solution stores three large Python lists (dp, S, diff) of length n+1 (up to 4\u00b710\u2076). Each element is a full Python int object, causing memory usage well above typical limits (hundreds of megabytes). This exceeds the problem's low memory limit and will cause a MemoryError.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"n = 4000000, any valid m\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution stores three large Python lists (dp, S, diff) of length n+1 (up to 4\u00b710\u2076). Each element is a full Python int object, causing memory usage well above typical limits (hundreds of megabytes). This exceeds the problem's low memory limit and will cause a MemoryError.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "n = 4000000, any valid m"
+              }
+            ]
+          },
+          "input_tokens": 2176,
+          "output_tokens": 109,
+          "cost_usd": 0.00062575,
+          "latency_ms": 5238
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The code allocates several large arrays twice (dp, S, and divcontrib are created before the main algorithm and then re\u2011created later). This results in O(n) memory for each of dp, S, diff, and an extra unused divcontrib, exceeding the memory limit for n up to 4\u00b710\u2076 (hundreds of megabytes).",
+              "line": 5,
+              "severity": "critical",
+              "triggering_input": "n = 4000000"
+            },
+            {
+              "description": "Unnecessary allocation of the unused array `divcontrib` adds extra memory overhead.",
+              "line": 9,
+              "severity": "major",
+              "triggering_input": "n = 4000000"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code allocates several large arrays twice (dp, S, and divcontrib are created before the main algorithm and then re\u2011created later). This results in O(n) memory for each of dp, S, diff, and an extra unused divcontrib, exceeding the memory limit for n up to 4\u00b710\u2076 (hundreds of megabytes).\",\n      \"line\": 5,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"n = 4000000\"\n    },\n    {\n      \"description\": \"Unnecessary allocation of the unused array `divcontrib` adds extra memory overhead.\",\n      \"line\": 9,\n      \"severity\": \"major\",\n      \"triggering_input\": \"n = 4000000\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code allocates several large arrays twice (dp, S, and divcontrib are created before the main algorithm and then re\u2011created later). This results in O(n) memory for each of dp, S, diff, and an extra unused divcontrib, exceeding the memory limit for n up to 4\u00b710\u2076 (hundreds of megabytes).",
+                "line": 5,
+                "severity": "critical",
+                "triggering_input": "n = 4000000"
+              },
+              {
+                "description": "Unnecessary allocation of the unused array `divcontrib` adds extra memory overhead.",
+                "line": 9,
+                "severity": "major",
+                "triggering_input": "n = 4000000"
+              }
+            ]
+          },
+          "input_tokens": 2181,
+          "output_tokens": 180,
+          "cost_usd": 0.00068025,
+          "latency_ms": 5653
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom array import array\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    diff = array('l', [0] * (n + 2))\n    dp_prev = 1  # dp[1] = 1\n    S = array('l', [0] * (n + 1))  # S[i] = sum dp[1..i]\n    S[1] = 1\n    \n    # Update diff for x=1: dp[1]=1\n    # for z from 2 to n: lo=z, hi=min(2z-1, n)\n    dpx = 1\n    limit = n  # n // 1\n    for z in range(2, limit + 1):\n        lo = z\n        hi = 2 * z - 1\n        diff[lo] = (diff[lo] + dpx) % m\n        if hi + 1 <= n:\n            diff[hi + 1] = (diff[hi + 1] - dpx) % m\n        elif hi >= n:\n            pass  # hi+1 > n, no subtraction needed\n    \n    running = 0\n    result = 0\n    \n    for x in range(2, n + 1):\n        running = (running + diff[x]) % m\n        dpx = (S[x-1] + running) % m\n        S[x] = (S[x-1] + dpx) % m\n        \n        if x == n:\n            result = dpx\n            break\n        \n        if dpx == 0:\n            continue\n        \n        limit = n // x\n        for z in range(2, limit + 1):\n            lo = x * z\n            hi = x * z + z - 1\n            if hi > n:\n                hi = n\n            diff[lo] = (diff[lo] + dpx) % m\n            if hi + 1 <= n:\n                diff[hi + 1] = (diff[hi + 1] - dpx) % m\n    \n    if n == 1:\n        result = 1\n    \n    print(result % m)\n\nsolve()",
+          "input_tokens": 2768,
+          "output_tokens": 1220,
+          "cost_usd": 0.026604,
+          "latency_ms": 15534
+        }
+      ],
+      "final_code": "import sys\nfrom array import array\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n, m = int(input_data[0]), int(input_data[1])\n    \n    diff = array('l', [0] * (n + 2))\n    dp_prev = 1  # dp[1] = 1\n    S = array('l', [0] * (n + 1))  # S[i] = sum dp[1..i]\n    S[1] = 1\n    \n    # Update diff for x=1: dp[1]=1\n    # for z from 2 to n: lo=z, hi=min(2z-1, n)\n    dpx = 1\n    limit = n  # n // 1\n    for z in range(2, limit + 1):\n        lo = z\n        hi = 2 * z - 1\n        diff[lo] = (diff[lo] + dpx) % m\n        if hi + 1 <= n:\n            diff[hi + 1] = (diff[hi + 1] - dpx) % m\n        elif hi >= n:\n            pass  # hi+1 > n, no subtraction needed\n    \n    running = 0\n    result = 0\n    \n    for x in range(2, n + 1):\n        running = (running + diff[x]) % m\n        dpx = (S[x-1] + running) % m\n        S[x] = (S[x-1] + dpx) % m\n        \n        if x == n:\n            result = dpx\n            break\n        \n        if dpx == 0:\n            continue\n        \n        limit = n // x\n        for z in range(2, limit + 1):\n            lo = x * z\n            hi = x * z + z - 1\n            if hi > n:\n                hi = n\n            diff[lo] = (diff[lo] + dpx) % m\n            if hi + 1 <= n:\n                diff[hi + 1] = (diff[hi + 1] - dpx) % m\n    \n    if n == 1:\n        result = 1\n    \n    print(result % m)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 1,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 2,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 3,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 4,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 5,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 6,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 7,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 8,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 9,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 10,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 11,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 12,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 13,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 14,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 15,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 16,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 17,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 18,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 19,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 20,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 21,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 22,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 23,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 24,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 25,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 26,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 27,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 28,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 29,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 30,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 31,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 32,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 33,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 34,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 35,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 36,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 37,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 38,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 39,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 40,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 41,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 42,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 43,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 44,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 45,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 46,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 47,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 48,
+            "status": "error",
+            "error": "container timeout"
+          },
+          {
+            "test_index": 49,
+            "status": "error",
+            "error": "container timeout"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 2,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 1,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 2,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 3,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 4,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 5,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 6,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 7,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 8,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 9,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 10,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 11,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 12,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 13,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 14,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 15,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 16,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 17,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 18,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 19,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 20,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 21,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 22,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 23,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 24,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 25,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 26,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 27,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 28,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 29,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 30,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 31,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 32,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 33,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 34,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 35,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 36,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 37,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 38,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 39,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 40,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 41,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 42,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 43,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 44,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 45,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 46,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 47,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 48,
+        "status": "error",
+        "error": "container timeout"
+      },
+      {
+        "test_index": 49,
+        "status": "error",
+        "error": "container timeout"
+      }
+    ]
+  },
+  "total_cost_usd": 0.36082600000000004,
+  "total_latency_ms": 366368,
+  "iterations_used": null,
+  "early_stopped": null
+}

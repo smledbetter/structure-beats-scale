@@ -1,0 +1,524 @@
+{
+  "study": "A",
+  "condition": "A1",
+  "task_id": "cc_006",
+  "replica": 1,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "Let `suffix_min_sum[m][j]` = minimum sum of a segment of length `m` starting at position \u2265 j... but that's not quite right since we want increasing sums.\n\nBetter: Let `f[m][j]` = minimum possible sum for segment m, given it starts at position \u2265 j, and segments m+1, ..., k are placed after it validly.\n\nActually, let's define from right to left:\n- `dp[m][j]` = minimum sum we need to \"beat\" for segment m if it starts at position j... \n\nLet me try: for fixed k, define `min_sum[i][j]` = minimum sum of segment of length i that starts at position \u2265 j, subject to all subsequent segments (i+1, ..., k) being placeable with strictly increasing sums.\n\nProcess from right (segment k, length 1) to left (segment 1, length k):\n\nFor segment k (length 1): `opt[k][j]` = min sum of length-1 segment starting at \u2265 j = min(a[j], a[j+1], ..., a[n-k]) (using prefix min of suffix sums).\n\nFor segment i (length k-i+1): we want to place it at some position p, then segment i+1 must start at \u2265 p + (k-i+1), and sum(segment i) < sum(segment i+1). So `opt[i][j]` = min over p\u2265j of sum(p, length k-i+1) such that there exists a valid placement of segment i+1 with sum > sum(p, length k-i+1) starting at p+(k-i+1).\n\nFor each starting position p of segment i, let s = sum of segment i at p. We need `opt[i+1][p + len_i]` to have some achievable sum > s. \n\nLet me store for each segment i, for each position j, the minimum achievable sum. Then for segment i at position p: it's valid if min achievable sum of segment i+1 starting at p+len_i is > sum_i(p). But we need the minimum sum of i+1 that is > sum_i(p).\n\nLet me store `min_sum_from[i][j]` = minimum sum for segment i starting at position \u2265 j. Then for segment i at position p with sum s, it's feasible if there exists a position q \u2265 p+len_i where segment i+1 has sum > s. The minimum such sum would need to be > s.\n\nSo I need: for each (i, j), what is the minimum sum of segment i+1 starting at \u2265 j that is > some threshold? This is complex.\n\nAlternative: for each segment i+1, precompute `min_from[j]` = min sum of segment i+1 starting at \u2265 j. Then segment i at position p is feasible if `min_from[p+len_i]` > ... wait, we need sum(i+1) > sum(i), so if min_from[p+len_i] > sum_i(p), it's feasible.\n\nSo: segment i at p is feasible if `min_achievable_sum[i+1][p+len_i] > sum_i(p)`.\n\nAnd `min_achievable_sum[i][j]` = min over feasible p\u2265j of sum_i(p).\n\nLet me implement this with binary search on k.",
+    "input_tokens": 684,
+    "output_tokens": 1201,
+    "cost_usd": 0.020067,
+    "latency_ms": 22135
+  },
+  "reviews": [
+    {
+      "role": "generalist",
+      "model": "claude-opus-4-6",
+      "verdict": "FAIL",
+      "bugs_reported": 1,
+      "bugs": [
+        {
+          "description": "The code is not actual executable code - it's pseudocode/comments/notes describing an approach. There is no implementation that reads input, processes it, or produces output. It will fail on all test cases.",
+          "line": 1,
+          "severity": "critical",
+          "triggering_input": "1\n1\n1"
+        }
+      ],
+      "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The code is not actual executable code - it's pseudocode/comments/notes describing an approach. There is no implementation that reads input, processes it, or produces output. It will fail on all test cases.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"1\\n1\\n1\"}]}",
+      "parsed": {
+        "verdict": "FAIL",
+        "bugs": [
+          {
+            "description": "The code is not actual executable code - it's pseudocode/comments/notes describing an approach. There is no implementation that reads input, processes it, or produces output. It will fail on all test cases.",
+            "line": 1,
+            "severity": "critical",
+            "triggering_input": "1\n1\n1"
+          }
+        ]
+      },
+      "input_tokens": 1595,
+      "output_tokens": 90,
+      "cost_usd": 0.030675,
+      "latency_ms": 2868
+    }
+  ],
+  "aggregated_bugs": [
+    {
+      "description": "The code is not actual executable code - it's pseudocode/comments/notes describing an approach. There is no implementation that reads input, processes it, or produces output. It will fail on all test cases.",
+      "line": 1,
+      "severity": "critical",
+      "triggering_input": "1\n1\n1"
+    }
+  ],
+  "fix": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\nfrom math import inf\n\ninput_data = sys.stdin.read().split()\nidx = 0\n\ndef solve():\n    global idx\n    n = int(input_data[idx]); idx += 1\n    a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n    \n    # prefix sums\n    prefix = [0] * (n + 1)\n    for i in range(n):\n        prefix[i+1] = prefix[i] + a[i]\n    \n    def seg_sum(l, r):  # sum of a[l..r] inclusive, 0-indexed\n        return prefix[r+1] - prefix[l]\n    \n    def check(k):\n        # We need k segments of lengths k, k-1, ..., 1\n        # Total length needed: k*(k+1)/2\n        if k * (k + 1) // 2 > n:\n            return False\n        \n        # For each segment i (1-indexed, length k-i+1):\n        # Process from segment k (length 1) back to segment 1 (length k)\n        # min_achievable[j] = minimum sum of current segment starting at position >= j\n        # that is feasible (all subsequent segments can be placed)\n        \n        # Start with segment k, length 1\n        # It can start at positions 0..n-1\n        # min_achievable[j] = min(a[j], a[j+1], ..., a[n-1])\n        \n        seg_len = 1  # length of segment k\n        # Positions where segment k can start: 0 to n-1\n        # min_achievable[j] for j from n-1 down to 0\n        \n        min_ach = [inf] * (n + 1)\n        # segment k has length 1, can start at 0..n-1\n        for j in range(n - 1, -1, -1):\n            val = seg_sum(j, j)\n            min_ach[j] = min(val, min_ach[j + 1])\n        \n        # Now process segments k-1, k-2, ..., 1\n        # segment number going from k-1 down to 1\n        # current segment length increases: 2, 3, ..., k\n        \n        for seg_num in range(k - 1, 0, -1):\n            seg_len = k - seg_num + 1  # length of current segment (seg_num-th segment)\n            next_seg_len = seg_len - 1  # length of next segment\n            \n            # For current segment starting at position p (0-indexed):\n            # - it occupies p..p+seg_len-1\n            # - next segment starts at >= p+seg_len\n            # - need min_ach[p+seg_len] > sum of current segment at p\n            # But min_ach[p+seg_len] is the min achievable sum for next segment\n            # We need: there exists a valid placement of next segment at >= p+seg_len\n            # with sum > current_sum\n            # This is feasible if min_ach[p+seg_len] > current_sum? No!\n            # We need sum > current_sum, so we need min achievable sum that is > current_sum\n            # But min_ach stores the minimum achievable sum >= position j\n            # If min_ach[p+seg_len] > current_sum, then yes feasible\n            # But if min_ach[p+seg_len] <= current_sum, it might still be feasible\n            # with a larger sum. We need to know if ANY achievable sum > current_sum exists.\n            \n            # We need: is there a position q >= p+seg_len where next segment sum > current_sum\n            # and that placement is feasible?\n            # \n            # Store sorted structure or use: for each position j, store min achievable sum >= j\n            # If we also store max achievable sum >= j, we can check if max > threshold\n            # But we want minimum current sum that is feasible.\n            #\n            # Better: store for each j, the minimum achievable sum of next segment at >= j\n            # A placement at p is feasible if there exists q >= p+seg_len with achievable sum > s_p\n            # Equivalent: max achievable sum at >= p+seg_len > s_p\n            # But we want min_ach for current segment = min feasible sum\n            \n            # Let's store both min and max achievable sums\n            # Actually we need: for position j, what is the minimum sum s such that\n            # there's an achievable next-segment sum > s at positions >= j?\n            # That's equivalent to: max_achievable[j] exists (> -inf), and s < max_achievable[j]\n            \n            # So current segment at p is feasible if:\n            # current_sum < max_ach_next[p + seg_len]\n            # And the min feasible current_sum at >= j:\n            # min over p>=j of current_sum(p) where current_sum(p) < max_ach_next[p+seg_len]\n            \n            # Recompute max_ach from min_ach? No, we need max achievable too.\n            # Let me track max_ach as well.\n            \n            # This requires rethinking. Let me store for next level both min and max.\n            pass\n        \n        return False  # placeholder\n    \n    # Redo with proper implementation\n    def check2(k):\n        if k * (k + 1) // 2 > n:\n            return False\n        \n        # min_ach[j] = min achievable sum for current segment layer, starting at >= j\n        # max_ach[j] = max achievable sum for current segment layer, starting at >= j\n        # But we only need min_ach for feasibility check of previous layer\n        # and we need to know: given threshold t, is there achievable sum > t at >= j?\n        # That's: max_ach[j] > t\n        \n        # Layer k: length 1, all positions 0..n-1 are valid\n        # min_ach[j] = min(a[j..n-1])\n        # max_ach[j] = max(a[j..n-1])\n        \n        min_ach = [inf] * (n + 2)\n        max_ach = [-inf] * (n + 2)\n        \n        for j in range(n - 1, -1, -1):\n            val = a[j]\n            min_ach[j] = min(val, min_ach[j + 1])\n            max_ach[j] = max(val, max_ach[j + 1])\n        \n        for seg_num in range(k - 1, 0, -1):\n            cur_len = k - seg_num + 1  # length of segment seg_num\n            next_len = cur_len - 1     # length of segment seg_num+1 (already computed)\n            \n            # For current segment at position p (0-indexed, occupies p..p+cur_len-1):\n            # next segment starts at >= p + cur_len\n            # feasible if max_ach[p + cur_len] > current_sum(p)\n            # current_sum(p) = seg_sum(p, p+cur_len-1)\n            # p can range from 0 to n - cur_len - (remaining segments total length)\n            # Actually just 0 to n - cur_len (but next segments need space too)\n            # For simplicity, check p from 0 to n-cur_len\n            \n            new_min_ach = [inf] * (n + 2)\n            new_max_ach = [-inf] * (n + 2)\n            \n            # p ranges from 0 to n - cur_len\n            for p in range(n - cur_len, -1, -1):\n                s = seg_sum(p, p + cur_len - 1)\n                # feasible if max_ach[p + cur_len] > s\n                if max_ach[p + cur_len] > s:\n                    new_min_ach[p] = min(s, new_min_ach[p + 1])\n                    new_max_ach[p] = max(s, new_max_ach[p + 1])\n                else:\n                    new_min_ach[p] = new_min_ach[p + 1]\n                    new_max_ach[p] = new_max_ach[p + 1]\n            \n            min_ach = new_min_ach\n            max_ach = new_max_ach\n        \n        # Now check segment 1 (length k):\n        # It starts at some position p, 0..n-k\n        # feasible if max_ach[p + k] > seg_sum(p, p+k-1)\n        # We just need any such p to exist\n        # Actually after the loop, min_ach[0] being < inf means there's a valid placement\n        # Wait, the loop above processes seg_num from k-1 down to 1\n        # After loop, min_ach corresponds to segment 1 (length k)\n        # We need to do one more step for segment 1\n        \n        # Actually let me recheck: initially we set up layer for segment k (length 1)\n        # Then loop: seg_num = k-1, k-2, ..., 1\n        # seg_num=k-1: cur_len = k-(k-1)+1 = 2, this is segment k-1\n        # ...\n        # seg_num=1: cur_len = k-1+1 = k, this is segment 1\n        # So after loop completes (seg_num goes down to 1), new_min_ach is for segment 1\n        # We need any p in 0..n-k where it's feasible\n        # min_ach[0] < inf means yes\n        \n        return min_ach[0] < inf\n    \n    # Binary search on k\n    lo, hi = 0, n\n    # max k: k*(k+1)/2 <= n\n    while hi * (hi + 1) // 2 > n:\n        hi -= 1\n    \n    ans = 0\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if mid == 0:\n            ans = 0\n            lo = mid + 1\n        elif check2(mid):\n            ans = mid\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    \n    print(ans)\n\nt = int(input_data[idx]); idx += 1\nfor _ in range(t):\n    solve()",
+    "input_tokens": 1600,
+    "output_tokens": 2677,
+    "cost_usd": 0.044955,
+    "latency_ms": 34272
+  },
+  "test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 3\n7\n1 2 1 1 3 2 6\n5\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n3\n1",
+        "actual": "1\n1\n2\n3\n1",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 96658305 443438005 9278750 1549 63359125 217582 195",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n1\n167959139\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 96658305 443438005 9278750 1549 63359125 217582 195",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n1\n134692213\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 3\n7\n1 4 1 1 3 2 6\n5\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 514569 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 6\n7\n1 2 1 1 3 2 6\n5\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n3\n1",
+        "actual": "1\n1\n2\n3\n1",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n8\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 4 1 1 3 3 6\n5\n9 1 7 9 7\n",
+        "expected": "1\n1\n2\n2\n2",
+        "actual": "1\n1\n2\n2\n2",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "5\n2\n1\n3\n1 2 3\n5\n1 1 2 2 3\n7\n1 4 1 2 3 2 6\n5\n9 6 7 8 7\n",
+        "expected": "1\n1\n1\n1\n2",
+        "actual": "1\n1\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "5\n1\n1\n3\n1 1 3\n5\n1 1 2 2 4\n7\n1 4 0 1 3 2 6\n2\n9 6 7 16 7\n",
+        "expected": "1\n2\n2\n2\n1",
+        "actual": "1\n2\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 8999 849 7922 3912863 1582 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 19",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 24,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n23\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 26 113 1174941158 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 4 2 6\n7\n1 7 4 2 3 1 4\n2\n9 8 7 13 3\n",
+        "expected": "1\n1\n2\n1\n1",
+        "actual": "1\n1\n2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n21\n28 1376227 3015869 70871 75196 257021 732545686 1157778 20 1406 590 7922 6892338 46 113 1251516790 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 378457 19596",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n21\n28 1376227 3015869 70871 75196 257021 732545686 1157778 20 1406 590 7922 6892338 79 113 1251516790 38164494 70886500 6243048 45501573 8084592 44111874 443438005 9278750 987 46163841 378457 348453",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 96658305 443438005 9278750 1549 63359125 217582 195",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n1\n262984871\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 4 1 1 3 2 6\n5\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 96658305 443438005 9278750 1549 63359125 217582 195",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 4 1 1 3 2 6\n2\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 7 1 1 3 2 6\n2\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 7 2 1 3 2 6\n2\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "5\n1\n1\n3\n1 2 3\n5\n1 1 2 2 4\n7\n1 7 4 1 3 2 6\n2\n9 6 7 9 7\n",
+        "expected": "1\n1\n2\n2\n1",
+        "actual": "1\n1\n2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 3912863 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 849 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 63359125 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 5975 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 46163841 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 46163841 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 46163841 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 1549 46163841 217582 195",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 830 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n55\n28 1376227 3548650 119796 75196 514569 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 514569 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 514569 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n55\n28 1376227 3548650 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n55\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n55\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 661847789 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 19596",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n55\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 1174941158 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n55\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 1174941158 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n55\n28 1376227 3015869 132483 75196 257021 732545686 1157778 20 1406 590 7922 6892338 23 113 1174941158 38164494 70886500 6121250 238801764 8084592 44111874 443438005 9278750 987 46163841 217582 1959",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.095697,
+  "total_latency_ms": 59275
+}

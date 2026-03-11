@@ -1,0 +1,2846 @@
+{
+  "study": "C",
+  "condition": "C11",
+  "task_id": "cc_010",
+  "replica": 2,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Wait, if k=2 and we command one of the free directions, the robot must go to the other free neighbor. So we CAN force it if both free neighbors are good? No wait - if k=2, commanding one free direction forces the robot to the other. So we can choose which of the 2 neighbors the robot goes to!\n\nSo: a cell with k free neighbors is forceable if:\n- k=0 and it's the lab\n- k=1 and its only free neighbor is forceable (we command any non-free direction to push it there)\n- k=2 and at least one of its free neighbors is forceable (we command the other free direction)\n- k\u22653: we command one free direction, robot still has k-1\u22652 choices \u2192 we can't guarantee\n\nWait for k=2: we command direction toward neighbor A \u2192 robot goes to B. We command direction toward neighbor B \u2192 robot goes to A. So we can choose! If either A or B is forceable, we can force it there.\n\nFor k\u22653: we command any direction. If we command a free direction, robot has k-1\u22652 choices. If we command a non-free direction, robot has k\u22653 choices. We can't force to a specific neighbor.\n\nSo the rule is:\n- Lab is forceable\n- A free cell with exactly 1 free neighbor: forceable if that neighbor is forceable\n- A free cell with exactly 2 free neighbors: forceable if at least one neighbor is forceable\n- A free cell with 3+ free neighbors: not forceable\n\nThis is a BFS/propagation problem. Start from the lab, propagate \"forceable\" status.\n\nA cell becomes forceable if:\n- It has 1 free neighbor and that neighbor is forceable, OR\n- It has 2 free neighbors and at least one is forceable\n\nLet me implement BFS where we propagate from lab outward.\n\nFor each cell, precompute number of free neighbors. Then BFS: start with lab. For each neighbor of a forceable cell, check if it can now become forceable.\n\nWhen a cell `u` becomes forceable, for each free neighbor `v` of `u`:\n- If `v` has 1 free neighbor \u2192 `v` becomes forceable (its only neighbor `u` is forceable)\n- If `v` has 2 free neighbors \u2192 `v` becomes forceable (one neighbor `u` is forceable)\n- If `v` has 3+ free neighbors \u2192 not forceable from this\n\nSo: a cell becomes forceable when any of its free neighbors becomes forceable AND (free_neighbor_count \u2264 2).\n\nThis means: cells with \u22642 free neighbors can become forceable if any neighbor is forceable.\n\nBFS propagation: when a cell becomes forceable, add all its free neighbors that have \u22642 free neighbors to the queue.",
+      "input_tokens": 804,
+      "output_tokens": 1155,
+      "cost_usd": 0.019737,
+      "latency_ms": 22442
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`, will move to any neighbor in direction \u2260 `d` that is free. If no such direction exists, it does nothing (stays at `c`).\n\nWait, \"it will do nothing\" means if all non-`d` neighbors are blocked, robot stays. That's a problem - if robot can stay, we might loop forever.\n\nSo for a command `d` to work at cell `c`:\n- Either the robot moves (there exist free neighbors in directions \u2260 `d`), AND all such neighbors are good.\n- OR the robot does nothing (all non-`d` neighbors are blocked) - but then we're stuck?\n\nActually if the robot does nothing, we just send another command. But if it always does nothing, we're stuck. Hmm, but the problem says \"after each step\" - if it does nothing, that's also a \"step\". We need it to eventually reach the lab.\n\nLet me reconsider: cell `c` is good if:\n- `c` is the lab, OR\n- There exists command `d` such that:\n  - All free neighbors of `c` in directions \u2260 `d` are good (possibly empty set - but if empty, robot does nothing and we're stuck unless c is lab)\n  \nWait, if the set of free neighbors in directions \u2260 `d` is empty, robot stays at `c` forever. So we need that set to be non-empty AND all in it are good.\n\nActually wait - if that set is empty, robot does nothing. We can then send a different command. But we need a strategy that works.\n\nLet me re-read: \"no matter what different directions the robot chooses\" - so at each step we pick a command, and the robot picks any direction \u2260 command that's free.\n\nCell `c` is good if: \u2203 command `d` such that every free neighbor in direction \u2260 `d` is good, AND there's at least one such free neighbor (so robot actually moves).\n\nThis gives a BFS/propagation: start with lab as good, then propagate.\n\nFor each cell `c` and direction `d`, count how many free neighbors in directions \u2260 `d` are NOT yet good. When this count reaches 0 AND there's at least one free neighbor in directions \u2260 `d`, cell `c` becomes good.\n\nLet me implement this with a queue-based approach.\n\nFor each cell `c`, for each command `d` (4 directions):\n- `others[c][d]` = list of free neighbors in directions \u2260 `d`\n- `bad_count[c][d]` = number of not-yet-good cells in `others[c][d]`\n\nWhen a cell `v` becomes good, for each neighbor `c` of `v`, for each command `d` where `v` is in `others[c][d]` (i.e., `d` \u2260 direction from `c` to `v`): decrement `bad_count[c][d]`. If `bad_count[c][d]` == 0 and `len(others[c][d]) > 0`, mark `c` as good.\n\nDirection from `c` to `v`: if `v` is right of `c`, direction is RIGHT. So `d` \u2260 RIGHT means commands LEFT, UP, DOWN.\n\nLet me code this up.",
+      "input_tokens": 804,
+      "output_tokens": 1059,
+      "cost_usd": 0.018297,
+      "latency_ms": 19158
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx+=1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        # count of non-forceable free neighbors\n        non_force = [[0]*m for _ in range(n)]\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] != '#':\n                    cnt = 0\n                    for dr,dc in dirs:\n                        ni,nj = i+dr,j+dc\n                        if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                            cnt+=1\n                    non_force[i][j] = cnt\n        \n        forceable = [[False]*m for _ in range(n)]\n        q = deque()\n        li, lj = lab\n        forceable[li][lj] = True\n        q.append((li,lj))\n        \n        while q:\n            r,c = q.popleft()\n            for dr,dc in dirs:\n                nr,nc = r+dr,c+dc\n                if 0<=nr<n and 0<=nc<m and grid[nr][nc]!='#' and not forceable[nr][nc]:\n                    non_force[nr][nc] -= 1\n                    if non_force[nr][nc] <= 1:\n                        forceable[nr][nc] = True\n                        q.append((nr,nc))\n        \n        out = []\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]=='.' and forceable[i][j]:\n                    grid[i][j]='+'\n            out.append(''.join(grid[i]))\n        print('\\n'.join(out))\n\nsolve()",
+      "input_tokens": 804,
+      "output_tokens": 1373,
+      "cost_usd": 0.023007,
+      "latency_ms": 20351
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx += 1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        \n        free_count = [[0]*m for _ in range(n)]\n        bad_count = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] == '#':\n                    continue\n                cnt = 0\n                for di, dj in dirs:\n                    ni, nj = i+di, j+dj\n                    if 0 <= ni < n and 0 <= nj < m and grid[ni][nj] != '#':\n                        cnt += 1\n                free_count[i][j] = cnt\n                bad_count[i][j] = cnt  # initially all neighbors are \"bad\" (not good)\n        \n        good = [[False]*m for _ in range(n)]\n        queue = deque()\n        \n        li, lj = lab\n        good[li][lj] = True\n        queue.append((li, lj))\n        \n        # When cell becomes good, update neighbors\n        while queue:\n            i, j = queue.popleft()\n            for di, dj in dirs:\n                ni, nj = i+di, j+dj\n                if 0 <= ni < n and 0 <= nj < m and grid[ni][nj] != '#' and not good[ni][nj]:\n                    bad_count[ni][nj] -= 1\n                    fc = free_count[ni][nj]\n                    bc = bad_count[ni][nj]\n                    if bc <= 1 and fc >= bc + 1:  # at least one good neighbor, bad_count <= 1\n                        good[ni][nj] = True\n                        queue.append((ni, nj))\n        \n        out = []\n        for i in range(n):\n            row = grid[i]\n            for j in range(m):\n                if row[j] == '.' and good[i][j]:\n                    row[j] = '+'\n            out.append(''.join(row))\n        print('\\n'.join(out))\n\nsolve()",
+      "input_tokens": 804,
+      "output_tokens": 2143,
+      "cost_usd": 0.034557,
+      "latency_ms": 28994
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx+=1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        \n        good = [[False]*m for _ in range(n)]\n        deg = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] != '#':\n                    for di,dj in dirs:\n                        ni,nj = i+di,j+dj\n                        if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                            deg[i][j]+=1\n        \n        good_cnt = [[0]*m for _ in range(n)]\n        bad_cnt = [[0]*m for _ in range(n)]\n        \n        # bad_cnt[i][j] = number of free neighbors that are not good\n        # Initially all free cells are not good\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]!='#':\n                    bad_cnt[i][j] = deg[i][j]\n        \n        q = deque()\n        li, lj = lab\n        good[li][lj] = True\n        q.append((li,lj))\n        # Update neighbors of lab\n        for di,dj in dirs:\n            ni,nj = li+di,lj+dj\n            if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                bad_cnt[ni][nj]-=1\n                good_cnt[ni][nj]+=1\n        \n        # Also check lab itself - but lab is already good\n        # Now BFS\n        # When a cell becomes good, update its neighbors\n        # But we need to process lab's neighbors too\n        # Re-check: when lab becomes good, for each free neighbor, update their counts\n        # Then check if they become good\n        \n        # Let me redo:\n        good = [[False]*m for _ in range(n)]\n        good_cnt = [[0]*m for _ in range(n)]\n        bad_cnt = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]!='#':\n                    bad_cnt[i][j] = deg[i][j]\n        \n        def is_good(i,j):\n            # good_cnt[i][j] >= 1 and bad_cnt[i][j] <= 1\n            # but also need deg >= 1 (if good_cnt>=1 then deg>=1 automatically)\n            return good_cnt[i][j] >= 1 and bad_cnt[i][j] <= 1\n        \n        q = deque()\n        li, lj = lab\n        good[li][lj] = True\n        q.append((li,lj))\n        \n        while q:\n            ci, cj = q.popleft()\n            for di,dj in dirs:\n                ni,nj = ci+di,cj+dj\n                if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#' and not good[ni][nj]:\n                    bad_cnt[ni][nj]-=1\n                    good_cnt[ni][nj]+=1\n                    if is_good(ni,nj):\n                        good[ni][nj]=True\n                        q.append((ni,nj))\n        \n        # But wait: lab itself - is it good? Yes, robot is already there.\n        # For lab cell: we don't need to check is_good since it's the destination.\n        \n        out = []\n        for i in range(n):\n            row = []\n            for j in range(m):\n                if grid[i][j]=='#':\n                    row.append('#')\n                elif grid[i][j]=='L':\n                    row.append('L')\n                elif good[i][j]:\n                    row.append('+')\n                else:\n                    row.append('.')\n            out.append(''.join(row))\n        print('\\n'.join(out))\n\nsolve()",
+      "input_tokens": 804,
+      "output_tokens": 2434,
+      "cost_usd": 0.038922,
+      "latency_ms": 39845
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Wait, if k=2 and we command one of the free directions, the robot must go to the other free neighbor. So we CAN force it if both free neighbors are good? No wait - if k=2, commanding one free direction forces the robot to the other. So we can choose which of the 2 neighbors the robot goes to!\n\nSo: a cell with k free neighbors is forceable if:\n- k=0 and it's the lab\n- k=1 and its only free neighbor is forceable (we command any non-free direction to push it there)\n- k=2 and at least one of its free neighbors is forceable (we command the other free direction)\n- k\u22653: we command one free direction, robot still has k-1\u22652 choices \u2192 we can't guarantee\n\nWait for k=2: we command direction toward neighbor A \u2192 robot goes to B. We command direction toward neighbor B \u2192 robot goes to A. So we can choose! If either A or B is forceable, we can force it there.\n\nFor k\u22653: we command any direction. If we command a free direction, robot has k-1\u22652 choices. If we command a non-free direction, robot has k\u22653 choices. We can't force to a specific neighbor.\n\nSo the rule is:\n- Lab is forceable\n- A free cell with exactly 1 free neighbor: forceable if that neighbor is forceable\n- A free cell with exactly 2 free neighbors: forceable if at least one neighbor is forceable\n- A free cell with 3+ free neighbors: not forceable\n\nThis is a BFS/propagation problem. Start from the lab, propagate \"forceable\" status.\n\nA cell becomes forceable if:\n- It has 1 free neighbor and that neighbor is forceable, OR\n- It has 2 free neighbors and at least one is forceable\n\nLet me implement BFS where we propagate from lab outward.\n\nFor each cell, precompute number of free neighbors. Then BFS: start with lab. For each neighbor of a forceable cell, check if it can now become forceable.\n\nWhen a cell `u` becomes forceable, for each free neighbor `v` of `u`:\n- If `v` has 1 free neighbor \u2192 `v` becomes forceable (its only neighbor `u` is forceable)\n- If `v` has 2 free neighbors \u2192 `v` becomes forceable (one neighbor `u` is forceable)\n- If `v` has 3+ free neighbors \u2192 not forceable from this\n\nSo: a cell becomes forceable when any of its free neighbors becomes forceable AND (free_neighbor_count \u2264 2).\n\nThis means: cells with \u22642 free neighbors can become forceable if any neighbor is forceable.\n\nBFS propagation: when a cell becomes forceable, add all its free neighbors that have \u22642 free neighbors to the queue.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+            "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+            "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+            "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+            "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+            "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+            "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+            "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+            "expected": "##.#############.########\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+            "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+            "expected": "##..#####################\n+L.......................\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "################.#####.##\n+L++++++++++++++.........",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+            "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+            "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+            "expected": "#++############################\n+L++...........................\n#+##.##########################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+            "expected": "##.##########.###########\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+            "expected": "##.#####.################\n.........++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+            "expected": "################.#####.##\n.......................L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+            "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "##.#####.################\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+            "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+            "expected": "######################++#\n++++++++++++++++++++++L++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+            "expected": "########.#############.##\n+L++++++.................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+            "expected": "###########.##########.##\n+L+++++++++..............",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 4\n    - k=0 and it's the lab\n                ^\nSyntaxError: unterminated string literal (detected at line 4)\n",
+            "runtime_ms": 32,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`, will move to any neighbor in direction \u2260 `d` that is free. If no such direction exists, it does nothing (stays at `c`).\n\nWait, \"it will do nothing\" means if all non-`d` neighbors are blocked, robot stays. That's a problem - if robot can stay, we might loop forever.\n\nSo for a command `d` to work at cell `c`:\n- Either the robot moves (there exist free neighbors in directions \u2260 `d`), AND all such neighbors are good.\n- OR the robot does nothing (all non-`d` neighbors are blocked) - but then we're stuck?\n\nActually if the robot does nothing, we just send another command. But if it always does nothing, we're stuck. Hmm, but the problem says \"after each step\" - if it does nothing, that's also a \"step\". We need it to eventually reach the lab.\n\nLet me reconsider: cell `c` is good if:\n- `c` is the lab, OR\n- There exists command `d` such that:\n  - All free neighbors of `c` in directions \u2260 `d` are good (possibly empty set - but if empty, robot does nothing and we're stuck unless c is lab)\n  \nWait, if the set of free neighbors in directions \u2260 `d` is empty, robot stays at `c` forever. So we need that set to be non-empty AND all in it are good.\n\nActually wait - if that set is empty, robot does nothing. We can then send a different command. But we need a strategy that works.\n\nLet me re-read: \"no matter what different directions the robot chooses\" - so at each step we pick a command, and the robot picks any direction \u2260 command that's free.\n\nCell `c` is good if: \u2203 command `d` such that every free neighbor in direction \u2260 `d` is good, AND there's at least one such free neighbor (so robot actually moves).\n\nThis gives a BFS/propagation: start with lab as good, then propagate.\n\nFor each cell `c` and direction `d`, count how many free neighbors in directions \u2260 `d` are NOT yet good. When this count reaches 0 AND there's at least one free neighbor in directions \u2260 `d`, cell `c` becomes good.\n\nLet me implement this with a queue-based approach.\n\nFor each cell `c`, for each command `d` (4 directions):\n- `others[c][d]` = list of free neighbors in directions \u2260 `d`\n- `bad_count[c][d]` = number of not-yet-good cells in `others[c][d]`\n\nWhen a cell `v` becomes good, for each neighbor `c` of `v`, for each command `d` where `v` is in `others[c][d]` (i.e., `d` \u2260 direction from `c` to `v`): decrement `bad_count[c][d]`. If `bad_count[c][d]` == 0 and `len(others[c][d]) > 0`, mark `c` as good.\n\nDirection from `c` to `v`: if `v` is right of `c`, direction is RIGHT. So `d` \u2260 RIGHT means commands LEFT, UP, DOWN.\n\nLet me code this up.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+            "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+            "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+            "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+            "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+            "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+            "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+            "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+            "expected": "##.#############.########\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+            "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+            "expected": "##..#####################\n+L.......................\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "################.#####.##\n+L++++++++++++++.........",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+            "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+            "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+            "expected": "#++############################\n+L++...........................\n#+##.##########################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+            "expected": "##.##########.###########\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+            "expected": "##.#####.################\n.........++++++++++++++L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+            "expected": "################.#####.##\n.......................L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+            "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "##.#####.################\n+L.......................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+            "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+            "expected": "######################++#\n++++++++++++++++++++++L++",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+            "expected": "########.#############.##\n+L++++++.................",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+            "expected": "###########.##########.##\n+L+++++++++..............",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Let me think about this differently. For each cell `c`, let `free_neighbors` = set of free neighboring cells. The robot, upon receiving command `d`,",
+            "runtime_ms": 32,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx+=1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        # count of non-forceable free neighbors\n        non_force = [[0]*m for _ in range(n)]\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] != '#':\n                    cnt = 0\n                    for dr,dc in dirs:\n                        ni,nj = i+dr,j+dc\n                        if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                            cnt+=1\n                    non_force[i][j] = cnt\n        \n        forceable = [[False]*m for _ in range(n)]\n        q = deque()\n        li, lj = lab\n        forceable[li][lj] = True\n        q.append((li,lj))\n        \n        while q:\n            r,c = q.popleft()\n            for dr,dc in dirs:\n                nr,nc = r+dr,c+dc\n                if 0<=nr<n and 0<=nc<m and grid[nr][nc]!='#' and not forceable[nr][nc]:\n                    non_force[nr][nc] -= 1\n                    if non_force[nr][nc] <= 1:\n                        forceable[nr][nc] = True\n                        q.append((nr,nc))\n        \n        out = []\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]=='.' and forceable[i][j]:\n                    grid[i][j]='+'\n            out.append(''.join(grid[i]))\n        print('\\n'.join(out))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "actual": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+            "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+",
+            "actual": "######################++#\n+++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...",
+            "actual": "######################..#\n+L++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+",
+            "actual": "#..######################\n...++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++",
+            "actual": "#++######################\n+L+++++++++++++++++++++++",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+            "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+            "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+\n#..######################",
+            "actual": "#####################..##\n.......................L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+            "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+            "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+            "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "actual": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+            "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+            "expected": "##.#############.########\n+L.......................",
+            "actual": "##.#############.########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+            "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "actual": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+            "expected": "##..#####################\n+L.......................\n#++######################",
+            "actual": "##..#####################\n+L.......................\n#++######################",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "################.#####.##\n+L++++++++++++++.........",
+            "actual": "################.#####.##\n+L++++++++++++++.........",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+            "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+            "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+            "expected": "#++############################\n+L++...........................\n#+##.##########################",
+            "actual": "#++############################\n+L++...........................\n#+##.##########################",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+            "expected": "##.##########.###########\n+L.......................",
+            "actual": "##.##########.###########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+            "expected": "##.#####.################\n.........++++++++++++++L+",
+            "actual": "##.#####.################\n.........++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+            "expected": "################.#####.##\n.......................L+",
+            "actual": "################.#####.##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+            "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "actual": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "actual": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "##.#####.################\n+L.......................",
+            "actual": "##.#####.################\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+            "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "actual": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+            "expected": "######################++#\n++++++++++++++++++++++L++",
+            "actual": "######################++#\n++++++++++++++++++++++L++",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+",
+            "actual": "#####################..##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+            "expected": "########.#############.##\n+L++++++.................",
+            "actual": "########.#############.##\n+L++++++.................",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+            "expected": "###########.##########.##\n+L+++++++++..............",
+            "actual": "###########.##########.##\n+L+++++++++..............",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 3,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx += 2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx += 1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        \n        free_count = [[0]*m for _ in range(n)]\n        bad_count = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] == '#':\n                    continue\n                cnt = 0\n                for di, dj in dirs:\n                    ni, nj = i+di, j+dj\n                    if 0 <= ni < n and 0 <= nj < m and grid[ni][nj] != '#':\n                        cnt += 1\n                free_count[i][j] = cnt\n                bad_count[i][j] = cnt  # initially all neighbors are \"bad\" (not good)\n        \n        good = [[False]*m for _ in range(n)]\n        queue = deque()\n        \n        li, lj = lab\n        good[li][lj] = True\n        queue.append((li, lj))\n        \n        # When cell becomes good, update neighbors\n        while queue:\n            i, j = queue.popleft()\n            for di, dj in dirs:\n                ni, nj = i+di, j+dj\n                if 0 <= ni < n and 0 <= nj < m and grid[ni][nj] != '#' and not good[ni][nj]:\n                    bad_count[ni][nj] -= 1\n                    fc = free_count[ni][nj]\n                    bc = bad_count[ni][nj]\n                    if bc <= 1 and fc >= bc + 1:  # at least one good neighbor, bad_count <= 1\n                        good[ni][nj] = True\n                        queue.append((ni, nj))\n        \n        out = []\n        for i in range(n):\n            row = grid[i]\n            for j in range(m):\n                if row[j] == '.' and good[i][j]:\n                    row[j] = '+'\n            out.append(''.join(row))\n        print('\\n'.join(out))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "actual": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+            "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+",
+            "actual": "######################++#\n+++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...",
+            "actual": "######################..#\n+L++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+",
+            "actual": "#..######################\n...++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++",
+            "actual": "#++######################\n+L+++++++++++++++++++++++",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+            "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+            "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+\n#..######################",
+            "actual": "#####################..##\n.......................L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+            "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+            "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+            "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "actual": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+            "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+            "expected": "##.#############.########\n+L.......................",
+            "actual": "##.#############.########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+            "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "actual": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+            "expected": "##..#####################\n+L.......................\n#++######################",
+            "actual": "##..#####################\n+L.......................\n#++######################",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "################.#####.##\n+L++++++++++++++.........",
+            "actual": "################.#####.##\n+L++++++++++++++.........",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+            "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+            "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+            "expected": "#++############################\n+L++...........................\n#+##.##########################",
+            "actual": "#++############################\n+L++...........................\n#+##.##########################",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+            "expected": "##.##########.###########\n+L.......................",
+            "actual": "##.##########.###########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+            "expected": "##.#####.################\n.........++++++++++++++L+",
+            "actual": "##.#####.################\n.........++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+            "expected": "################.#####.##\n.......................L+",
+            "actual": "################.#####.##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+            "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "actual": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "actual": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "##.#####.################\n+L.......................",
+            "actual": "##.#####.################\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+            "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "actual": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+            "expected": "######################++#\n++++++++++++++++++++++L++",
+            "actual": "######################++#\n++++++++++++++++++++++L++",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+",
+            "actual": "#####################..##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+            "expected": "########.#############.##\n+L++++++.................",
+            "actual": "########.#############.##\n+L++++++.................",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+            "expected": "###########.##########.##\n+L+++++++++..............",
+            "actual": "###########.##########.##\n+L+++++++++..............",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 4,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import deque\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        grid = []\n        lab = None\n        for i in range(n):\n            row = input_data[idx].decode(); idx+=1\n            grid.append(list(row))\n            for j, c in enumerate(row):\n                if c == 'L':\n                    lab = (i, j)\n        \n        dirs = [(-1,0),(1,0),(0,-1),(0,1)]\n        \n        good = [[False]*m for _ in range(n)]\n        deg = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j] != '#':\n                    for di,dj in dirs:\n                        ni,nj = i+di,j+dj\n                        if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                            deg[i][j]+=1\n        \n        good_cnt = [[0]*m for _ in range(n)]\n        bad_cnt = [[0]*m for _ in range(n)]\n        \n        # bad_cnt[i][j] = number of free neighbors that are not good\n        # Initially all free cells are not good\n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]!='#':\n                    bad_cnt[i][j] = deg[i][j]\n        \n        q = deque()\n        li, lj = lab\n        good[li][lj] = True\n        q.append((li,lj))\n        # Update neighbors of lab\n        for di,dj in dirs:\n            ni,nj = li+di,lj+dj\n            if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#':\n                bad_cnt[ni][nj]-=1\n                good_cnt[ni][nj]+=1\n        \n        # Also check lab itself - but lab is already good\n        # Now BFS\n        # When a cell becomes good, update its neighbors\n        # But we need to process lab's neighbors too\n        # Re-check: when lab becomes good, for each free neighbor, update their counts\n        # Then check if they become good\n        \n        # Let me redo:\n        good = [[False]*m for _ in range(n)]\n        good_cnt = [[0]*m for _ in range(n)]\n        bad_cnt = [[0]*m for _ in range(n)]\n        \n        for i in range(n):\n            for j in range(m):\n                if grid[i][j]!='#':\n                    bad_cnt[i][j] = deg[i][j]\n        \n        def is_good(i,j):\n            # good_cnt[i][j] >= 1 and bad_cnt[i][j] <= 1\n            # but also need deg >= 1 (if good_cnt>=1 then deg>=1 automatically)\n            return good_cnt[i][j] >= 1 and bad_cnt[i][j] <= 1\n        \n        q = deque()\n        li, lj = lab\n        good[li][lj] = True\n        q.append((li,lj))\n        \n        while q:\n            ci, cj = q.popleft()\n            for di,dj in dirs:\n                ni,nj = ci+di,cj+dj\n                if 0<=ni<n and 0<=nj<m and grid[ni][nj]!='#' and not good[ni][nj]:\n                    bad_cnt[ni][nj]-=1\n                    good_cnt[ni][nj]+=1\n                    if is_good(ni,nj):\n                        good[ni][nj]=True\n                        q.append((ni,nj))\n        \n        # But wait: lab itself - is it good? Yes, robot is already there.\n        # For lab cell: we don't need to check is_good since it's the destination.\n        \n        out = []\n        for i in range(n):\n            row = []\n            for j in range(m):\n                if grid[i][j]=='#':\n                    row.append('#')\n                elif grid[i][j]=='L':\n                    row.append('L')\n                elif good[i][j]:\n                    row.append('+')\n                else:\n                    row.append('.')\n            out.append(''.join(row))\n        print('\\n'.join(out))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "actual": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+            "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+            "expected": "######################++#\n+++++++++++++++++++++++L+",
+            "actual": "######################++#\n+++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...",
+            "actual": "######################..#\n+L++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+",
+            "actual": "#..######################\n...++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++",
+            "actual": "#++######################\n+L+++++++++++++++++++++++",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+            "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+            "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+            "actual": "############################..#\n+L++++++++++++++++++++++++++...",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+            "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+\n#..######################",
+            "actual": "#####################..##\n.......................L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+            "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "actual": "############################++#\n+++++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+            "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+            "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "actual": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+            "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "actual": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+            "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+            "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "actual": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+            "expected": "##.#############.########\n+L.......................",
+            "actual": "##.#############.########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+            "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "actual": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+            "expected": "##..#####################\n+L.......................\n#++######################",
+            "actual": "##..#####################\n+L.......................\n#++######################",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+            "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "actual": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+            "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "actual": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "################.#####.##\n+L++++++++++++++.........",
+            "actual": "################.#####.##\n+L++++++++++++++.........",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+            "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "actual": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+            "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "actual": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+            "expected": "#++############################\n+L++...........................\n#+##.##########################",
+            "actual": "#++############################\n+L++...........................\n#+##.##########################",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+            "expected": "##.##########.###########\n+L.......................",
+            "actual": "##.##########.###########\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+            "expected": "##.#####.################\n.........++++++++++++++L+",
+            "actual": "##.#####.################\n.........++++++++++++++L+",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+            "expected": "################.#####.##\n.......................L+",
+            "actual": "################.#####.##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+            "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "actual": "#++############################\n+L++++++++++++++...............\n################.############.#",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+            "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "actual": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+            "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "actual": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+            "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "actual": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+            "expected": "##.#####.################\n+L.......................",
+            "actual": "##.#####.################\n+L.......................",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+            "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "actual": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+            "expected": "######################++#\n++++++++++++++++++++++L++",
+            "actual": "######################++#\n++++++++++++++++++++++L++",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+            "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+            "expected": "#####################..##\n.......................L+",
+            "actual": "#####################..##\n.......................L+",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+            "expected": "########.#############.##\n+L++++++.................",
+            "actual": "########.#############.##\n+L++++++.................",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+            "expected": "###########.##########.##\n+L+++++++++..............",
+            "actual": "###########.##########.##\n+L+++++++++..............",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 4,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n....L..#.\n",
+        "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+        "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n++++L++#.",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n3 31\n############################..#\n.............................L.\n############################..#\n",
+        "expected": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+        "actual": "############################++#\n+++++++++++++++++++++++++++++L+\n############################++#",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n3 25\n######################..#\n.......................L.\n######################..#\n",
+        "expected": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+        "actual": "######################++#\n+++++++++++++++++++++++L+\n######################++#",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n3 31\n#############################..\n.............................L.\n############################..#\n",
+        "expected": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+        "actual": "#############################++\n+++++++++++++++++++++++++++++L+\n############################++#",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n2 25\n######################..#\n.......................L.\n######################..#\n",
+        "expected": "######################++#\n+++++++++++++++++++++++L+",
+        "actual": "######################++#\n+++++++++++++++++++++++L+",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n...#.\n.....\n1 1\nL\n1 9\n.#..L....\n",
+        "expected": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+        "actual": "...\n.L.\n...\n#++++\n..##L\n...#+\n...++\nL\n.#++L++++",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n3 31\n############################..#\n.L.............................\n############################..#\n",
+        "expected": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+        "actual": "############################..#\n+L++++++++++++++++++++++++++...\n############################..#",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n3 25\n#..######################\n.......................L.\n######################..#\n",
+        "expected": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+        "actual": "#..######################\n...++++++++++++++++++++L+\n######################++#",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n2 25\n######################..#\n.L.......................\n#..######################\n",
+        "expected": "######################..#\n+L++++++++++++++++++++...",
+        "actual": "######################..#\n+L++++++++++++++++++++...",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n2 25\n#..######################\n.......................L.\n#..######################\n",
+        "expected": "#..######################\n...++++++++++++++++++++L+",
+        "actual": "#..######################\n...++++++++++++++++++++L+",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n2 25\n#..######################\n.L.......................\n#..######################\n",
+        "expected": "#++######################\n+L+++++++++++++++++++++++",
+        "actual": "#++######################\n+L+++++++++++++++++++++++",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n3 25\n######################..#\n.......................L.\n#..######################\n",
+        "expected": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+        "actual": "######################++#\n...++++++++++++++++++++L+\n#..######################",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n2 31\n############################..#\n.L.............................\n############################..#\n",
+        "expected": "############################..#\n+L++++++++++++++++++++++++++...",
+        "actual": "############################..#\n+L++++++++++++++++++++++++++...",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n3 25\n######################..#\n.L.......................\n######################..#\n",
+        "expected": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+        "actual": "######################..#\n+L++++++++++++++++++++...\n######################..#",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+        "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+        "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n3 31\n#..############################\n.L.............................\n############################..#\n",
+        "expected": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+        "actual": "#++############################\n+L++++++++++++++++++++++++++...\n############################..#",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n3 25\n#####################..##\n.......................L.\n#..######################\n",
+        "expected": "#####################..##\n.......................L+\n#..######################",
+        "actual": "#####################..##\n.......................L+\n#..######################",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n.#..L....\n",
+        "expected": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+        "actual": "..+\n..L\n..+\n#++++\n++##L\n+#...\n++...\nL\n.#++L++++",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n3 25\n#####################..##\n.L.......................\n#..######################\n",
+        "expected": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+        "actual": "#####################..##\n+L+++++++++++++++++++....\n#++######################",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n2 31\n############################..#\n.............................L.\n#################\"##########..#\n",
+        "expected": "############################++#\n+++++++++++++++++++++++++++++L+",
+        "actual": "############################++#\n+++++++++++++++++++++++++++++L+",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n3 31\n..#############################\n.............................L.\n############################..#\n",
+        "expected": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+        "actual": "..#############################\n..+++++++++++++++++++++++++++L+\n############################++#",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n3 25\n#..######################\n.L.......................\n######################..#\n",
+        "expected": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+        "actual": "#++######################\n+L++++++++++++++++++++...\n######################..#",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n3 25\n##..#####################\n.......................L.\n#..######################\n",
+        "expected": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+        "actual": "##..#####################\n....+++++++++++++++++++L+\n#..######################",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n3 31\n#############################..\n...........L...................\n############################..#\n",
+        "expected": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+        "actual": "#############################..\n+++++++++++L++++++++++++++++...\n############################..#",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n3 25\n######################..#\n.L.......................\n#..######################\n",
+        "expected": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+        "actual": "######################..#\n+L++++++++++++++++++++...\n#++######################",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n2 25\n##.#############.########\n.L.......................\n#..###$###########$######\n",
+        "expected": "##.#############.########\n+L.......................",
+        "actual": "##.#############.########\n+L.......................",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n3 31\n#..############################\n.L.............................\n#..############################\n",
+        "expected": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+        "actual": "#++############################\n+L+++++++++++++++++++++++++++++\n#++############################",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n3 25\n##..#####################\n.L.......................\n#..######################\n",
+        "expected": "##..#####################\n+L.......................\n#++######################",
+        "actual": "##..#####################\n+L.......................\n#++######################",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n3 31\n#..############################\n.............................L.\n############################..#\n",
+        "expected": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+        "actual": "#..############################\n...++++++++++++++++++++++++++L+\n############################++#",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n3 25\n#..######################\n.......................L.\n#..######################\n",
+        "expected": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+        "actual": "#..######################\n...++++++++++++++++++++L+\n#..######################",
+        "stderr": "",
+        "runtime_ms": 72,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n3 25\n#####################..##\n.L.......................\n######################..#\n",
+        "expected": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+        "actual": "#####################..##\n+L+++++++++++++++++++....\n######################..#",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n2 25\n################.#####.##\n.L.......................\n#..######$####\"#$########\n",
+        "expected": "################.#####.##\n+L++++++++++++++.........",
+        "actual": "################.#####.##\n+L++++++++++++++.........",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n3 31\n..#############################\n.L.............................\n############################..#\n",
+        "expected": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+        "actual": "++#############################\n+L++++++++++++++++++++++++++...\n############################..#",
+        "stderr": "",
+        "runtime_ms": 71,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n2 31\n#..############################\n.............................L.\n##########\"######\"##########./#\n",
+        "expected": "#..############################\n...++++++++++++++++++++++++++L+",
+        "actual": "#..############################\n...++++++++++++++++++++++++++L+",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n3 31\n#############################..\n...................L...........\n############################..#\n",
+        "expected": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+        "actual": "#############################..\n+++++++++++++++++++L++++++++...\n############################..#",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n3 31\n#..############################\n.L.............................\n#.##.##########################\n",
+        "expected": "#++############################\n+L++...........................\n#+##.##########################",
+        "actual": "#++############################\n+L++...........................\n#+##.##########################",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n2 25\n##.##########.###########\n.L.......................\n####\"#################..#\n",
+        "expected": "##.##########.###########\n+L.......................",
+        "actual": "##.##########.###########\n+L.......................",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n2 25\n##.#####.################\n.......................L.\n#############\"########..#\n",
+        "expected": "##.#####.################\n.........++++++++++++++L+",
+        "actual": "##.#####.################\n.........++++++++++++++L+",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n2 25\n################.#####.##\n.......................L.\n######\"######\"##$#####..#\n",
+        "expected": "################.#####.##\n.......................L+",
+        "actual": "################.#####.##\n.......................L+",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n3 31\n#..############################\n.L.............................\n################.############.#\n",
+        "expected": "#++############################\n+L++++++++++++++...............\n################.############.#",
+        "actual": "#++############################\n+L++++++++++++++...............\n################.############.#",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n3 3\n...\n..L\n...\n4 5\n#....\n..##L\n..#..\n.....\n1 1\nL\n1 9\n.#..L....\n",
+        "expected": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+        "actual": "..+\n..L\n..+\n#++++\n..##L\n..#..\n.....\nL\n.#++L++++",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n3 25\n#..######################\n.L.......................\n#..######################\n",
+        "expected": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+        "actual": "#++######################\n+L+++++++++++++++++++++++\n#++######################",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n3 31\n#..############################\n.............................L.\n#..############################\n",
+        "expected": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+        "actual": "#..############################\n...++++++++++++++++++++++++++L+\n#..############################",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n2 25\n##.#####.################\n.L.......................\n#..######$####\"#$########\n",
+        "expected": "##.#####.################\n+L.......................",
+        "actual": "##.#####.################\n+L.......................",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n3 31\n#..############################\n.............................L.\n#.##.##########################\n",
+        "expected": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+        "actual": "#..############################\n.....++++++++++++++++++++++++L+\n#.##.##########################",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n2 25\n######################..#\n......................L..\n#..###$##################\n",
+        "expected": "######################++#\n++++++++++++++++++++++L++",
+        "actual": "######################++#\n++++++++++++++++++++++L++",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n3 3\n...\n.L.\n...\n4 5\n#....\n..##L\n.#...\n.....\n1 1\nL\n1 9\n....L..#.\n",
+        "expected": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+        "actual": "...\n.L.\n...\n#++++\n++##L\n+#...\n++...\nL\n++++L++#.",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n2 25\n#####################..##\n.......................L.\n#..######################\n",
+        "expected": "#####################..##\n.......................L+",
+        "actual": "#####################..##\n.......................L+",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n2 25\n########.#############.##\n.L.......................\n#..###$###########$######\n",
+        "expected": "########.#############.##\n+L++++++.................",
+        "actual": "########.#############.##\n+L++++++.................",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n2 25\n###########.##########.##\n.L.......................\n####\"#################..#\n",
+        "expected": "###########.##########.##\n+L+++++++++..............",
+        "actual": "###########.##########.##\n+L+++++++++..............",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.13452,
+  "total_latency_ms": 130790,
+  "iterations_used": null,
+  "early_stopped": null
+}

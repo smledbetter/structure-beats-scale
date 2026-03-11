@@ -1,0 +1,1139 @@
+{
+  "study": "C",
+  "condition": "C10",
+  "task_id": "cc_028",
+  "replica": 1,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me look at example 2: players with (11,44), (12,22), (20,11), (21,30). Everyone can win. Player 1 (11,44) has max b, so can win. Player 3 (20,11) \u2014 who dominates player 3? Need a[Q]>20 and b[Q]>11. Player 4: a=21>20, b=30>11. So player 4 dominates player 3. But player 1 can beat player 4 on map 2 (44>30). So player 3 can win if player 1 eliminates player 4 first.\n\nSo the condition seems to be: P can win if for every Q that dominates P, Q can be eliminated by someone (transitively, the chain ends at a player who can win without needing P's help).\n\nI think the correct characterization: P can win iff P is not dominated by any player who is \"unbeatable\" in some sense... \n\nLet me try: compute the set S of players who can win. Start with max_a and max_b players. Then add any player P such that all players dominating P are in S. Iterate until stable.\n\n```python\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    b = list(map(int, input().split()))\n    \n    # can_win[i] = True if player i can win\n    can_win = [False] * n\n    \n    # A player can win if all players dominating them can be eliminated\n    # Iterative: start with players that no one dominates, or max_a, max_b\n    \n    # dominators[i] = set of players that dominate player i\n    # Player j dominates player i if a[j]>a[i] and b[j]>b[i]\n    \n    # Use the approach: can_win set grows\n    # Initially: player with max a and player with max b can win\n    # Then: player P can win if every player Q with a[Q]>a[P] and b[Q]>b[P] is already in can_win\n    \n    from sortedcontainers import SortedList\n    \n    # For each player, count how many non-can_win players dominate them\n    # A player becomes can_win when that count drops to 0\n    \n    # dominator count for player i = number of j with a[j]>a[i] and b[j]>b[i]\n    # We need to compute this efficiently\n    \n    # Sort by a descending, process in order\n    # For player i (sorted by a desc), players with higher a are processed first\n    # Among those, count how many have b > b[i]\n    \n    order = sorted(range(n), key=lambda x: -a[x])\n    \n    dom_count = [0] * n\n    # BIT to count\n    # coordinate compress b\n    sorted_b = sorted(b)\n    rank = {v: i+1 for i, v in enumerate(sorted_b)}\n    \n    bit = [0] * (n + 2)\n    def update(pos, val=1):\n        while pos <= n:\n            bit[pos] += val\n            pos += pos & (-pos)\n    def query(pos):\n        s = 0\n        while pos > 0:\n            s += bit[pos]\n            pos -= pos & (-pos)\n        return s\n    def query_range(l, r):\n        if l > r: return 0\n        return query(r) - query(l-1)\n    \n    for idx in order:\n        r = rank[b[idx]]\n        # count elements in BIT with rank > r (i.e., b > b[idx])\n        dom_count[idx] = query_range(r+1, n)\n        update(r)\n    \n    from collections import deque\n    queue = deque()\n    for i in range(n):\n        if dom_count[i] == 0:\n            can_win[i] = True\n            queue.append(i)\n    \n    # When player j becomes can_win, for all players i that j dominates,\n    # decrease dom_count[i] by 1, if reaches 0, add to queue\n    \n    # j dominates i means a[j]>a[i] and b[j]>b[i]\n    # We need: for each j that becomes can_win, find all i with a[i]<a[j] and b[i]<b[j]\n    \n    # This is expensive naively. Need efficient structure.\n    # Sort players by a. For each j, players with a[i]<a[j] and b[i]<b[j].\n    \n    # Let's think differently. Process in order of a.\n    # When j is added to can_win queue, we need to find all i dominated by j.\n    # i.e., a[i] < a[j] and b[i] < b[j].\n    \n    # We can maintain a 2D structure, but that's complex.\n    # \n    # Alternative: for each i, dom_count[i] = number of j NOT yet can_win with a[j]>a[i], b[j]>b[i]\n    # When j becomes can_win, subtract 1 from all i dominated by j.\n    \n    # Let's use offline approach:\n    # Sort by a. Use BIT on b.\n    # \n    # Actually, let me think of it differently.\n    # \n    # Players sorted by a: p1 < p2 < ... < pn (by a value)\n    # dom_count[pi] = number of pj with j > i (higher a) and b[pj] > b[pi]\n    # \n    # When pj becomes can_win, for all pi with i < j and b[pi] < b[pj], dom_count[pi] -= 1\n    \n    # We need range updates and point queries.\n    # \n    # For each j becoming can_win:\n    #   Find all i with a[i] < a[j] and b[i] < b[j], decrement dom_count[i]\n    # \n    # This is still 2D. But since a values are all distinct and we sorted by a,\n    # \"a[i] < a[j]\" means i comes before j in the sorted order.\n    # So among players with index < j in sorted order, find those with b < b[j].\n    \n    # We can use a BIT indexed by b-rank, storing dom_count decrements.\n    # But we need to notify when dom_count reaches 0.\n    \n    # This seems hard to do efficiently. Let me think of another way.\n    \n    # Maybe just: sort by a, use a segment tree or BIT with lazy propagation?\n    # \n    # Actually, the key observation might be simpler:\n    # \n    # A player can win iff they are not dominated by any player who cannot win.\n    # Equivalently, a player cannot win iff they are dominated by some player who cannot win.\n    # \n    # Wait, that's circular. Let me re-examine.\n    # \n    # Actually I think the answer is simpler:\n    # Player P can win iff there is no player Q such that a[Q] > a[P] AND b[Q] > b[P].\n    # i.e., P is on the Pareto frontier when maximizing a and b.\n    # \n    # Wait, but example 2 shows player 3 (20,11) can win even though player 4 (21,30) dominates them.\n    # So that's wrong.\n    \n    # Back to the iterative approach. Let me think about efficiency.\n    # n up to 1e5, so O(n log n) needed.\n    \n    # When j becomes can_win, we need to update all i dominated by j.\n    # \n    # Sort all players by a. Players with smaller a-index can be dominated by players with larger a-index.\n    # \n    # For player j (in a-sorted order at position pos_j), it dominates players at positions < pos_j\n    # with b-value < b[j].\n    # \n    # When j becomes can_win, we want to decrement dom_count for all such players,\n    # and check if any reach 0.\n    # \n    # We can maintain a structure where players are indexed by their b-rank,\n    # and we can do range decrements and find elements that hit 0.\n    # \n    # Use a segment tree with lazy propagation that supports:\n    # - range decrement on b-ranks [1, b_rank_j - 1] (but only for players with a < a[j])\n    # \n    # Hmm, the constraint \"a < a[j]\" complicates things.\n    # \n    # Alternative: process players in increasing order of a.\n    # Maintain active players (not yet can_win) in a structure.\n    # \n    # Actually, let me think about this more carefully with the iterative BFS.\n    \n    # The BFS approach:\n    # - Initially, players with dom_count=0 are can_win.\n    # - When j becomes can_win, for each i that j dominates, dom_count[i] -= 1, \n    #   if 0 then i becomes can_win.\n    \n    # The total work is sum of (number of players each can_win player dominates).\n    # In worst case this is O(n^2).\n    \n    # Need smarter approach.\n    \n    # Key insight: when processing j (can_win), we need to find all i with a[i]<a[j] and b[i]<b[j]\n    # and decrement their dom_count.\n    \n    # Let's sort players by a. Player j is at position pos[j] in this sorted order.\n    # \"a[i] < a[j]\" \u2194 position of i < position of j.\n    # \n    # So we need: among players at positions 1..pos[j]-1, those with b[i] < b[j], decrement dom_count.\n    \n    # We can use a 2D approach, but let me think of a smarter observation.\n    \n    # Observation: The set of \"can_win\" players is determined by:\n    # P can win \u2194 for all Q dominating P, Q can win.\n    # \n    # This means: P cannot win \u2194 there exists Q dominating P such that Q cannot win.\n    # \n    # But Q cannot win \u2194 there exists R dominating Q such that R cannot win.\n    # \n    # The \"cannot win\" set is closed under: if Q cannot win and Q dominates P, then P cannot win.\n    # \n    # Who are the \"seed\" cannot-win players? Players who are dominated but all their dominators can win?\n    # No wait...\n    # \n    # Actually, \"cannot win\" players are those where there's some dominator that also cannot win.\n    # This is like: the cannot-win set is the largest set S such that for every P in S,\n    # there exists Q in S that dominates P.\n    # \n    # Hmm, but that could be empty. Let me re-examine.\n    \n    # P can win \u2194 all dominators of P can win (i.e., can be eliminated before P faces them).\n    # P cannot win \u2194 some dominator of P cannot win (that dominator will inevitably face P and beat P).\n    # \n    # Wait, is that right? If Q dominates P and Q cannot win (by our definition), does that mean P cannot win?\n    # \n    # If Q cannot win, it means Q will inevitably be beaten by someone before the end.\n    # But P might still lose to Q if they meet.\n    # \n    # Hmm, I think the logic is:\n    # P can win iff we can arrange for P to never face a player that dominates P on both maps.\n    # This means all players dominating P must be eliminated before they face P.\n    # A player Q can be eliminated if someone can beat Q (someone with higher a or higher b than Q).\n    # \n    # So P can win if: for every Q dominating P, Q can be beaten by some other player R,\n    # and R can be arranged to fight Q before Q fights P.\n    # \n    # This is essentially: for every Q dominating P, Q is not \"invincible\" \u2014 i.e., Q is not the \n    # best on both maps.\n    # \n    # Actually I think the correct characterization is:\n    # P can win iff every player that dominates P on both maps can themselves be beaten by someone\n    # (on at least one map).\n    # \n    # But that's trivially true for everyone except the player with max(a) AND max(b)... \n    # but no single player has both max(a) and max(b) unless n=1.\n    # \n    # Wait, in example 1: players (1,1),(2,2),(3,3),(4,4). Player 4 has max a and max b.\n    # Player 4 dominates everyone. Player 4 cannot be beaten by anyone (highest on both maps).\n    # So only player 4 can win.\n    # \n    # In example 2: player 4 (21,30) dominates player 3 (20,11). But player 1 (11,44) can beat \n    # player 4 on map 2. So player 4 can be eliminated. Hence player 3 can win.\n    # \n    # So the condition is more subtle. Let me re-examine the iterative approach.\n    \n    # I believe the correct approach IS the BFS/iterative one:\n    # can_win[P] = True iff for all Q with a[Q]>a[P] and b[Q]>b[P], can_win[Q] = True.\n    # \n    # This is a fixed-point computation. Start with can_win = all False.\n    # Set can_win[P] = True if no Q dominates P (dom_count[P] = 0).\n    # Then propagate: when Q becomes can_win, update all P dominated by Q.\n    \n    # For efficiency, I need an efficient way to find all P dominated by Q when Q becomes can_win.\n    \n    # Let me think of a sweep approach:\n    # Sort players by a in decreasing order. Process them one by one.\n    # Maintain a data structure for b-values.\n    # \n    # Actually, here's an O(n log^2 n) or O(n log n) approach:\n    # \n    # Sort players by a descending: p1, p2, ..., pn (a[p1] > a[p2] > ... > a[pn]).\n    # dom_count[pi] = number of pj with j < i and b[pj] > b[pi].\n    # (Players with higher a that also have higher b.)\n    # \n    # When pi becomes can_win, we need to find all pk with k > i (lower a) and b[pk] < b[pi],\n    # and decrement their dom_count.\n    # \n    # We process in BFS order. The issue is efficiently finding dominated players.\n    \n    # Alternative O(n log n) idea:\n    # \n    # Sort by a descending. For each player in this order, compute dom_count using BIT on b.\n    # \n    # Then for the BFS: maintain a set of \"active non-can_win\" players sorted by b.\n    # When Q becomes can_win, we need to find all active players with b < b[Q] AND a < a[Q].\n    # Since we process in a-descending order, a[Q] > a[P] for all P processed after Q.\n    # \n    # Hmm, this is getting complicated. Let me just implement the O(n^2) solution and see if it \n    # passes within constraints (n up to 1e5, t up to 100, sum n up to 1e5).\n    # \n    # With sum n up to 1e5, even O(n^2) per test case could be 1e10 in worst case. Too slow.\n    \n    # Let me think of a smarter characterization.\n    \n    # Claim: Player P can win iff there is no player Q such that:\n    #   a[Q] > a[P] AND b[Q] > b[P] AND Q cannot win.\n    # \n    # Equivalently: P can win iff all players dominating P can win.\n    # \n    # The \"can win\" set is the largest set W such that:\n    #   For all P in W, all players dominating P are also in W.\n    # \n    # Equivalently, W = all players P such that every player in the \"domination chain above P\" \n    # eventually reaches a player with no dominators.\n    \n    # Actually, I think this simplifies to:\n    # P can win iff P is not dominated by any player who has dom_count > 0 at the end?\n    # No that's circular.\n    \n    # Let me think about it as: cannot_win set.\n    # P cannot win iff some Q with a[Q]>a[P], b[Q]>b[P] cannot win.\n    # \n    # Base case: who definitely cannot win? Players who are dominated by someone who has no one \n    # to beat them? But everyone can be beaten on at least one map (except if they're max on both).\n    # \n    # Wait: the player with max(a) can only be beaten on map 2. The player with max(b) can only \n    # be beaten on map 1. Everyone else can be beaten on either map.\n    # \n    # So if player M has max(a) AND max(b), then M cannot be beaten at all, and only M can win.\n    # (This is example 1 essentially, where player 4 has max a and max b.)\n    # \n    # If no single player has both max(a) and max(b), then both the max(a) player and max(b) \n    # player can win (they can't be beaten in the relevant stat, so they can beat everyone).\n    # \n    # Hmm wait, max(a) player can always win by using map 1 against everyone. So max(a) player \n    # always can win. Similarly max(b) player always can win.\n    \n    # For other players, it depends on whether their dominators can be eliminated.\n    \n    # Let me think about the structure more carefully.\n    # \n    # Sort players by a descending: p1, p2, ..., pn.\n    # p1 has max a, so p1 can always win.\n    # \n    # p2: dominated by p1 iff b[p1] > b[p2]. If not dominated by p1, p2 can win.\n    #     If dominated by p1, p2 can win because p1 can win (p1 can be arranged to be the last \n    #     opponent or eliminate others first... wait no, p1 dominates p2 so p2 can never beat p1).\n    #     But p1 can win the tournament, so p1 is can_win. So p2's dominator (p1) is can_win.\n    #     So p2 can win too!\n    # \n    # Wait, I'm confusing myself. Let me re-read the problem.\n    # \n    # \"choose any map and any two remaining players to fight on it\"\n    # \n    # So the game master chooses who fights whom and on which map. We want to know if player P \n    # can be the winner for SOME sequence of choices by the game master.\n    # \n    # So if P can win: the game master arranges battles such that P wins all their battles and \n    # everyone else gets eliminated.\n    # \n    # For P to win, P must beat every player they face. P can beat player Q if a[P]>a[Q] OR b[P]>b[Q].\n    # If a[Q]>a[P] AND b[Q]>b[P], then P cannot beat Q on any map.\n    # \n    # So P can win iff every player Q with a[Q]>a[P] AND b[Q]>b[P] gets eliminated before \n    # facing P.\n    # \n    # For Q to be eliminated, some other player R must beat Q. R can beat Q if a[R]>a[Q] OR b[R]>b[Q].\n    # \n    # But R also needs to eventually lose (unless R is P... but P can't beat Q by assumption).\n    # \n    # Actually, the game master can arrange any sequence. So Q can be eliminated by R if R can beat Q.\n    # Then R can be eliminated by someone else (possibly P if P can beat R, or by another player).\n    # \n    # So the question is: can we eliminate all of P's dominators using other players?\n    # \n    # This is essentially: can we find an ordering of eliminations such that:\n    # 1. Each elimination is valid (the winner beats the loser on some map).\n    # 2. P is never eliminated.\n    # 3. P wins the final battle.\n    # \n    # For P to win the final battle, P must beat the last remaining opponent.\n    # \n    # I think the key insight is: P can win iff for every Q that dominates P, Q can be beaten \n    # by someone (i.e., Q is not unbeatable). And \"unbeatable\" means max on both maps.\n    # \n    # But example 1 shows that's not sufficient: player 3 (strength 3,3) is dominated by player 4 (4,4).\n    # Player 4 is unbeatable (max on both). So player 3 cannot win. \u2713\n    # \n    # In example 2: player 3 (20,11) is dominated by player 4 (21,30). Player 4 is NOT unbeatable \n    # (player 1 has b=44 > 30). So player 3 can win. \u2713\n    # \n    # But wait, is the condition really just \"all dominators of P are beatable (not max on both)\"?\n    # \n    # Consider: P is dominated by Q, Q is dominated by R, R is unbeatable (max on both).\n    # Then R cannot be eliminated. Q is dominated by R but R is unbeatable, so Q cannot win.\n    # But can Q be eliminated? Yes! Someone with higher b than Q can beat Q on map 2.\n    # So Q can be eliminated even if Q cannot win.\n    # \n    # So P's dominator Q can be eliminated (by someone with higher b or a than Q), even if Q \n    # cannot win the tournament. So P might still be able to win.\n    # \n    # Hmm, so the condition is NOT \"all dominators of P can win the tournament.\"\n    # \n    # The condition is: all dominators of P can be eliminated at some point.\n    # A player Q can be eliminated iff someone can beat Q, i.e., someone has higher a OR higher b than Q.\n    # This is always true unless Q has both max a and max b.\n    # \n    # So: P can win iff no dominator of P has both max a and max b.\n    # \n    # But wait, there can be at most one player with both max a and max b (since all a and b are distinct).\n    # Actually, max a is unique and max b is unique. The same player could have both.\n    # \n    # So: P can win iff the player with max(a) AND max(b) (if they exist as the same player) does \n    # NOT dominate P.\n    # \n    # But: can there be a player with max(a) who doesn't have max(b), but still dominates P, \n    # and that dominator cannot be eliminated before facing P?\n    # \n    # Let me think of a case: 3 players.\n    # Player 1: a=3, b=1\n    # Player 2: a=2, b=3\n    # Player 3: a=1, b=2\n    # \n    # Player 3 is dominated by player 1 (a: 3>1, b: 1<2 \u2014 NO, b[1]=1 < b[3]=2, so player 1 does NOT dominate player 3).\n    # Player 3 is dominated by player 2 (a: 2>1, b: 3>2 \u2014 YES).\n    # Player 2 can be beaten by player 1 (a[1]=3 > a[2]=2). So player 3 can win: player 1 beats player 2, then player 3 beats player 1 on map 2 (b[3]=2 > b[1]=1).\n    # \n    # Now consider:\n    # Player 1: a=3, b=2\n    # Player 2: a=2, b=3\n    # Player 3: a=1, b=1\n    # \n    # Player 3 is dominated by player 1 (a:3>1, b:2>1) and player 2 (a:2>1, b:3>1).\n    # Player 1 can be beaten by player 2 (b:3>2). Player 2 can be beaten by player 1 (a:3>2).\n    # So neither player 1 nor player 2 is unbeatable.\n    # Can player 3 win? Player 3 must face either player 1 or player 2 at some point, and player 3 loses to both.\n    # So player 3 CANNOT win!\n    # \n    # But neither dominator of player 3 is \"unbeatable\" (neither has max a AND max b).\n    # \n    # So my earlier simplification was WRONG. The condition is more complex.\n    \n    # OK so the iterative BFS approach was correct. Let me think about how to implement it efficiently.\n    \n    # Back to: can_win[P] = True iff for all Q with a[Q]>a[P] and b[Q]>b[P], can_win[Q] = True.\n    # \n    # This is the correct characterization. Proof sketch:\n    # - If all dominators of P can win, then we can arrange: first have all dominators fight each \n    #   other (they can, since they can all win, meaning they can beat others), eventually only \n    #   one dominator remains, and that dominator... wait, P still needs to beat that last dominator.\n    #   But P can't beat any dominator!\n    # \n    # Hmm, I think I'm wrong about the characterization. Let me reconsider.\n    \n    # Actually wait. If Q dominates P (Q beats P on both maps), then P can NEVER beat Q.\n    # So for P to win the tournament, Q must be eliminated by someone ELSE before Q meets P.\n    # \n    # For Q to be eliminated, some R must beat Q (a[R]>a[Q] or b[R]>b[Q]), and R must fight Q \n    # before Q fights P.\n    # \n    # But then R is still in the tournament and P might need to face R.\n    # P can face R only if P can beat R (a[P]>a[R] or b[P]>b[R]).\n    # \n    # So the question is: can we find an ordering where:\n    # - All dominators of P are eliminated by non-P players.\n    # - P can beat every player it faces.\n    \n    # This is more complex. Let me think recursively.\n    # \n    # Define: P can win from a set S of players (including P) if P can win the sub-tournament with players S.\n    # \n    # P can win from S if there's a sequence of battles where P ends up as the last player.\n    # \n    # P can win from S iff:\n    # - |S| = 1 (P is alone), OR\n    # - There exist Q, R in S (Q \u2260 R, Q \u2260 P or R \u2260 P) such that Q can beat R on some map,\n    #   and P can win from S \\ {R} (the loser).\n    # \n    # We want to know if P can win from {1, 2, ..., n}.\n    \n    # This is a complex combinatorial problem. Let me look for patterns.\n    \n    # From example with 3 players:\n    # P1=(3,2), P2=(2,3), P3=(1,1).\n    # P3 is dominated by both P1 and P2.\n    # P3 cannot win because: P3 must eventually face P1 or P2, and loses to both.\n    # \n    # For P1 to win: P1 can beat P3 on map 1, and P1 can beat P2 on map 1. So P1 can win.\n    # For P2 to win: P2 can beat P1 on map 2, and P2 can beat P3 on map 2. So P2 can win.\n    # For P3 to win: P3 loses to P1 on both maps, P3 loses to P2 on both maps. P3 cannot win.\n    \n    # Another example:\n    # P1=(4,1), P2=(3,2), P3=(2,3), P4=(1,4).\n    # Dominators of P4: none (P4 has max b).\n    # Dominators of P3: P1 (a:4>2, b:1<3 NO), P2 (a:3>2, b:2<3 NO). So P3 has no dominators! P3 can win.\n    # Actually in this case, no player dominates any other (it's an antichain), so everyone can win.\n    \n    # Let me try:\n    # P1=(4,3), P",
+      "input_tokens": 665,
+      "output_tokens": 8192,
+      "cost_usd": 0.124875,
+      "latency_ms": 118043
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 6,
+          "bugs": [
+            {
+              "description": "The code does not read the number of test cases 't' and does not loop over multiple test cases; it only reads a single test case.",
+              "line": 9,
+              "severity": "critical",
+              "triggering_input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000"
+            },
+            {
+              "description": "The code imports 'sortedcontainers' which is not part of the Python standard library and will cause an ImportError in the contest environment.",
+              "line": 35,
+              "severity": "critical",
+              "triggering_input": "any valid input"
+            },
+            {
+              "description": "The algorithm for determining which players can win is incomplete; after computing 'dom_count' and initializing the queue, the code never processes the queue or updates 'can_win' for other players, and never produces any output.",
+              "line": 68,
+              "severity": "critical",
+              "triggering_input": "any valid input"
+            },
+            {
+              "description": "The function 'solve()' is defined but never called, so the program produces no output.",
+              "line": 13,
+              "severity": "critical",
+              "triggering_input": "any valid input"
+            },
+            {
+              "description": "The code uses a BIT (Fenwick tree) to compute 'dom_count' but does not handle the case where multiple players have the same 'b' value; although the problem guarantees distinct 'b', the BIT implementation may still be off\u2011by\u2011one due to rank mapping starting at 1.",
+              "line": 46,
+              "severity": "minor",
+              "triggering_input": "n=2\n1 2\n1 2"
+            },
+            {
+              "description": "The algorithm's time complexity is not clearly O(n log n); the commented-out BFS update for dominators is left unimplemented, which would lead to O(n^2) if attempted, causing TLE for n up to 1e5.",
+              "line": 61,
+              "severity": "major",
+              "triggering_input": "n=100000\n..."
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The code does not read the number of test cases 't' and does not loop over multiple test cases; it only reads a single test case.\", \"line\": 9, \"severity\": \"critical\", \"triggering_input\": \"3\\n4\\n1 2 3 4\\n1 2 3 4\\n4\\n11 12 20 21\\n44 22 11 30\\n1\\n1000000000\\n1000000000\"}, {\"description\": \"The code imports 'sortedcontainers' which is not part of the Python standard library and will cause an ImportError in the contest environment.\", \"line\": 35, \"severity\": \"critical\", \"triggering_input\": \"any valid input\"}, {\"description\": \"The algorithm for determining which players can win is incomplete; after computing 'dom_count' and initializing the queue, the code never processes the queue or updates 'can_win' for other players, and never produces any output.\", \"line\": 68, \"severity\": \"critical\", \"triggering_input\": \"any valid input\"}, {\"description\": \"The function 'solve()' is defined but never called, so the program produces no output.\", \"line\": 13, \"severity\": \"critical\", \"triggering_input\": \"any valid input\"}, {\"description\": \"The code uses a BIT (Fenwick tree) to compute 'dom_count' but does not handle the case where multiple players have the same 'b' value; although the problem guarantees distinct 'b', the BIT implementation may still be off\u2011by\u2011one due to rank mapping starting at 1.\", \"line\": 46, \"severity\": \"minor\", \"triggering_input\": \"n=2\\n1 2\\n1 2\"}, {\"description\": \"The algorithm's time complexity is not clearly O(n log n); the commented-out BFS update for dominators is left unimplemented, which would lead to O(n^2) if attempted, causing TLE for n up to 1e5.\", \"line\": 61, \"severity\": \"major\", \"triggering_input\": \"n=100000\\n...\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code does not read the number of test cases 't' and does not loop over multiple test cases; it only reads a single test case.",
+                "line": 9,
+                "severity": "critical",
+                "triggering_input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000"
+              },
+              {
+                "description": "The code imports 'sortedcontainers' which is not part of the Python standard library and will cause an ImportError in the contest environment.",
+                "line": 35,
+                "severity": "critical",
+                "triggering_input": "any valid input"
+              },
+              {
+                "description": "The algorithm for determining which players can win is incomplete; after computing 'dom_count' and initializing the queue, the code never processes the queue or updates 'can_win' for other players, and never produces any output.",
+                "line": 68,
+                "severity": "critical",
+                "triggering_input": "any valid input"
+              },
+              {
+                "description": "The function 'solve()' is defined but never called, so the program produces no output.",
+                "line": 13,
+                "severity": "critical",
+                "triggering_input": "any valid input"
+              },
+              {
+                "description": "The code uses a BIT (Fenwick tree) to compute 'dom_count' but does not handle the case where multiple players have the same 'b' value; although the problem guarantees distinct 'b', the BIT implementation may still be off\u2011by\u2011one due to rank mapping starting at 1.",
+                "line": 46,
+                "severity": "minor",
+                "triggering_input": "n=2\n1 2\n1 2"
+              },
+              {
+                "description": "The algorithm's time complexity is not clearly O(n log n); the commented-out BFS update for dominators is left unimplemented, which would lead to O(n^2) if attempted, causing TLE for n up to 1e5.",
+                "line": 61,
+                "severity": "major",
+                "triggering_input": "n=100000\n..."
+              }
+            ]
+          },
+          "input_tokens": 7022,
+          "output_tokens": 454,
+          "cost_usd": 0.002096,
+          "latency_ms": 1689
+        },
+        {
+          "role": "generalist_iter2",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The code imports and uses the external library 'sortedcontainers', which is not part of the Python standard library and will cause an ImportError in the contest environment.",
+              "line": 2,
+              "severity": "critical",
+              "triggering_input": "Any test case (e.g., n=1 with a=1, b=1)."
+            },
+            {
+              "description": "The BFS propagation loop scans all players with b < bq for each winner player q. In the worst case (e.g., players sorted by increasing a and increasing b), this results in O(n^2) operations, leading to a time limit exceeded for n up to 1e5.",
+              "line": 64,
+              "severity": "critical",
+              "triggering_input": "1\n100000\n1 2 3 ... 100000\n1 2 3 ... 100000"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code imports and uses the external library 'sortedcontainers', which is not part of the Python standard library and will cause an ImportError in the contest environment.\",\n      \"line\": 2,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any test case (e.g., n=1 with a=1, b=1).\"\n    },\n    {\n      \"description\": \"The BFS propagation loop scans all players with b < bq for each winner player q. In the worst case (e.g., players sorted by increasing a and increasing b), this results in O(n^2) operations, leading to a time limit exceeded for n up to 1e5.\",\n      \"line\": 64,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n100000\\n1 2 3 ... 100000\\n1 2 3 ... 100000\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code imports and uses the external library 'sortedcontainers', which is not part of the Python standard library and will cause an ImportError in the contest environment.",
+                "line": 2,
+                "severity": "critical",
+                "triggering_input": "Any test case (e.g., n=1 with a=1, b=1)."
+              },
+              {
+                "description": "The BFS propagation loop scans all players with b < bq for each winner player q. In the worst case (e.g., players sorted by increasing a and increasing b), this results in O(n^2) operations, leading to a time limit exceeded for n up to 1e5.",
+                "line": 64,
+                "severity": "critical",
+                "triggering_input": "1\n100000\n1 2 3 ... 100000\n1 2 3 ... 100000"
+              }
+            ]
+          },
+          "input_tokens": 1220,
+          "output_tokens": 205,
+          "cost_usd": 0.00045875,
+          "latency_ms": 9474
+        },
+        {
+          "role": "generalist_iter3",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1306,
+          "output_tokens": 0,
+          "cost_usd": 0.0003265,
+          "latency_ms": 13038
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom sortedcontainers import SortedList\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        b = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        if n == 1:\n            print(\"1\")\n            continue\n        \n        sorted_b = sorted(b)\n        rank = {v: i+1 for i, v in enumerate(sorted_b)}\n        \n        bit = [0] * (n + 2)\n        def update(pos):\n            while pos <= n:\n                bit[pos] += 1\n                pos += pos & (-pos)\n        def query(pos):\n            s = 0\n            while pos > 0:\n                s += bit[pos]\n                pos -= pos & (-pos)\n            return s\n        \n        order = sorted(range(n), key=lambda x: -a[x])\n        dom_count = [0] * n\n        for i in range(n + 2):\n            bit[i] = 0\n        \n        for pi in order:\n            r = rank[b[pi]]\n            dom_count[pi] = query(n) - query(r)\n            update(r)\n        \n        can_win = [False] * n\n        from collections import deque\n        queue = deque()\n        for i in range(n):\n            if dom_count[i] == 0:\n                can_win[i] = True\n                queue.append(i)\n        \n        # For propagation: maintain non-can_win players sorted by b\n        # When Q becomes can_win, find players with a < a[Q] and b < b[Q]\n        # Use SortedList of (b[i], a[i], i) for non-can_win players\n        sl = SortedList(key=lambda x: x[0])\n        for i in range(n):\n            if not can_win[i]:\n                sl.add((b[i], a[i], i))\n        \n        while queue:\n            q = queue.popleft()\n            bq, aq = b[q], a[q]\n            # Find all in sl with b < bq and a < aq\n            to_remove = []\n            pos = sl.bisect_left((bq, -1, -1))\n            for j in range(pos):\n                bj, aj, idx_j = sl[j]\n                if aj < aq:\n                    dom_count[idx_j] -= 1\n                    if dom_count[idx_j] == 0:\n                        to_remove.append((bj, aj, idx_j))\n            for item in to_remove:\n                sl.remove(item)\n                can_win[item[2]] = True\n                queue.append(item[2])\n        \n        print(''.join('1' if can_win[i] else '0' for i in range(n)))\n\nsolve()",
+          "input_tokens": 8661,
+          "output_tokens": 1880,
+          "cost_usd": 0.054183,
+          "latency_ms": 22436
+        },
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom heapq import *\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        b = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        if n == 1:\n            print(\"1\")\n            continue\n        \n        sorted_b = sorted(b)\n        rank = {v: i+1 for i, v in enumerate(sorted_b)}\n        \n        bit = [0] * (n + 2)\n        def update(pos):\n            while pos <= n:\n                bit[pos] += 1\n                pos += pos & (-pos)\n        def query(pos):\n            s = 0\n            while pos > 0:\n                s += bit[pos]\n                pos -= pos & (-pos)\n            return s\n        \n        order = sorted(range(n), key=lambda x: -a[x])\n        dom_count = [0] * n\n        \n        for pi in order:\n            r = rank[b[pi]]\n            dom_count[pi] = query(n) - query(r)\n            update(r)\n        \n        can_win = [False] * n\n        # Use max-heap by a value for winners queue\n        heap = []\n        for i in range(n):\n            if dom_count[i] == 0:\n                can_win[i] = True\n                heappush(heap, (-a[i], -b[i], i))\n        \n        # non-winners sorted by b\n        non_winners_by_b = sorted([(b[i], a[i], i) for i in range(n) if not can_win[i]])\n        import bisect\n        nw = list(non_winners_by_b)\n        \n        while heap:\n            neg_aq, neg_bq, q = heappop(heap)\n            aq, bq = -neg_aq, -neg_bq\n            # All remaining non-winners with b < bq have a < aq (since we process decreasing a)\n            # Find them\n            key = (bq, float('inf'), float('inf'))\n            pos = bisect.bisect_left(nw, (bq,))\n            newly_won = []\n            still_nw = []\n            for j in range(pos):\n                bj, aj, ij = nw[j]\n                if aj < aq:\n                    dom_count[ij] -= 1\n                    if dom_count[ij] == 0:\n                        can_win[ij] = True\n                        newly_won.append((bj, aj, ij))\n                        heappush(heap, (-aj, -bj, ij))\n                    else:\n                        still_nw.append((bj, aj, ij))\n                else:\n                    still_nw.append((bj, aj, ij))\n            nw = still_nw + nw[pos:]\n        \n        print(''.join('1' if can_win[i] else '0' for i in range(n)))\n\nsolve()",
+          "input_tokens": 1680,
+          "output_tokens": 4096,
+          "cost_usd": 0.06648,
+          "latency_ms": 56411
+        }
+      ],
+      "final_code": "import sys\nfrom heapq import *\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        b = [int(input_data[idx+i]) for i in range(n)]; idx += n\n        \n        if n == 1:\n            print(\"1\")\n            continue\n        \n        sorted_b = sorted(b)\n        rank = {v: i+1 for i, v in enumerate(sorted_b)}\n        \n        bit = [0] * (n + 2)\n        def update(pos):\n            while pos <= n:\n                bit[pos] += 1\n                pos += pos & (-pos)\n        def query(pos):\n            s = 0\n            while pos > 0:\n                s += bit[pos]\n                pos -= pos & (-pos)\n            return s\n        \n        order = sorted(range(n), key=lambda x: -a[x])\n        dom_count = [0] * n\n        \n        for pi in order:\n            r = rank[b[pi]]\n            dom_count[pi] = query(n) - query(r)\n            update(r)\n        \n        can_win = [False] * n\n        # Use max-heap by a value for winners queue\n        heap = []\n        for i in range(n):\n            if dom_count[i] == 0:\n                can_win[i] = True\n                heappush(heap, (-a[i], -b[i], i))\n        \n        # non-winners sorted by b\n        non_winners_by_b = sorted([(b[i], a[i], i) for i in range(n) if not can_win[i]])\n        import bisect\n        nw = list(non_winners_by_b)\n        \n        while heap:\n            neg_aq, neg_bq, q = heappop(heap)\n            aq, bq = -neg_aq, -neg_bq\n            # All remaining non-winners with b < bq have a < aq (since we process decreasing a)\n            # Find them\n            key = (bq, float('inf'), float('inf'))\n            pos = bisect.bisect_left(nw, (bq,))\n            newly_won = []\n            still_nw = []\n            for j in range(pos):\n                bj, aj, ij = nw[j]\n                if aj < aq:\n                    dom_count[ij] -= 1\n                    if dom_count[ij] == 0:\n                        can_win[ij] = True\n                        newly_won.append((bj, aj, ij))\n                        heappush(heap, (-aj, -bj, ij))\n                    else:\n                        still_nw.append((bj, aj, ij))\n                else:\n                    still_nw.append((bj, aj, ij))\n            nw = still_nw + nw[pos:]\n        \n        print(''.join('1' if can_win[i] else '0' for i in range(n)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 16,
+        "failed": 34,
+        "errors": 0,
+        "pass_rate": 0.32,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0011\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n11 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 76577157",
+            "expected": "0101000000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 127630",
+            "expected": "0101100000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 591939815 587798634 60783479 292693207 256527822 128794711 765771",
+            "expected": "0100000000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 12 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1011\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n10\n617560334 911871372 2284865 844017253 756310383 439889133 601615010 818102467 87186639 923776837\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 785556911\n",
+            "expected": "0101000001",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 11 20 21\n9 3 11 29\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n0001\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n10\n617560334 911871372 2284865 844017253 871951123 439889133 601615010 818102467 31459731 923776837\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 785556911\n",
+            "expected": "0101100001",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 32186891 878510105 287285729 60783479 55193561 220865607 161570645 1495415748",
+            "expected": "0101100101",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n542586 868690703 32186891 878510105 287285729 60783479 55193561 368386486 161570645 20717374\n",
+            "expected": "0101100100",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n10\n617560334 911871372 379798020 199317982 852316352 439889133 601615010 496356935 189573045 1022121204\n148682006 868690703 15436193 104052115 29146056 60783479 292693207 34584286 11600216 765771574",
+            "expected": "0100000001",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n4\n0 3 5 1\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+            "expected": "0111\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 21\n44 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0011\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n4\n1 3 5 4\n1 2 3 4\n4\n11 12 20 21\n44 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0011\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n4\n1 3 5 4\n1 2 3 4\n4\n11 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0011\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 76577157",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 76577157",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 2 16 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n4\n0 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n4\n0 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 12\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 41\n44 22 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 30\n44 22 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0011\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n10\n617560334 911871372 18944655 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n11 12 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 849605814 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 19 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 483574627 60783479 406552592 256527822 161570645 76577157",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n2 12 20 21\n70 2 16 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 58121247",
+            "expected": "0101000000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 536398810 40092006 292693207 256527822 128794711 127630",
+            "expected": "0101100000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 41\n44 22 21 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 159061886 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n10\n617560334 1155702138 379798020 844017253 852316352 849605814 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 765771",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 23 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1111\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 78555691",
+            "expected": "0101000000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 159061886 491873884\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+            "expected": "1111111111",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 104052115 587798634 60783479 292693207 256527822 128794711 765771",
+            "expected": "0100000000",
+            "actual": "1111111111",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 11 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+            "expected": "0001\n1011\n1",
+            "actual": "1111\n1111\n1",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 16,
+    "failed": 34,
+    "errors": 0,
+    "pass_rate": 0.32,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 21\n44 22 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0011\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n11 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 76577157",
+        "expected": "0101000000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 127630",
+        "expected": "0101100000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 591939815 587798634 60783479 292693207 256527822 128794711 765771",
+        "expected": "0100000000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 12 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1011\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n10\n617560334 911871372 2284865 844017253 756310383 439889133 601615010 818102467 87186639 923776837\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 785556911\n",
+        "expected": "0101000001",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 11 20 21\n9 3 11 29\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n0001\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n10\n617560334 911871372 2284865 844017253 871951123 439889133 601615010 818102467 31459731 923776837\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 785556911\n",
+        "expected": "0101100001",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 32186891 878510105 287285729 60783479 55193561 220865607 161570645 1495415748",
+        "expected": "0101100101",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n542586 868690703 32186891 878510105 287285729 60783479 55193561 368386486 161570645 20717374\n",
+        "expected": "0101100100",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n10\n617560334 911871372 379798020 199317982 852316352 439889133 601615010 496356935 189573045 1022121204\n148682006 868690703 15436193 104052115 29146056 60783479 292693207 34584286 11600216 765771574",
+        "expected": "0100000001",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "3\n4\n0 3 5 1\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+        "expected": "0111\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 21\n44 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0011\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3\n4\n1 3 5 4\n1 2 3 4\n4\n11 12 20 21\n44 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0011\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "3\n4\n1 3 5 4\n1 2 3 4\n4\n11 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0011\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 76577157",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 76577157",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 2 16 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "3\n4\n0 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "3\n4\n0 3 5 6\n1 2 3 4\n4\n1 12 20 21\n70 0 16 12\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 41\n44 22 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3\n4\n1 2 5 4\n1 2 3 4\n4\n11 12 20 30\n44 22 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0011\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 878510105 587798634 60783479 292693207 256527822 128794711 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n10\n617560334 911871372 18944655 844017253 852316352 439889133 601615010 818102467 343144247 662484047\n148682006 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n11 12 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 849605814 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 7657715",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 19 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 483574627 60783479 406552592 256527822 161570645 76577157",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n2 12 20 21\n70 2 16 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 58121247",
+        "expected": "0101000000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 260171475 662484047\n148682006 868690703 149843110 878510105 536398810 40092006 292693207 256527822 128794711 127630",
+        "expected": "0101100000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "3\n4\n1 2 3 4\n1 2 3 4\n4\n11 12 20 41\n44 22 21 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 159061886 662484047\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n10\n617560334 1155702138 379798020 844017253 852316352 849605814 601615010 818102467 343144247 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 292693207 256527822 161570645 765771",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n1 23 20 21\n70 2 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1111\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 756310383 439889133 601615010 818102467 87186639 662484047\n12140682 868690703 180047118 878510105 587798634 60783479 406552592 256527822 161570645 78555691",
+        "expected": "0101000000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n10\n1109412863 911871372 379798020 844017253 852316352 439889133 601615010 818102467 159061886 491873884\n148682006 868690703 149843110 878510105 587798634 40092006 292693207 256527822 128794711 76577",
+        "expected": "1111111111",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n10\n617560334 911871372 379798020 844017253 852316352 439889133 601615010 818102467 189573045 662484047\n148682006 868690703 149843110 104052115 587798634 60783479 292693207 256527822 128794711 765771",
+        "expected": "0100000000",
+        "actual": "1111111111",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "3\n4\n1 3 5 6\n1 2 3 4\n4\n17 11 20 21\n70 3 11 30\n1\n1000000000\n1000000000\n",
+        "expected": "0001\n1011\n1",
+        "actual": "1111\n1111\n1",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "fail"
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 6,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.056279,
+      "cumulative_cost": 0.181154
+    },
+    {
+      "iteration": 2,
+      "bugs_found": 2,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.32,
+      "cost_this_iteration": 0.06693874999999999,
+      "cumulative_cost": 0.24809275000000003
+    },
+    {
+      "iteration": 3,
+      "bugs_found": 0,
+      "pass_rate_before": 0.32,
+      "pass_rate_after": 0.32,
+      "cost_this_iteration": 0.0003265,
+      "cumulative_cost": 0.24841925000000004
+    }
+  ],
+  "total_cost_usd": 0.24841925000000004,
+  "total_latency_ms": 221091,
+  "iterations_used": 3,
+  "early_stopped": true
+}

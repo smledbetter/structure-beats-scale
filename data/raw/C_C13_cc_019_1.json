@@ -1,0 +1,2103 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_019",
+  "replica": 1,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "DP state: dp[i][j] = minimum inversions considering first `i` elements, where the front of deque is `a[l]` and back is `a[r]`... \n\nWait - there's a cleaner observation. When building the deque, at each step we have a deque. The front and back are the only positions new elements interact with for \"new\" inversions. But existing inversions within the deque don't change.\n\nSo: dp[front_idx][back_idx] where front_idx and back_idx refer to which original elements are at the ends. Since we process left to right, and each element goes to front or back, after processing elements 0..k-1, the deque's ends are some a[i] and a[j] where i <= j, and the deque contains exactly elements a[0..k-1].\n\nThe structure: elements added to front form a reversed prefix, elements added to back form a suffix. So the deque looks like: [some subset reversed] + [rest in order]. The front element is the last one added to front, back element is the last one added to back.\n\nDP: dp[i][j] = min inversions where i is the leftmost index still \"in front region\" and j is the rightmost \"in back region\". Actually the deque is a[i], a[i-1], ..., a[0] ... no.\n\nLet me reconsider: at step k, we've placed elements a[0..k-1]. Some prefix a[0..p-1] went to front (in reverse order at front) and the rest went to back. No, they can interleave.\n\nActually the deque is always: [front_elements_reversed, back_elements_in_order] where front_elements are those added to front and back_elements are those added to back, in insertion order.\n\nState dp[l][r]: min inversions when front of deque is a[l] and back is a[r], having processed elements such that l+r+1 = k (or similar). Since elements go to front or back, after k steps, if l elements went to front and r to back, l+r=k. The deque is a[front_sequence reversed] + a[back_sequence].\n\nLet me use dp[i][j] where i elements were added to front and j to back (i+j = current step). The front is a[i-1] (last added to front) ... actually front sequence in deque order is a[i-1], a[i-2], ..., a[0] (reversed insertion) and back is a[i], a[i+1], ..., a[i+j-1].\n\nSo dp[i][j] with i+j=k: min inversions so far. Transition from dp[i][j] to dp[i+1][j] (add a[k] to front) or dp[i][j+1] (add a[k] to back).\n\nWhen adding a[k] to front: new inversions = count of elements in deque > a[k] (they're all after a[k]).\nWhen adding a[k] to back: new inversions = count of elements in deque < a[k] (they're all before a[k]).\n\nThe deque contents are always a[0..k-1], so counts depend only on values, not on i,j! So the front/back choice only matters for future steps via what's at the ends... but actually the inversion count added is the same regardless of i,j!\n\nSo the minimum inversions is just: for each element, choose min(elements already in deque that are greater, elements already in deque that are less). Use a sorted structure.\n\nimport sys\nfrom sortedcontainers import SortedList\n\ninput_data = sys.stdin.read().split()\nidx = 0\nt = int(input_data[idx]); idx+=1\nfor _ in range(t):\n    n = int(input_data[idx]); idx+=1\n    a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n    sl = SortedList()\n    ans = 0\n    for x in a:\n        greater = len(sl) - sl.bisect_right(x)\n        less = sl.bisect_left(x)\n        ans += min(greater, less)\n        sl.add(x)\n    print(ans)",
+      "input_tokens": 1076,
+      "output_tokens": 1348,
+      "cost_usd": 0.023448,
+      "latency_ms": 23410
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "So: pick a subset S of {1..n} to go to front, rest go to back. Front elements appear in reverse order of their indices, back elements in order of indices. Final deque = [a[i_k], a[i_{k-1}], ..., a[i_1], a[j_1], a[j_2], ..., a[j_m]] where i_1 < i_2 < ... < i_k are front indices and j_1 < ... < j_m are back indices.\n\nWe want to minimize inversions in this sequence.\n\nThis is a cleaner formulation. Now I need to find the optimal subset S.\n\nFor n up to 2*10^5, I need an O(n log n) or O(n log^2 n) approach.\n\nLet me think about DP. Let dp[i] = minimum inversions considering first i elements, with some state about the deque ends. The state needs to track front and back values.\n\nState: dp[i][front_val, back_val] - but values can be large.\n\nActually the deque ends after processing i elements are just a[front_index] and a[back_index]. The DP state could be (left_pointer, right_pointer) into the current deque... \n\nLet me look at small n and think about a DP on the deque endpoints. After processing element i, the deque has elements from a[1..i]. The front is some a[f] and back is some a[b]. When we add a[i+1] to front, new front = a[i+1], back unchanged. When we add to back, front unchanged, new back = a[i+1].\n\nDP state: (front_index, back_index) after processing elements 1..i. But this is O(n^2) states.\n\nGiven n=2*10^5 and time limit 2s, maybe O(n^2) with small constant for n\u22642000 in E1? Let me check - the problem says n\u22642*10^5. Let me just implement O(n^2) DP and see.\n\nimport sys\nfrom collections import defaultdict\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n = int(input_data[idx]); idx+=1\n        a = [int(input_data[idx+i]) for i in range(n)]; idx+=n\n        # DP: state = (l, r) meaning deque is a[l..r] reversed front part + back part\n        # Actually state after processing i elements: front index f, back index b\n        # deque = a[f], a[f-1],...,a[some], a[some+1],...,a[b] -- not quite\n        # Let me re-think: track (l, r) where l is leftmost original index in front-stack, r is rightmost in back-queue\n        # After processing element i, deque front = a[l] (if l<=i means last front-added), back = a[r]\n        # This is getting complex. Let me just do the subset DP differently.\n        \n        # State: after processing i elements, the deque front is a[p] and back is a[q]\n        # where p and q are indices. Transitions are O(1) per state.\n        # Number of states: O(n^2) which is too large.\n        \n        # For n<=2000, O(n^2) might work. Let's check sum of n <= 2*10^5.\n        # O(n^2) total would be (2*10^5)^2 which is way too much.\n        \n        # Need smarter approach. Let me think again.\n        # \n        # The front part is a subsequence of a in reverse order.\n        # The back part is a subsequence of a in forward order.\n        # Together they partition a[1..n].\n        # \n        # Inversions = inv(front_reversed) + inv(back) + cross_inversions(front_reversed, back)\n        # where front_reversed means the front elements in reverse insertion order.\n        #\n        # Let F = indices going to front in increasing order: f1<f2<...<fk\n        # Front in deque: a[fk], a[f_{k-1}], ..., a[f1]\n        # Back in deque: a[b1], a[b2], ..., a[bm] (b1<b2<...<bm)\n        #\n        # This is a hard combinatorial optimization.\n        # \n        # Let me look for a greedy or structural insight.\n        # \n        # Actually, maybe the optimal solution has the deque sorted or nearly sorted?\n        # \n        # For the DP approach with O(n^2) states but total sum of n is 2*10^5:\n        # If individual n can be up to 2*10^5, O(n^2) per test case is 4*10^10 - too slow.\n        # \n        # Let me think about what makes a good deque. We want to minimize inversions.\n        # The deque is front_part (reversed insertion) + back_part (forward insertion).\n        # \n        # Key: the front part elements were inserted in some order, and in the deque\n        # they appear reversed. The back part appears in insertion order.\n        # \n        # Let's say we decide for each element whether it goes front or back.\n        # Front elements in deque order: last front inserted first, ..., first front inserted last.\n        # So if front set is {i1<i2<...<ik}, deque front = [a[ik],...,a[i1]].\n        # Back set {j1<j2<...<jm}, deque back = [a[j1],...,a[jm]].\n        # Full deque: [a[ik],...,a[i1], a[j1],...,a[jm]].\n        # \n        # We want to minimize inversions in this sequence.\n        # \n        # Observation: the front part is a subsequence of a in REVERSE order,\n        # and the back part is a subsequence of a in FORWARD order.\n        # We want to split a into two subsequences (maintaining relative order),\n        # then reverse one and concatenate, minimizing inversions.\n        # \n        # This is still complex. Let me think about DP on the array.\n        # \n        # DP[i][j] = min inversions when we've processed elements 1..i,\n        # and the current front of deque is a[i] (if last added to front)\n        # or... \n        # \n        # Actually here's a cleaner DP:\n        # After processing elements 1..i, the deque looks like:\n        # [a[f_last], ..., a[f_1], a[b_1], ..., a[b_last]]\n        # The \"interface\" between front and back parts is fixed once we know\n        # which elements went where.\n        # \n        # Key insight: The deque always looks like a[l], a[l-1], ..., a[p], a[q], ..., a[r]\n        # where we track some contiguous structure? No, it's not contiguous in general.\n        # \n        # Wait - actually I think there's a nice DP:\n        # State after processing i elements: (value at front, value at back)\n        # But values repeat so we need indices.\n        # \n        # DP[i][(f,b)] = min inversions contributed so far\n        # where f = index of front element, b = index of back element.\n        # \n        # Transition from i to i+1:\n        # Add a[i+1] to front: new state (i+1, b), cost = inversions of a[i+1] with all current front elements above it... \n        # \n        # Hmm, the cost isn't just about the endpoints.\n        # \n        # I think I need to think about this differently.\n        # Let me look at the problem from a different angle.\n        # \n        # The inversions in the final deque:\n        # - inversions within the front part (reversed subsequence)\n        # - inversions within the back part (forward subsequence)  \n        # - inversions between front and back parts\n        # \n        # For front part [a[fk],...,a[f1]]: inversions here = pairs (fi, fj) with i<j but a[fi]<a[fj]\n        # (since in deque, fj comes before fi)\n        # = number of pairs in front set that are \"non-inversions\" in original order\n        # = C(k,2) - (inversions within front set in original order)\n        # \n        # For back part [a[b1],...,a[bm]]: inversions = inversions within back set in original order.\n        # \n        # Cross inversions: for each front element a[fi] and back element a[bj]:\n        # in deque, all front elements come before all back elements.\n        # inversion if a[fi] > a[bj].\n        # \n        # So total = (C(k,2) - inv_front_orig) + inv_back_orig + cross\n        # \n        # This is a complex optimization problem over subsets.\n        # \n        # For the given constraints (n up to 2*10^5), I suspect there's an O(n log n) solution\n        # or the problem has special structure.\n        # \n        # Let me reconsider. Maybe a DP where state is just the front and back VALUES\n        # (not indices) suffices, since what matters for future cost is only the current\n        # endpoints of the deque.\n        # \n        # When we add element a[i] to the front:\n        # - It becomes new front\n        # - Inversions added: number of elements currently in deque that are LESS than a[i]\n        #   (since a[i] is at front, it's before all of them, so inversion if a[i] > d[j])\n        #   Wait: inversion (i,j) means i<j and d[i]>d[j]. a[i] at position 1, rest at 2..k.\n        #   So inversions added = number of existing elements < a[i].\n        # \n        # When we add element a[i] to the back:\n        # - It becomes new back\n        # - Inversions added: number of elements currently in deque that are GREATER than a[i]\n        #   (since a[i] is at the end, position k+1, inversion (j, k+1) if d[j] > a[i])\n        #   = number of existing elements > a[i].\n        # \n        # So the cost of each insertion depends on the ENTIRE current deque contents, not just endpoints!\n        # \n        # But wait - the cost only depends on the multiset of current elements and the new element's value.\n        # The multiset after i steps is always {a[1],...,a[i]}, regardless of front/back choices!\n        # \n        # So when adding a[i+1]:\n        # - Add to front: cost = |{j <= i : a[j] < a[i+1]}| (elements less than a[i+1])\n        # - Add to back: cost = |{j <= i : a[j] > a[i+1]}| (elements greater than a[i+1])\n        # \n        # Wait, is this right? Let me verify.\n        # \n        # If we add a[i+1] to front of deque [d1, d2, ..., dk]:\n        # New deque: [a[i+1], d1, d2, ..., dk]\n        # New inversions involving a[i+1]: pairs (1, j) for j=2..k+1 where a[i+1] > d[j-1]\n        # = number of d[j] < a[i+1] = number of elements in current deque less than a[i+1].\n        # \n        # If we add a[i+1] to back of deque [d1, d2, ..., dk]:\n        # New deque: [d1, d2, ..., dk, a[i+1]]\n        # New inversions involving a[i+1]: pairs (j, k+1) where d[j] > a[i+1]\n        # = number of elements in current deque greater than a[i+1].\n        # \n        # YES! And since the multiset of current elements is always {a[1],...,a[i]},\n        # these costs are FIXED regardless of previous choices!\n        # \n        # Let less[i] = |{j < i : a[j] < a[i]}|\n        # Let greater[i] = |{j < i : a[j] > a[i]}|\n        # \n        # Adding a[i] to front costs less[i], adding to back costs greater[i].\n        # \n        # But wait - this ignores inversions WITHIN the existing deque that don't involve a[i+1].\n        # Those are already counted in previous steps. So the total inversions = sum over each element\n        # of the cost when it was inserted!\n        # \n        # So the problem reduces to: for each element a[i], choose min(less[i], greater[i])!\n        # \n        # Wait, but that can't be right because the choices interact... or do they?\n        # \n        # Actually I think they DON'T interact! Each element a[i] contributes inversions only\n        # with elements a[1],...,a[i-1] (already in deque), and this cost is:\n        # - less[i] if added to front\n        # - greater[i] if added to back\n        # \n        # And these are independent of where previous elements were placed!\n        # \n        # So the answer is sum over i of min(less[i], greater[i])!\n        # \n        # Let me verify with examples.\n        # Example 1: a = [3, 7, 5, 5]\n        # i=1 (a=3): less=0, greater=0, min=0\n        # i=2 (a=7): less=1 (3<7), greater=0, min=0\n        # i=3 (a=5): less=1 (3<5), greater=1 (7>5), min=1\n        # i=4 (a=5): less=1 (3<5), greater=1 (7>5), min=1\n        # Total = 0+0+1+1 = 2. Correct!\n        # \n        # Example 2: a = [3, 2, 1]\n        # i=1: 0\n        # i=2 (a=2): less=0(no elem<2... wait 3>2 so less=0), greater=1, min=0\n        # i=3 (a=1): less=0, greater=2, min=0\n        # Total=0. Correct!\n        # \n        # Example 3: a=[3,1,2]\n        # i=1:0\n        # i=2(a=1): less=0,greater=1,min=0\n        # i=3(a=2): less=1(1<2),greater=1(3>2),min=1\n        # Total=1. Correct!\n        # \n        # Example 4: a=[-1,2,2,-1]\n        # i=1:0\n        # i=2(a=2): less=1(-1<2),greater=0,min=0\n        # i=3(a=2): less=1(-1<2),greater=0,min=0  wait: elements so far {-1,2}, less than 2: {-1}=1, greater than 2: 0. min=0\n        # i=4(a=-1): less=0, greater=3(all 3 elements > -1), min=0\n        # Total=0. Correct!\n        # \n        # Example 5: a=[4,5,1,3]\n        # i=1:0\n        # i=2(a=5): less=1,greater=0,min=0\n        # i=3(a=1): less=0,greater=2,min=0\n        # i=4(a=3): less=1(1<3),greater=2(4>3,5>3),min=1\n        # Total=1. Correct!\n        # \n        # Example 6: a=[1,3,1,3,2]\n        # i=1:0\n        # i=2(a=3): less=1,greater=0,min=0\n        # i=3(a=1): less=0,greater=2,min=0  (elements {1,3}, less than 1: 0, greater than 1: 2... wait {1,3}, greater=1 not 2)\n        # Hmm: elements before i=3 are {1,3}. a[3]=1. less than 1: 0. greater than 1: 1 (just 3). min=0.\n        # i=4(a=3): elements {1,3,1}. less than 3: 2 (both 1s). greater than 3: 0. min=0.\n        # i=5(a=2): elements {1,3,1,3}. less than 2: 2 (both 1s). greater than 2: 2 (both 3s). min=2.\n        # Total=0+0+0+0+2=2. Correct!\n        # \n        # Great! The solution is simply sum of min(less[i], greater[i]) for each i.\n        \n        # Compute using a sorted structure\n        from sortedcontainers import SortedList\n        sl = SortedList()\n        ans = 0\n        for x in a:\n            less = sl.bisect_left(x)\n            greater = len(sl) - sl.bisect_right(x)\n            ans += min(less, greater)\n            sl.add(x)\n        print(ans)\n\nsolve()",
+      "input_tokens": 1076,
+      "output_tokens": 5114,
+      "cost_usd": 0.079938,
+      "latency_ms": 74496
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom sortedcontainers import SortedList\n\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    sl = SortedList()\n    inv = 0\n    front = None\n    back = None\n    \n    for x in a:\n        if not sl:\n            sl.add(x)\n            front = back = x\n        else:\n            # cost to add to front: elements in deque < x (they come after x but are smaller... wait inversions: i<j, d[i]>d[j])\n            # adding x to front: x is at position 0, inversions with elements < x: x > d[j] for those\n            cost_front = sl.bisect_left(x)  # elements < x\n            cost_back = len(sl) - sl.bisect_right(x)  # elements > x... wait\n            # cost_back: x at end, inversions = elements before x that are > x\n            cost_back = len(sl) - sl.bisect_right(x)\n            if cost_front <= cost_back:\n                inv += cost_front\n                front = x\n            else:\n                inv += cost_back\n                back = x\n            sl.add(x)\n    \n    print(inv)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 1076,
+      "output_tokens": 1380,
+      "cost_usd": 0.023928,
+      "latency_ms": 26843
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The code imports and uses the 'sortedcontainers' library, which is not part of the Python standard library and will not be available in typical competitive programming environments, causing a runtime import error.",
+              "line": 8,
+              "severity": "critical",
+              "triggering_input": "Any input (e.g., a single test case with n=1)"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The code imports and uses the 'sortedcontainers' library, which is not part of the Python standard library and will not be available in typical competitive programming environments, causing a runtime import error.\", \"line\": 8, \"severity\": \"critical\", \"triggering_input\": \"Any input (e.g., a single test case with n=1)\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code imports and uses the 'sortedcontainers' library, which is not part of the Python standard library and will not be available in typical competitive programming environments, causing a runtime import error.",
+                "line": 8,
+                "severity": "critical",
+                "triggering_input": "Any input (e.g., a single test case with n=1)"
+              }
+            ]
+          },
+          "input_tokens": 1843,
+          "output_tokens": 84,
+          "cost_usd": 0.00052375,
+          "latency_ms": 2558
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Uses external library 'sortedcontainers' which is not available in standard competitive programming environments, causing import error at runtime.",
+              "line": 13,
+              "severity": "major",
+              "triggering_input": "any valid input"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Uses external library 'sortedcontainers' which is not available in standard competitive programming environments, causing import error at runtime.\", \"line\": 13, \"severity\": \"major\", \"triggering_input\": \"any valid input\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Uses external library 'sortedcontainers' which is not available in standard competitive programming environments, causing import error at runtime.",
+                "line": 13,
+                "severity": "major",
+                "triggering_input": "any valid input"
+              }
+            ]
+          },
+          "input_tokens": 1921,
+          "output_tokens": 60,
+          "cost_usd": 0.00052525,
+          "latency_ms": 7540
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    results = []\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx + i]) for i in range(n)]; idx += n\n        sl = []\n        ans = 0\n        for x in a:\n            greater = len(sl) - bisect_right(sl, x)\n            less = bisect_left(sl, x)\n            ans += min(greater, less)\n            insort(sl, x)\n        results.append(ans)\n    print('\\n'.join(map(str, results)))\n\nsolve()",
+          "input_tokens": 2254,
+          "output_tokens": 220,
+          "cost_usd": 0.010062,
+          "latency_ms": 2638
+        }
+      ],
+      "final_code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    results = []\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx + i]) for i in range(n)]; idx += n\n        sl = []\n        ans = 0\n        for x in a:\n            greater = len(sl) - bisect_right(sl, x)\n            less = bisect_left(sl, x)\n            ans += min(greater, less)\n            insort(sl, x)\n        results.append(ans)\n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "2\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "0\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "1\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "2\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "2\n0\n1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "2\n0\n0\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "2\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "2\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "0\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "2\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "1\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "1\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "0\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "0\n0\n0\n1\n2\n2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "1\n0\n0\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "1\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "0\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "0\n0\n0\n1\n2\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "0\n0\n0\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "0\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "2\n0\n1\n0\n2\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "0\n0\n1\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "0\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "1\n0\n0\n1\n0\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "2\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "1\n0\n0\n2\n0\n2",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "0\n0\n0\n1\n2\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "0\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "1\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "0\n0\n0\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "0\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "2\n1\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "0\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "2\n1\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "2\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "1\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "0\n0\n0\n1\n0\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "1\n0\n0\n0\n0\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "1\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Uses external library 'sortedcontainers' which is not available in standard competitive programming environment, causing ImportError.",
+              "line": 31,
+              "severity": "critical",
+              "triggering_input": "Any input"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Uses external library 'sortedcontainers' which is not available in standard competitive programming environment, causing ImportError.\", \"line\": 31, \"severity\": \"critical\", \"triggering_input\": \"Any input\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Uses external library 'sortedcontainers' which is not available in standard competitive programming environment, causing ImportError.",
+                "line": 31,
+                "severity": "critical",
+                "triggering_input": "Any input"
+              }
+            ]
+          },
+          "input_tokens": 4779,
+          "output_tokens": 55,
+          "cost_usd": 0.001236,
+          "latency_ms": 1931
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The code starts with a non\u2011comment plain text line \"So: pick a subset S ...\" which is invalid Python syntax, causing a SyntaxError at runtime.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "1\n1\n5\n"
+            },
+            {
+              "description": "The solution imports and uses `sortedcontainers.SortedList`, which is not part of the Python standard library and will not be available in the competition environment, leading to an ImportError.",
+              "line": 68,
+              "severity": "major",
+              "triggering_input": "1\n3\n1 2 3\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code starts with a non\u2011comment plain text line \\\"So: pick a subset S ...\\\" which is invalid Python syntax, causing a SyntaxError at runtime.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n1\\n5\\n\"\n    },\n    {\n      \"description\": \"The solution imports and uses `sortedcontainers.SortedList`, which is not part of the Python standard library and will not be available in the competition environment, leading to an ImportError.\",\n      \"line\": 68,\n      \"severity\": \"major\",\n      \"triggering_input\": \"1\\n3\\n1 2 3\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code starts with a non\u2011comment plain text line \"So: pick a subset S ...\" which is invalid Python syntax, causing a SyntaxError at runtime.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "1\n1\n5\n"
+              },
+              {
+                "description": "The solution imports and uses `sortedcontainers.SortedList`, which is not part of the Python standard library and will not be available in the competition environment, leading to an ImportError.",
+                "line": 68,
+                "severity": "major",
+                "triggering_input": "1\n3\n1 2 3\n"
+              }
+            ]
+          },
+          "input_tokens": 4835,
+          "output_tokens": 162,
+          "cost_usd": 0.00133025,
+          "latency_ms": 1929
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx + i]) for i in range(n)]; idx += n\n        \n        sl = []\n        ans = 0\n        for x in a:\n            less = bisect_left(sl, x)\n            greater = len(sl) - bisect_right(sl, x)\n            ans += min(less, greater)\n            insort(sl, x)\n        print(ans)\n\nsolve()",
+          "input_tokens": 5808,
+          "output_tokens": 201,
+          "cost_usd": 0.020439,
+          "latency_ms": 2741
+        }
+      ],
+      "final_code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx += 1\n    for _ in range(t):\n        n = int(input_data[idx]); idx += 1\n        a = [int(input_data[idx + i]) for i in range(n)]; idx += n\n        \n        sl = []\n        ans = 0\n        for x in a:\n            less = bisect_left(sl, x)\n            greater = len(sl) - bisect_right(sl, x)\n            ans += min(less, greater)\n            insort(sl, x)\n        print(ans)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "2\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "0\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "1\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "2\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "2\n0\n1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "2\n0\n0\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "2\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "2\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "0\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "2\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "1\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "1\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "0\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "0\n0\n0\n1\n2\n2",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "1\n0\n0\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "1\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "0\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "0\n0\n0\n1\n2\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "0\n0\n0\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "0\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 26,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "2\n0\n1\n0\n2\n1",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "0\n0\n1\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "0\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "1\n0\n0\n1\n0\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "2\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "1\n0\n0\n2\n0\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "0\n0\n0\n1\n2\n0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "0\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "1\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "0\n0\n0\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "0\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "2\n1\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "0\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "2\n1\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "2\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "1\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "0\n0\n0\n1\n0\n0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "1\n0\n0\n0\n0\n2",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "1\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The code imports and uses SortedList from the external 'sortedcontainers' library, which is not part of Python's standard library and will not be available in typical competitive programming environments, causing an ImportError.",
+              "line": 2,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The code imports and uses SortedList from the external 'sortedcontainers' library, which is not part of Python's standard library and will not be available in typical competitive programming environments, causing an ImportError.\", \"line\": 2, \"severity\": \"critical\", \"triggering_input\": \"any\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code imports and uses SortedList from the external 'sortedcontainers' library, which is not part of Python's standard library and will not be available in typical competitive programming environments, causing an ImportError.",
+                "line": 2,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 1309,
+          "output_tokens": 76,
+          "cost_usd": 0.00038425,
+          "latency_ms": 2710
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1309,
+          "output_tokens": 0,
+          "cost_usd": 0.00032725,
+          "latency_ms": 9978
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    sorted_arr = []\n    inv = 0\n    \n    for x in a:\n        if not sorted_arr:\n            sorted_arr.append(x)\n        else:\n            # cost to add to front: number of elements in deque that are < x\n            # (x is at front, elements after x that are smaller = inversions)\n            cost_front = bisect_left(sorted_arr, x)  # elements strictly < x\n            # cost to add to back: number of elements in deque that are > x\n            # (elements before x that are larger = inversions)\n            cost_back = len(sorted_arr) - bisect_right(sorted_arr, x)  # elements strictly > x\n            if cost_front <= cost_back:\n                inv += cost_front\n            else:\n                inv += cost_back\n            insort(sorted_arr, x)\n    \n    print(inv)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 1499,
+          "output_tokens": 452,
+          "cost_usd": 0.011277,
+          "latency_ms": 6239
+        }
+      ],
+      "final_code": "import sys\nfrom bisect import bisect_left, bisect_right, insort\n\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    sorted_arr = []\n    inv = 0\n    \n    for x in a:\n        if not sorted_arr:\n            sorted_arr.append(x)\n        else:\n            # cost to add to front: number of elements in deque that are < x\n            # (x is at front, elements after x that are smaller = inversions)\n            cost_front = bisect_left(sorted_arr, x)  # elements strictly < x\n            # cost to add to back: number of elements in deque that are > x\n            # (elements before x that are larger = inversions)\n            cost_back = len(sorted_arr) - bisect_right(sorted_arr, x)  # elements strictly > x\n            if cost_front <= cost_back:\n                inv += cost_front\n            else:\n                inv += cost_back\n            insort(sorted_arr, x)\n    \n    print(inv)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n1\n-1000000000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1\n-1090552905\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n1",
+            "actual": "2\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n0\n1\n2",
+            "actual": "2\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+            "expected": "0\n0\n1\n0\n1\n1",
+            "actual": "0\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+            "expected": "1\n0\n1\n0\n1\n1",
+            "actual": "1\n0\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n1\n1\n1",
+            "actual": "2\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n1\n1\n1\n2",
+            "actual": "2\n0\n1\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n0\n1\n1",
+            "actual": "2\n0\n0\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n0\n1\n1\n1",
+            "actual": "2\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n1\n0",
+            "actual": "2\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n1\n0",
+            "actual": "0\n0\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+            "expected": "2\n0\n0\n1\n1\n2",
+            "actual": "2\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n1",
+            "actual": "1\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+            "expected": "1\n0\n0\n1\n1\n2",
+            "actual": "1\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n1\n2",
+            "actual": "0\n0\n0\n1\n1\n2",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n2",
+            "actual": "0\n0\n0\n1\n2\n2",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n1\n2",
+            "actual": "1\n0\n0\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "1\n0\n0\n2\n1\n1",
+            "actual": "1\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n1",
+            "actual": "0\n0\n0\n2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+            "expected": "0\n0\n0\n1\n2\n1",
+            "actual": "0\n0\n0\n1\n2\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n1\n0",
+            "actual": "0\n0\n0\n2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n1\n1\n0",
+            "actual": "0\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n0\n1\n0\n2\n1",
+            "actual": "2\n0\n1\n0\n2\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "0\n0\n1\n1\n1\n0",
+            "actual": "0\n0\n1\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n1\n0\n0\n0",
+            "actual": "0\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n1\n0\n2",
+            "actual": "1\n0\n0\n1\n0\n2",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+            "expected": "2\n0\n1\n0\n0\n0",
+            "actual": "2\n0\n1\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n2\n0\n2",
+            "actual": "1\n0\n0\n2\n0\n2",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+            "expected": "0\n0\n0\n1\n2\n0",
+            "actual": "0\n0\n0\n1\n2\n0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+            "expected": "0\n0\n1\n0\n1\n2",
+            "actual": "0\n0\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+            "expected": "1\n0\n0\n1\n1\n0",
+            "actual": "1\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+            "expected": "0\n0\n0\n0\n1\n0",
+            "actual": "0\n0\n0\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+            "expected": "0\n1\n1\n0\n1\n0",
+            "actual": "0\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n1",
+            "actual": "2\n1\n1\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "0\n0\n0\n2\n2\n0",
+            "actual": "0\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+            "expected": "2\n1\n1\n0\n1\n2",
+            "actual": "2\n1\n1\n0\n1\n2",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+            "expected": "2\n1\n1\n0\n1\n0",
+            "actual": "2\n1\n1\n0\n1\n0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+            "expected": "1\n0\n1\n1\n1\n1",
+            "actual": "1\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+            "expected": "0\n0\n0\n1\n0\n0",
+            "actual": "0\n0\n0\n1\n0\n0",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+            "expected": "1\n0\n0\n0\n0\n2",
+            "actual": "1\n0\n0\n0\n0\n2",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+            "expected": "1\n0\n0\n2\n2\n0",
+            "actual": "1\n0\n0\n2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n2",
+        "actual": "2\n0\n1\n0\n1\n2",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n1\n-1000000000\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n5\n999999996 999999997 1000000000 999999998 999999999\n",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n1\n-1090552905\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n1",
+        "actual": "2\n0\n1\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n5\n999999996 594621428 1000000000 999999998 999999999\n",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "6\n4\n3 7 5 5\n3\n3 4 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n0\n1\n2",
+        "actual": "2\n0\n1\n0\n1\n2",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n5\n999999996 999999997 1000000000 714491994 999999999\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 3 2\n",
+        "expected": "0\n0\n1\n0\n1\n1",
+        "actual": "0\n0\n1\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "6\n4\n3 7 5 1\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 3 1 4 2\n",
+        "expected": "1\n0\n1\n0\n1\n1",
+        "actual": "1\n0\n1\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n1\n1\n1\n1",
+        "actual": "2\n0\n1\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n1\n1\n1\n2",
+        "actual": "2\n0\n1\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "6\n4\n3 13 5 5\n3\n3 2 1\n3\n0 1 2\n4\n-1 2 2 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n0\n0\n1\n1",
+        "actual": "2\n0\n0\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n0\n1\n1\n1",
+        "actual": "2\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "6\n4\n3 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "2\n0\n1\n0\n1\n0",
+        "actual": "2\n0\n1\n0\n1\n0",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "6\n4\n3 0 5 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 3\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n1\n0\n1\n0",
+        "actual": "0\n0\n1\n0\n1\n0",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 1 -1\n4\n4 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "0\n0\n1\n1\n1\n1",
+        "actual": "0\n0\n1\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "6\n4\n3 7 5 5\n3\n3 5 1\n3\n3 2 2\n4\n-1 2 1 -1\n4\n4 7 1 3\n5\n1 3 1 3 2\n",
+        "expected": "2\n0\n0\n1\n1\n2",
+        "actual": "2\n0\n0\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 2\n",
+        "expected": "1\n0\n0\n1\n1\n1",
+        "actual": "1\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n1 3 0 4 2\n",
+        "expected": "1\n0\n0\n1\n1\n2",
+        "actual": "1\n0\n0\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 5 1 3\n5\n2 3 0 2 2\n",
+        "expected": "0\n0\n0\n1\n1\n2",
+        "actual": "0\n0\n0\n1\n1\n2",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n0 5 1 3\n5\n2 3 0 2 2\n",
+        "expected": "0\n0\n0\n1\n2\n2",
+        "actual": "0\n0\n0\n1\n2\n2",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n2\n1\n2",
+        "actual": "1\n0\n0\n2\n1\n2",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+        "expected": "1\n0\n0\n2\n1\n1",
+        "actual": "1\n0\n0\n2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 0 8 1\n",
+        "expected": "0\n0\n0\n2\n1\n1",
+        "actual": "0\n0\n0\n2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 3 0 2 0\n",
+        "expected": "0\n0\n0\n1\n2\n1",
+        "actual": "0\n0\n0\n1\n2\n1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n2\n1\n0",
+        "actual": "0\n0\n0\n2\n1\n0",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "6\n4\n3 1 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 2 0\n4\n4 3 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n1\n1\n0",
+        "actual": "0\n0\n0\n1\n1\n0",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "6\n4\n3 7 5 5\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 0 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n0\n1\n0\n2\n1",
+        "actual": "2\n0\n1\n0\n2\n1",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n5\n1952608156 755572301 1101000000 999999998 999999999\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n5\n1281844869 594621428 1000000000 1496043289 1013691690\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "6\n4\n5 7 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-2 2 3 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "0\n0\n1\n1\n1\n0",
+        "actual": "0\n0\n1\n1\n1\n0",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 2\n4\n-1 2 2 -2\n4\n4 5 1 5\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n1\n0\n0\n0",
+        "actual": "0\n0\n1\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 2 6\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n1\n0\n2",
+        "actual": "1\n0\n0\n1\n0\n2",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "6\n4\n7 3 5 5\n3\n3 0 0\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 4\n5\n1 3 0 4 0\n",
+        "expected": "2\n0\n1\n0\n0\n0",
+        "actual": "2\n0\n1\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 3 2 0\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n2\n0\n2",
+        "actual": "1\n0\n0\n2\n0\n2",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "6\n4\n3 7 8 1\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -2\n4\n0 5 1 3\n5\n2 2 0 2 2\n",
+        "expected": "0\n0\n0\n1\n2\n0",
+        "actual": "0\n0\n0\n1\n2\n0",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "6\n4\n6 7 5 1\n3\n3 2 0\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 5 1 3\n5\n2 0 1 4 2\n",
+        "expected": "0\n0\n1\n0\n1\n2",
+        "actual": "0\n0\n1\n0\n1\n2",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "6\n4\n2 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 1 -1\n4\n4 3 1 3\n5\n2 3 0 4 0\n",
+        "expected": "1\n0\n0\n1\n1\n0",
+        "actual": "1\n0\n0\n1\n1\n0",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "6\n4\n3 0 4 5\n3\n3 2 1\n3\n3 1 4\n4\n-1 2 2 -1\n4\n4 5 1 2\n5\n2 3 1 3 1\n",
+        "expected": "0\n0\n0\n0\n1\n0",
+        "actual": "0\n0\n0\n0\n1\n0",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "6\n4\n5 3 5 5\n3\n3 0 1\n3\n6 1 2\n4\n-1 2 3 -1\n4\n4 4 2 3\n5\n0 3 0 4 0\n",
+        "expected": "0\n1\n1\n0\n1\n0",
+        "actual": "0\n1\n1\n0\n1\n0",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 2\n",
+        "expected": "2\n1\n1\n0\n1\n1",
+        "actual": "2\n1\n1\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "6\n4\n5 1 5 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+        "expected": "0\n0\n0\n2\n2\n0",
+        "actual": "0\n0\n0\n2\n2\n0",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "6\n4\n3 7 5 5\n3\n3 0 1\n3\n3 1 2\n4\n-1 2 2 -1\n4\n5 5 1 3\n5\n4 1 1 4 2\n",
+        "expected": "2\n1\n1\n0\n1\n2",
+        "actual": "2\n1\n1\n0\n1\n2",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "6\n4\n3 7 5 5\n3\n3 1 2\n3\n3 1 2\n4\n-1 2 2 -1\n4\n4 2 1 3\n5\n2 3 0 4 0\n",
+        "expected": "2\n1\n1\n0\n1\n0",
+        "actual": "2\n1\n1\n0\n1\n0",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "6\n4\n3 7 4 10\n3\n1 2 1\n3\n3 1 2\n4\n-1 2 1 -2\n4\n7 5 1 3\n5\n2 3 0 4 2\n",
+        "expected": "1\n0\n1\n1\n1\n1",
+        "actual": "1\n0\n1\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "6\n4\n3 7 8 10\n3\n3 2 1\n3\n3 1 0\n4\n-1 2 1 -1\n4\n2 1 1 3\n5\n2 3 0 3 4\n",
+        "expected": "0\n0\n0\n1\n0\n0",
+        "actual": "0\n0\n0\n1\n0\n0",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "6\n4\n3 7 5 7\n3\n3 2 0\n3\n1 1 2\n4\n-1 2 -1 -1\n4\n4 3 3 6\n5\n1 3 0 8 2\n",
+        "expected": "1\n0\n0\n0\n0\n2",
+        "actual": "1\n0\n0\n0\n0\n2",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "6\n4\n5 1 3 7\n3\n3 3 0\n3\n1 1 2\n4\n-1 2 1 0\n4\n4 1 2 3\n5\n1 3 1 8 1\n",
+        "expected": "1\n0\n0\n2\n2\n0",
+        "actual": "1\n0\n0\n2\n2\n0",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.17341874999999995,
+  "total_latency_ms": 163013,
+  "iterations_used": null,
+  "early_stopped": null
+}

@@ -1,0 +1,524 @@
+{
+  "study": "A",
+  "condition": "A1",
+  "task_id": "cc_043",
+  "replica": 2,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        parity = [0]*(n+1)  # parity to root\n        \n        def find(x):\n            if parent[x] == x: return x, 0\n            root, p = find(parent[x])\n            parity[x] ^= parity[parent[x]]\n            parent[x] = root\n            return root, parity[x]\n        \n        def union(x, y, p):  # d[x] XOR d[y] = p\n            rx, px = find(x)\n            ry, py = find(y)\n            if rx == ry:\n                return (px ^ py) == p\n            if rank[rx] < rank[ry]: rx,ry,px,py = ry,rx,py,px\n            parent[ry] = rx\n            parity[ry] = px ^ py ^ p\n            if rank[rx] == rank[ry]: rank[rx]+=1\n            return True\n        \n        ok = True\n        for x,y,v in edges:\n            if v != -1:\n                ep = bin(v).count('1') % 2\n                if not union(x, y, ep): ok = False\n        for a,b,p in queries:\n            if not union(a, b, p): ok = False\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        print(\"YES\")\n        for x,y,v in edges:\n            if v != -1:\n                print(x,y,v)\n            else:\n                rx,px = find(x); ry,py = find(y)\n                ep = px ^ py  # d[x]^d[y]\n                print(x,y,ep)\n\nsolve()",
+    "input_tokens": 1503,
+    "output_tokens": 4096,
+    "cost_usd": 0.065949,
+    "latency_ms": 52065
+  },
+  "reviews": [
+    {
+      "role": "generalist",
+      "model": "claude-opus-4-6",
+      "verdict": "FAIL",
+      "bugs_reported": 1,
+      "bugs": [
+        {
+          "description": "Unknown edges (v==-1) are never added to the Union-Find structure. This means elf constraints that pass through unknown edges cannot properly propagate, since the two sides of an unknown edge remain in separate components. The code should union unknown edge endpoints (with parity 0 initially as a free variable) so that elf constraints can determine their parity.",
+          "line": 43,
+          "severity": "critical",
+          "triggering_input": "1\n3 1\n1 2 -1\n2 3 -1\n1 3 1"
+        }
+      ],
+      "raw_response": "Looking at this problem, I need to verify the approach and find bugs.\n\n**Approach Analysis:**\n- The code uses a Union-Find with parity to track XOR of parities along paths.\n- For known edges, it unions the endpoints with the parity of the edge value's popcount.\n- For elf constraints, it unions endpoints with the given parity.\n- For unknown edges, it tries to determine what parity they should have and outputs 0 or 1.\n\n**Bug Analysis:**\n\n1. **Line ~55 (output for unknown edges):** When `v == -1` and the edge endpoints are already in the same component, `ep = px ^ py` gives the required parity. But if they're in different components (not yet connected by constraints), the edge is free and `ep` could be anything \u2014 but the code still calls `find` without having unioned x and y for this edge. Wait, actually the edges ARE processed in the union step above. Let me re-check...\n\nActually, when `v == -1`, the edge is NOT unioned in the first loop (only `v != -1` edges are unioned). The elf queries may or may not have connected x and y. So when outputting:\n- If x and y are in the same component (connected via other edges + queries), `find(x)` and `find(y)` give the required parity \u2192 `ep = px ^ py` is correct, output `ep` (0 or 1).\n- If x and y are in different components, they're free. `ep = px ^ py` is meaningless across different components, but outputting 0 would work. However, `rx != ry` means they're disconnected, so any value works. The code outputs `px ^ py` which is arbitrary but valid since there's no constraint.\n\n2. **Critical issue with the `find` function:** The `find` function returns `(root, parity[x])` but also modifies `parity[x]` via path compression. However, the function uses a nested closure modifying `parity` from the outer scope. This should work in Python.\n\n3. **The unknown edges are never unioned with each other.** If two unknown edges share a node, and an elf constraint spans both, the first unknown edge's output might conflict with the second. Wait \u2014 actually the elf constraints union the nodes, so the parities are determined through the elf constraints. The unknown edges just need to output a value consistent with whatever parity is determined. But the unknown edges themselves are tree edges \u2014 they MUST connect the nodes. The code never unions the unknown edge endpoints, so the tree structure isn't fully represented in the DSU.\n\n**This is the critical bug:** Unknown edges are tree edges but are never added to the DSU. When computing the output value for an unknown edge where x and y are in different components (because the only connection between them was through this unknown edge), the code can't determine the correct parity. It should union them. But more importantly, if two elf constraints both pass through an unknown edge, the DSU might not properly propagate the constraint since the unknown edge isn't in the DSU.\n\nWait \u2014 elf constraints union `a` and `b` directly with parity `p`, which represents the XOR of parities along the entire path. The tree structure matters because the path is determined by the tree. The code treats elf constraints as direct edges in the DSU, but they should represent path constraints on the tree. **The entire approach is wrong** \u2014 it ignores the tree structure and treats each elf constraint as a direct relationship between a and b, but the actual relationship involves all edges on the path.\n\nActually, re-reading: the parity of popcount of XOR of edge values along the path equals XOR of parities of popcount of individual edge values. So the elf's parity = XOR of individual edge parities along the path. This means we can assign each edge a single bit (parity), and the constraint is that XOR along path = p. This IS a standard XOR-constraint problem on a tree, solvable with weighted DSU on nodes. The approach is actually correct conceptually.\n\nBut the bug remains: **unknown edges are not unioned**, so path constraints through unknown edges aren't properly linked.\n\n{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Unknown edges (v==-1) are never added to the Union-Find structure. This means elf constraints that pass through unknown edges cannot properly propagate, since the two sides of an unknown edge remain in separate components. The code should union unknown edge endpoints (with parity 0 initially as a free variable) so that elf constraints can determine their parity.\", \"line\": 43, \"severity\": \"critical\", \"triggering_input\": \"1\\n3 1\\n1 2 -1\\n2 3 -1\\n1 3 1\"}]}",
+      "parsed": {
+        "verdict": "FAIL",
+        "bugs": [
+          {
+            "description": "Unknown edges (v==-1) are never added to the Union-Find structure. This means elf constraints that pass through unknown edges cannot properly propagate, since the two sides of an unknown edge remain in separate components. The code should union unknown edge endpoints (with parity 0 initially as a free variable) so that elf constraints can determine their parity.",
+            "line": 43,
+            "severity": "critical",
+            "triggering_input": "1\n3 1\n1 2 -1\n2 3 -1\n1 3 1"
+          }
+        ]
+      },
+      "input_tokens": 2246,
+      "output_tokens": 1097,
+      "cost_usd": 0.115965,
+      "latency_ms": 27388
+    }
+  ],
+  "aggregated_bugs": [
+    {
+      "description": "Unknown edges (v==-1) are never added to the Union-Find structure. This means elf constraints that pass through unknown edges cannot properly propagate, since the two sides of an unknown edge remain in separate components. The code should union unknown edge endpoints (with parity 0 initially as a free variable) so that elf constraints can determine their parity.",
+      "line": 43,
+      "severity": "critical",
+      "triggering_input": "1\n3 1\n1 2 -1\n2 3 -1\n1 3 1"
+    }
+  ],
+  "fix": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        parity = [0]*(n+1)  # parity to parent\n        \n        def find(x):\n            if parent[x] == x:\n                return x, 0\n            root, p = find(parent[x])\n            parity[x] ^= parity[parent[x]]\n            parent[x] = root\n            return root, parity[x]\n        \n        def union(x, y, p):  # d[x] XOR d[y] = p\n            rx, px = find(x)\n            ry, py = find(y)\n            if rx == ry:\n                return (px ^ py) == p\n            if rank[rx] < rank[ry]:\n                rx,ry,px,py = ry,rx,py,px\n            parent[ry] = rx\n            parity[ry] = px ^ py ^ p\n            if rank[rx] == rank[ry]:\n                rank[rx] += 1\n            return True\n        \n        ok = True\n        # First, union all edges (both known and unknown)\n        # Unknown edges get parity 0 as free variable\n        for x,y,v in edges:\n            if v != -1:\n                ep = bin(v).count('1') % 2\n                if not union(x, y, ep):\n                    ok = False\n            else:\n                # Union with parity 0 (free - will be determined by constraints)\n                union(x, y, 0)\n        \n        for a,b,p in queries:\n            if not union(a, b, p):\n                ok = False\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        print(\"YES\")\n        for x,y,v in edges:\n            if v != -1:\n                print(x,y,v)\n            else:\n                rx, px = find(x)\n                ry, py = find(y)\n                ep = px ^ py  # d[x]^d[y] = parity of edge\n                print(x, y, ep)\n\nsolve()",
+    "input_tokens": 2306,
+    "output_tokens": 907,
+    "cost_usd": 0.020523,
+    "latency_ms": 9370
+  },
+  "test_results": {
+    "total": 50,
+    "passed": 8,
+    "failed": 42,
+    "errors": 0,
+    "pass_rate": 0.16,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 0",
+        "actual": "NO\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "NO\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "NO\nNO\nNO\nYES\n1 2 0",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+        "actual": "NO\nNO\nNO\nYES\n1 2 2",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "NO\nNO\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 0\nNO\nYES\n1 2 1",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+        "actual": "NO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+        "actual": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.20243699999999998,
+  "total_latency_ms": 88823
+}

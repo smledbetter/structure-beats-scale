@@ -1,0 +1,2043 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_021",
+  "replica": 2,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "For each possible (r1, r2, c1, c2) where r2-r1+1 >= 5 and c2-c1+1 >= 4:\n- cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom row interior) + (number of 1s in interior)\n\nLet me define:\n- prefix[i][j] = sum of A[0..i-1][0..j-1]\n\nThen sum in rectangle (r1,c1) to (r2,c2) = prefix[r2+1][c2+1] - prefix[r1][c2+1] - prefix[r2+1][c1] + prefix[r1][c1]\n\nThe naive approach is O(n\u00b2m\u00b2) which is 400^4 = way too slow.\n\nI need to optimize. Let me fix c1 and c2, then iterate over r1 and r2.\n\nFor fixed c1, c2:\n- Top row cost (interior cols): sum of row r1 from c1+1 to c2-1 \u2192 ones needed = (c2-c1-1) - rowsum[r1][c1+1..c2-1]\n- Bottom row cost: similar for r2\n- Left col cost: sum of col c1 from r1+1 to r2-1 \u2192 ones needed = (r2-r1-1) - colsum[c1][r1+1..r2-1]\n- Right col cost: similar for c2\n- Interior cost: sum of interior 1s\n\nFor fixed c1, c2, I can precompute for each row r:\n- top_cost[r] = (c2-c1-1) - rowsum[r][c1+1..c2-1]  (zeros in that row segment)\n- Also precompute prefix sums for columns and interior.\n\nWith O(m\u00b2) pairs of columns and O(n\u00b2) pairs of rows, total O(n\u00b2m\u00b2) is too slow.\n\nLet me fix c1, c2 and then for each r1, find best r2 efficiently.\n\nFor fixed c1, c2:\n- left_col[r] = A[r][c1], right_col[r] = A[r][c2]\n- For r1 fixed, cost = top_cost[r1] + bottom_cost[r2] + left_zeros(r1+1,r2-1) + right_zeros(r1+1,r2-1) + interior_ones(r1+1,r2-1)\n\nwhere left_zeros(r1+1,r2-1) = (r2-r1-1) - sum(left_col[r1+1..r2-1])\n\nLet f(r) = -left_col[r] - right_col[r] + interior_row[r] where interior_row[r] = sum of A[r][c1+1..c2-1]\n\nThen varying part = (r2-r1-1)*2 - prefix_left - prefix_right + prefix_interior = sum over r in [r1+1,r2-1] of (2 - left_col[r] - right_col[r] + interior_row[r]) ... wait that's (2 - left - right) + interior.\n\nFor each (c1,c2), precompute h[r] = (1-A[r][c1]) + (1-A[r][c2]) + interior_ones[r] for r in interior rows, then use prefix sums. Then iterate r1, r2 in O(n\u00b2). Total O(m\u00b2\u00b7n\u00b2) still too slow.\n\nActually n,m\u2264400 and sum\u2264400, so n\u00b2m\u00b2 could be 400\u00b2\u00b7400\u00b2 but sum constraints mean effectively O(400\u00b2\u00b7400\u00b2/something). Let me just try O(n\u00b2\u00b7m\u00b2) with small constants.\n\n400*400 = 160000 pairs each, 160000*160000 = way too much. Need O(n\u00b2*m) or O(n*m\u00b2).\n\nLet me fix r1,r2 and iterate over c1,c2 efficiently.\n\nimport sys\ninput=sys.stdin.readline\n\ndef solve():\n    n,m=map(int,input().split())\n    A=[]\n    for _ in range(n):\n        A.append(list(map(int,list(input().strip()))))\n    \n    pre=[[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1]=pre[i][j+1]+pre[i+1][j]-pre[i][j]+A[i][j]\n    \n    def rsum(r1,c1,r2,c2):\n        if r1>r2 or c1>c2: return 0\n        return pre[r2+1][c2+1]-pre[r1][c2+1]-pre[r2+1][c1]+pre[r1][c1]\n    \n    ans=float('inf')\n    # fix r1, r2\n    for r1 in range(n):\n        for r2 in range(r1+4,n):\n            a=r2-r1+1\n            # precompute for each column c, cost of left/right col interior\n            # left_cost[c] = zeros in col c from r1+1 to r2-1\n            # = (a-2) - rsum(r1+1,c,r2-1,c)\n            # For top row: fix c1,c2, cost = zeros in row r1 from c1+1 to c2-1\n            # For bottom row: zeros in row r2 from c1+1 to c2-1\n            # Interior: ones in r1+1..r2-1, c1+1..c2-1\n            \n            # For fixed r1,r2, iterate c1 then find best c2\n            # cost(c1,c2) = left(c1)+right(c2)+top(c1,c2)+bot(c1,c2)+int(c1,c2)\n            # left(c) = (a-2) - rsum(r1+1,c,r2-1,c)\n            # right(c) = (a-2) - rsum(r1+1,c,r2-1,c)  same formula\n            # top(c1,c2) = (c2-c1-1) - rsum(r1,c1+1,r1,c2-1)\n            # bot(c1,c2) = (c2-c1-1) - rsum(r2,c1+1,r2,c2-1)\n            # int(c1,c2) = rsum(r1+1,c1+1,r2-1,c2-1)\n            \n            # top+bot+int for fixed c1, varying c2:\n            # = (c2-c1-1) - (rowsum_top[c2-1]-rowsum_top[c1])\n            #   + (c2-c1-1) - (rowsum_bot[c2-1]-rowsum_bot[c1])\n            #   + intsum[c2-1] - intsum[c1]  (prefix of interior cols)\n            # where intsum[c] = rsum(r1+1,c1+1,r2-1,c) ... depends on c1 too\n            \n            # This is still O(m\u00b2) per (r1,r2) pair = O(n\u00b2m\u00b2) total\n            # But sum of n \u2264 400 and sum of m \u2264 400... \n            # Actually for a single test case n,m\u2264400, so n\u00b2=160000, m\u00b2=160000\n            # That's 2.56*10^10 ops, too slow\n            \n            # Need smarter approach for fixed r1,r2\n            # For each c, define:\n            # lc[c] = (a-2) - rsum(r1+1,c,r2-1,c)  (cost to make col c interior all 1)\n            # tr[c] = A[r1][c]  (top row value)\n            # br[c] = A[r2][c]  (bottom row value)\n            \n            # cost(c1,c2) = lc[c1] + lc[c2] \n            #             + sum_{c=c1+1}^{c2-1} (1-tr[c]) + (1-br[c])\n            #             + sum_{c=c1+1}^{c2-1} rsum(r1+1,c,r2-1,c) * ... no\n            # interior ones = rsum(r1+1,c1+1,r2-1,c2-1)\n            \n            # Let me define for each column c:\n            # val[c] = (1-tr[c]) + (1-br[c]) + rsum(r1+1,c,r2-1,c)\n            # = 2 - tr[c] - br[c] + (col sum of interior)\n            # Then sum_{c=c1+1}^{c2-1} val[c] = top_zeros + bot_zeros + interior_ones\n            \n            # cost(c1,c2) = lc[c1] + lc[c2] + prefix_val[c2-1] - prefix_val[c1]\n            # where prefix_val[c] = sum_{j=0}^{c} val[j]\n            \n            # For fixed c1, we want to minimize over c2 >= c1+3:\n            # lc[c2] + prefix_val[c2-1] - prefix_val[c1] + lc[c1]\n            # = lc[c2] + prefix_val[c2-1] + (lc[c1] - prefix_val[c1])\n            \n            # So for each c1, best c2 >= c1+3 minimizes lc[c2] + prefix_val[c2-1]\n            # We can precompute suffix minimum of lc[c2] + prefix_val[c2-1] for c2 >= c1+3\n            \n            # This gives O(m) per (r1,r2) pair!\n            # Total: O(n\u00b2 * m) which is 400\u00b2 * 400 = 25.6M, fine!\n            \n            lc=[0]*m\n            val=[0]*m\n            for c in range(m):\n                lc[c]=(a-2)-rsum(r1+1,c,r2-1,c)\n                val[c]=(1-A[r1][c])+(1-A[r2][c])+rsum(r1+1,c,r2-1,c)\n            \n            # prefix_val[c] = sum val[0..c]\n            pv=[0]*m\n            pv[0]=val[0]\n            for c in range(1,m):\n                pv[c]=pv[c-1]+val[c]\n            \n            # For c2, define g[c2] = lc[c2] + pv[c2-1] (for c2>=1)\n            # cost(c1,c2) = lc[c1] - pv[c1] + g[c2]  (for c2 >= c1+3)\n            \n            # Precompute suffix min of g[c2] for c2 from m-1 down to 3\n            # g[c2] defined for c2 in [1, m-1], but we need c2 >= c1+3 and c2 <= m-1\n            # Also c2-1 >= 0 so c2 >= 1\n            \n            g=[0]*m\n            for c2 in range(1,m):\n                g[c2]=lc[c2]+pv[c2-1]\n            \n            # suffix_min[i] = min g[c2] for c2 in [i, m-1]\n            suf_min=[float('inf')]*m\n            suf_min[m-1]=g[m-1]\n            for i in range(m-2,0,-1):\n                suf_min[i]=min(g[i],suf_min[i+1])\n            \n            for c1 in range(m-3):\n                # c2 >= c1+3, c2 <= m-1\n                min_c2=c1+3\n                if min_c2>=m: break\n                best_g=suf_min[min_c2]\n                if best_g==float('inf'): continue\n                cost=lc[c1]-pv[c1]+best_g\n                ans=min(ans,cost)\n    \n    print(ans)\n\nt=int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 694,
+      "output_tokens": 3537,
+      "cost_usd": 0.055137,
+      "latency_ms": 43893
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        grid.append(input().strip())\n    \n    # prefix[i][j] = number of 1s in grid[0..i-1][0..j-1]\n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + (1 if grid[i][j]=='1' else 0)\n    \n    def rect_ones(r1,c1,r2,c2):\n        if r1>r2 or c1>c2: return 0\n        return pre[r2+1][c2+1]-pre[r1][c2+1]-pre[r2+1][c1]+pre[r1][c1]\n    \n    ans = float('inf')\n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            # col costs: zeros in col c, rows r1+1..r2-1\n            col_zero = []\n            for c in range(m):\n                ones = rect_ones(r1+1,c,r2-1,c)\n                col_zero.append((r2-r1-1) - ones)\n            # row costs: zeros in row r, cols c1+1..c2-1\n            # interior ones: rows r1+1..r2-1, cols c1+1..c2-1\n            for c1 in range(m-3):\n                for c2 in range(c1+3, m):\n                    top = rect_ones(r1,c1+1,r1,c2-1)\n                    top_zero = (c2-c1-1) - top\n                    bot = rect_ones(r2,c1+1,r2,c2-1)\n                    bot_zero = (c2-c1-1) - bot\n                    interior = rect_ones(r1+1,c1+1,r2-1,c2-1)\n                    cost = col_zero[c1]+col_zero[c2]+top_zero+bot_zero+interior\n                    if cost < ans:\n                        ans = cost\n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 694,
+      "output_tokens": 8192,
+      "cost_usd": 0.124962,
+      "latency_ms": 90201
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Cost = (a-2 - ones_in_left_col) + (a-2 - ones_in_right_col) + (b-2 - ones_in_top_row) + (b-2 - ones_in_bot_row) + ones_in_interior\n\nLet me use prefix sums. For each pair of columns (c1, c2) where c2-c1+1 \u2265 4 (so c2 \u2265 c1+3), and each pair of rows (r1, r2) where r2-r1+1 \u2265 5 (so r2 \u2265 r1+4):\n\nThis is O(n\u00b2m\u00b2) which for 400\u00d7400 is 400^4/4 \u2248 too large.\n\nI need a smarter approach. Let me fix the two columns c1 and c2. Then for each row r, precompute:\n- left[r] = grid[r][c1]\n- right[r] = grid[r][c2]  \n- interior_row[r] = sum of grid[r][c1+1..c2-1]\n- top_row_cost[r] = (c2-c1-1) - sum(grid[r][c1+1..c2-1])\n\nFor fixed c1, c2, I need to find rows r1 < r2 (r2 \u2265 r1+4) minimizing:\n- top_cost(r1) + bot_cost(r2) + sum_{r=r1+1}^{r2-1}(left_col_cost(r) + right_col_cost(r) + interior_cost(r))\n\nwhere left_col_cost(r) = 1 - left[r], right_col_cost(r) = 1 - right[r], interior_cost(r) = interior_row[r]\n\nLet f(r) = (1-left[r]) + (1-right[r]) + interior_row[r] for middle rows\nLet g(r) = top_row_cost(r) = (c2-c1-1) - row_sum(r, c1+1, c2-1)\n\nFor fixed c1, c2: minimize g(r1) + g(r2) + sum_{r=r1+1}^{r2-1} f(r)\n\nLet S(r) = prefix sum of f. Then sum from r1+1 to r2-1 = S[r2-1] - S[r1].\n\nSo cost = g(r1) - S[r1] + g(r2) + S[r2-1]\n\nFor each r2, minimize over r1 \u2264 r2-4: g(r1) - S[r1], then add g(r2) + S[r2-1].\n\nO(n\u00b2m) total which is 400\u00b2\u00d7400 = 25.6M, should be fine.\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        line = input().strip()\n        grid.append([int(c) for c in line])\n    \n    # prefix sum\n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + grid[i][j]\n    \n    def row_sum(r, c1, c2):  # inclusive, 0-indexed\n        return pre[r+1][c2+1] - pre[r+1][c1] - pre[r][c2+1] + pre[r][c1]\n    \n    ans = float('inf')\n    \n    for c1 in range(m):\n        for c2 in range(c1+3, m):\n            inner_len = c2 - c1 - 1\n            # g(r) = inner_len - row_sum(r, c1+1, c2-1)\n            # f(r) = (1-grid[r][c1]) + (1-grid[r][c2]) + row_sum(r, c1+1, c2-1)\n            S = [0] * (n+1)\n            for r in range(n):\n                fr = (1 - grid[r][c1]) + (1 - grid[r][c2]) + row_sum(r, c1+1, c2-1)\n                S[r+1] = S[r] + fr\n            \n            min_val = float('inf')\n            for r2 in range(4, n):\n                # r1 can be 0..r2-4\n                r1 = r2 - 4\n                g_r1 = inner_len - row_sum(r1, c1+1, c2-1)\n                val = g_r1 - S[r1]\n                if val < min_val:\n                    min_val = val\n                if min_val < float('inf'):\n                    g_r2 = inner_len - row_sum(r2, c1+1, c2-1)\n                    cost = min_val + g_r2 + S[r2-1]\n                    if cost < ans:\n                        ans = cost\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 694,
+      "output_tokens": 1727,
+      "cost_usd": 0.027987,
+      "latency_ms": 21001
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 3317,
+          "output_tokens": 0,
+          "cost_usd": 0.00082925,
+          "latency_ms": 9476
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 3295,
+          "output_tokens": 0,
+          "cost_usd": 0.00082375,
+          "latency_ms": 9611
+        }
+      ],
+      "fixes": [],
+      "final_code": "For each possible (r1, r2, c1, c2) where r2-r1+1 >= 5 and c2-c1+1 >= 4:\n- cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom row interior) + (number of 1s in interior)\n\nLet me define:\n- prefix[i][j] = sum of A[0..i-1][0..j-1]\n\nThen sum in rectangle (r1,c1) to (r2,c2) = prefix[r2+1][c2+1] - prefix[r1][c2+1] - prefix[r2+1][c1] + prefix[r1][c1]\n\nThe naive approach is O(n\u00b2m\u00b2) which is 400^4 = way too slow.\n\nI need to optimize. Let me fix c1 and c2, then iterate over r1 and r2.\n\nFor fixed c1, c2:\n- Top row cost (interior cols): sum of row r1 from c1+1 to c2-1 \u2192 ones needed = (c2-c1-1) - rowsum[r1][c1+1..c2-1]\n- Bottom row cost: similar for r2\n- Left col cost: sum of col c1 from r1+1 to r2-1 \u2192 ones needed = (r2-r1-1) - colsum[c1][r1+1..r2-1]\n- Right col cost: similar for c2\n- Interior cost: sum of interior 1s\n\nFor fixed c1, c2, I can precompute for each row r:\n- top_cost[r] = (c2-c1-1) - rowsum[r][c1+1..c2-1]  (zeros in that row segment)\n- Also precompute prefix sums for columns and interior.\n\nWith O(m\u00b2) pairs of columns and O(n\u00b2) pairs of rows, total O(n\u00b2m\u00b2) is too slow.\n\nLet me fix c1, c2 and then for each r1, find best r2 efficiently.\n\nFor fixed c1, c2:\n- left_col[r] = A[r][c1], right_col[r] = A[r][c2]\n- For r1 fixed, cost = top_cost[r1] + bottom_cost[r2] + left_zeros(r1+1,r2-1) + right_zeros(r1+1,r2-1) + interior_ones(r1+1,r2-1)\n\nwhere left_zeros(r1+1,r2-1) = (r2-r1-1) - sum(left_col[r1+1..r2-1])\n\nLet f(r) = -left_col[r] - right_col[r] + interior_row[r] where interior_row[r] = sum of A[r][c1+1..c2-1]\n\nThen varying part = (r2-r1-1)*2 - prefix_left - prefix_right + prefix_interior = sum over r in [r1+1,r2-1] of (2 - left_col[r] - right_col[r] + interior_row[r]) ... wait that's (2 - left - right) + interior.\n\nFor each (c1,c2), precompute h[r] = (1-A[r][c1]) + (1-A[r][c2]) + interior_ones[r] for r in interior rows, then use prefix sums. Then iterate r1, r2 in O(n\u00b2). Total O(m\u00b2\u00b7n\u00b2) still too slow.\n\nActually n,m\u2264400 and sum\u2264400, so n\u00b2m\u00b2 could be 400\u00b2\u00b7400\u00b2 but sum constraints mean effectively O(400\u00b2\u00b7400\u00b2/something). Let me just try O(n\u00b2\u00b7m\u00b2) with small constants.\n\n400*400 = 160000 pairs each, 160000*160000 = way too much. Need O(n\u00b2*m) or O(n*m\u00b2).\n\nLet me fix r1,r2 and iterate over c1,c2 efficiently.\n\nimport sys\ninput=sys.stdin.readline\n\ndef solve():\n    n,m=map(int,input().split())\n    A=[]\n    for _ in range(n):\n        A.append(list(map(int,list(input().strip()))))\n    \n    pre=[[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1]=pre[i][j+1]+pre[i+1][j]-pre[i][j]+A[i][j]\n    \n    def rsum(r1,c1,r2,c2):\n        if r1>r2 or c1>c2: return 0\n        return pre[r2+1][c2+1]-pre[r1][c2+1]-pre[r2+1][c1]+pre[r1][c1]\n    \n    ans=float('inf')\n    # fix r1, r2\n    for r1 in range(n):\n        for r2 in range(r1+4,n):\n            a=r2-r1+1\n            # precompute for each column c, cost of left/right col interior\n            # left_cost[c] = zeros in col c from r1+1 to r2-1\n            # = (a-2) - rsum(r1+1,c,r2-1,c)\n            # For top row: fix c1,c2, cost = zeros in row r1 from c1+1 to c2-1\n            # For bottom row: zeros in row r2 from c1+1 to c2-1\n            # Interior: ones in r1+1..r2-1, c1+1..c2-1\n            \n            # For fixed r1,r2, iterate c1 then find best c2\n            # cost(c1,c2) = left(c1)+right(c2)+top(c1,c2)+bot(c1,c2)+int(c1,c2)\n            # left(c) = (a-2) - rsum(r1+1,c,r2-1,c)\n            # right(c) = (a-2) - rsum(r1+1,c,r2-1,c)  same formula\n            # top(c1,c2) = (c2-c1-1) - rsum(r1,c1+1,r1,c2-1)\n            # bot(c1,c2) = (c2-c1-1) - rsum(r2,c1+1,r2,c2-1)\n            # int(c1,c2) = rsum(r1+1,c1+1,r2-1,c2-1)\n            \n            # top+bot+int for fixed c1, varying c2:\n            # = (c2-c1-1) - (rowsum_top[c2-1]-rowsum_top[c1])\n            #   + (c2-c1-1) - (rowsum_bot[c2-1]-rowsum_bot[c1])\n            #   + intsum[c2-1] - intsum[c1]  (prefix of interior cols)\n            # where intsum[c] = rsum(r1+1,c1+1,r2-1,c) ... depends on c1 too\n            \n            # This is still O(m\u00b2) per (r1,r2) pair = O(n\u00b2m\u00b2) total\n            # But sum of n \u2264 400 and sum of m \u2264 400... \n            # Actually for a single test case n,m\u2264400, so n\u00b2=160000, m\u00b2=160000\n            # That's 2.56*10^10 ops, too slow\n            \n            # Need smarter approach for fixed r1,r2\n            # For each c, define:\n            # lc[c] = (a-2) - rsum(r1+1,c,r2-1,c)  (cost to make col c interior all 1)\n            # tr[c] = A[r1][c]  (top row value)\n            # br[c] = A[r2][c]  (bottom row value)\n            \n            # cost(c1,c2) = lc[c1] + lc[c2] \n            #             + sum_{c=c1+1}^{c2-1} (1-tr[c]) + (1-br[c])\n            #             + sum_{c=c1+1}^{c2-1} rsum(r1+1,c,r2-1,c) * ... no\n            # interior ones = rsum(r1+1,c1+1,r2-1,c2-1)\n            \n            # Let me define for each column c:\n            # val[c] = (1-tr[c]) + (1-br[c]) + rsum(r1+1,c,r2-1,c)\n            # = 2 - tr[c] - br[c] + (col sum of interior)\n            # Then sum_{c=c1+1}^{c2-1} val[c] = top_zeros + bot_zeros + interior_ones\n            \n            # cost(c1,c2) = lc[c1] + lc[c2] + prefix_val[c2-1] - prefix_val[c1]\n            # where prefix_val[c] = sum_{j=0}^{c} val[j]\n            \n            # For fixed c1, we want to minimize over c2 >= c1+3:\n            # lc[c2] + prefix_val[c2-1] - prefix_val[c1] + lc[c1]\n            # = lc[c2] + prefix_val[c2-1] + (lc[c1] - prefix_val[c1])\n            \n            # So for each c1, best c2 >= c1+3 minimizes lc[c2] + prefix_val[c2-1]\n            # We can precompute suffix minimum of lc[c2] + prefix_val[c2-1] for c2 >= c1+3\n            \n            # This gives O(m) per (r1,r2) pair!\n            # Total: O(n\u00b2 * m) which is 400\u00b2 * 400 = 25.6M, fine!\n            \n            lc=[0]*m\n            val=[0]*m\n            for c in range(m):\n                lc[c]=(a-2)-rsum(r1+1,c,r2-1,c)\n                val[c]=(1-A[r1][c])+(1-A[r2][c])+rsum(r1+1,c,r2-1,c)\n            \n            # prefix_val[c] = sum val[0..c]\n            pv=[0]*m\n            pv[0]=val[0]\n            for c in range(1,m):\n                pv[c]=pv[c-1]+val[c]\n            \n            # For c2, define g[c2] = lc[c2] + pv[c2-1] (for c2>=1)\n            # cost(c1,c2) = lc[c1] - pv[c1] + g[c2]  (for c2 >= c1+3)\n            \n            # Precompute suffix min of g[c2] for c2 from m-1 down to 3\n            # g[c2] defined for c2 in [1, m-1], but we need c2 >= c1+3 and c2 <= m-1\n            # Also c2-1 >= 0 so c2 >= 1\n            \n            g=[0]*m\n            for c2 in range(1,m):\n                g[c2]=lc[c2]+pv[c2-1]\n            \n            # suffix_min[i] = min g[c2] for c2 in [i, m-1]\n            suf_min=[float('inf')]*m\n            suf_min[m-1]=g[m-1]\n            for i in range(m-2,0,-1):\n                suf_min[i]=min(g[i],suf_min[i+1])\n            \n            for c1 in range(m-3):\n                # c2 >= c1+3, c2 <= m-1\n                min_c2=c1+3\n                if min_c2>=m: break\n                best_g=suf_min[min_c2]\n                if best_g==float('inf'): continue\n                cost=lc[c1]-pv[c1]+best_g\n                ans=min(ans,cost)\n    \n    print(ans)\n\nt=int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+            "expected": "12",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+            "expected": "12",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+            "expected": "13",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+            "expected": "7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+            "expected": "6",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "4",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+            "expected": "12",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+            "expected": "12",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+            "expected": "13",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+            "expected": "11",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+            "expected": "7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+            "expected": "7",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+            "expected": "8",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+            "expected": "9",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 2\n    - cost = (number of 0s in left col interior) + (number of 0s in right col interior) + (number of 0s in top row interior) + (number of 0s in bottom r",
+            "runtime_ms": 29,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm enumerates all pairs of rows (r1,r2) and all pairs of columns (c1,c2) resulting in O(n^2 * m^2) time. With n,m up to 400 this leads to ~2.5e10 operations and will TLE. The solution needs a more efficient approach (e.g., O(n^2 * m) or O(m^2 * n)).\",\n      \"line\": 21,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n400 400\\n\" + (\"0\"*400 + \"\\n\")*400\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 1168,
+          "output_tokens": 148,
+          "cost_usd": 0.000403,
+          "latency_ms": 3893
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm uses four nested loops over rows and columns (r1, r2, c1, c2) resulting in O(n^2 * m^2) time complexity. With n,m up to 400 this leads to ~2.5e10 operations and will time out on the worst\u2011case input.",
+              "line": 21,
+              "severity": "critical",
+              "triggering_input": "n=400, m=400 with arbitrary grid"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm uses four nested loops over rows and columns (r1, r2, c1, c2) resulting in O(n^2 * m^2) time complexity. With n,m up to 400 this leads to ~2.5e10 operations and will time out on the worst\u2011case input.\",\n      \"line\": 21,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"n=400, m=400 with arbitrary grid\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm uses four nested loops over rows and columns (r1, r2, c1, c2) resulting in O(n^2 * m^2) time complexity. With n,m up to 400 this leads to ~2.5e10 operations and will time out on the worst\u2011case input.",
+                "line": 21,
+                "severity": "critical",
+                "triggering_input": "n=400, m=400 with arbitrary grid"
+              }
+            ]
+          },
+          "input_tokens": 1196,
+          "output_tokens": 122,
+          "cost_usd": 0.0003905,
+          "latency_ms": 3734
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        grid.append(input().strip())\n    \n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + (1 if grid[i][j]=='1' else 0)\n    \n    def rect_ones(r1,c1,r2,c2):\n        if r1>r2 or c1>c2: return 0\n        return pre[r2+1][c2+1]-pre[r1][c2+1]-pre[r2+1][c1]+pre[r1][c1]\n    \n    ans = float('inf')\n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            h = r2 - r1 - 1\n            col_zero = [h - rect_ones(r1+1,c,r2-1,c) for c in range(m)]\n            top_p = [0]*(m+1)\n            bot_p = [0]*(m+1)\n            S = [0]*(m+1)\n            for c in range(m):\n                top_p[c+1] = top_p[c] + (1 if grid[r1][c]=='1' else 0)\n                bot_p[c+1] = bot_p[c] + (1 if grid[r2][c]=='1' else 0)\n                S[c+1] = S[c] + rect_ones(r1+1,c,r2-1,c)\n            \n            min_val = float('inf')\n            for c2 in range(3, m):\n                c1_max = c2 - 3\n                c1 = c1_max\n                val = col_zero[c1] + top_p[c1+1] + bot_p[c1+1] - S[c1] - 2*c1\n                if val < min_val:\n                    min_val = val\n                cost = min_val + col_zero[c2] + 2*(c2-1) - top_p[c2] - bot_p[c2] + S[c2-1] + 2\n                if cost < ans:\n                    ans = cost\n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 1448,
+          "output_tokens": 2324,
+          "cost_usd": 0.039204,
+          "latency_ms": 23714
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        grid.append(input().strip())\n    \n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + (1 if grid[i][j]=='1' else 0)\n    \n    def rect_ones(r1,c1,r2,c2):\n        if r1>r2 or c1>c2: return 0\n        return pre[r2+1][c2+1]-pre[r1][c2+1]-pre[r2+1][c1]+pre[r1][c1]\n    \n    ans = float('inf')\n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            h = r2 - r1 - 1\n            col_zero = [h - rect_ones(r1+1,c,r2-1,c) for c in range(m)]\n            top_p = [0]*(m+1)\n            bot_p = [0]*(m+1)\n            S = [0]*(m+1)\n            for c in range(m):\n                top_p[c+1] = top_p[c] + (1 if grid[r1][c]=='1' else 0)\n                bot_p[c+1] = bot_p[c] + (1 if grid[r2][c]=='1' else 0)\n                S[c+1] = S[c] + rect_ones(r1+1,c,r2-1,c)\n            \n            min_val = float('inf')\n            for c2 in range(3, m):\n                c1_max = c2 - 3\n                c1 = c1_max\n                val = col_zero[c1] + top_p[c1+1] + bot_p[c1+1] - S[c1] - 2*c1\n                if val < min_val:\n                    min_val = val\n                cost = min_val + col_zero[c2] + 2*(c2-1) - top_p[c2] - bot_p[c2] + S[c2-1] + 2\n                if cost < ans:\n                    ans = cost\n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 4,
+        "failed": 46,
+        "errors": 0,
+        "pass_rate": 0.08,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+            "expected": "12",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+            "expected": "9",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+            "expected": "13",
+            "actual": "14",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+            "expected": "7",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+            "expected": "6",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "4",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "3",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+            "expected": "11",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+            "expected": "11",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+            "expected": "11",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+            "expected": "12",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+            "expected": "11",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+            "expected": "11",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+            "expected": "9",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+            "expected": "13",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+            "expected": "10",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+            "expected": "11",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+            "expected": "11",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+            "expected": "10",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+            "expected": "9",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+            "expected": "9",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+            "expected": "7",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+            "expected": "7",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+            "expected": "8",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+            "expected": "9",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "Off\u2011by\u2011one error in the cost calculation: the prefix sums S are indexed incorrectly. The interior sum should be S[r2] - S[r1+1] but the code uses S[r2-1] - S[r1], which includes the top row and excludes the bottom interior row, leading to wrong total flips.",
+              "line": 37,
+              "severity": "critical",
+              "triggering_input": "1\n5 4\n0000\n0000\n0000\n0000\n0000\n"
+            },
+            {
+              "description": "Same off\u2011by\u2011one error propagates to the final cost computation where S[r2-1] is used instead of S[r2]. This causes the algorithm to evaluate incorrect portal costs.",
+              "line": 42,
+              "severity": "critical",
+              "triggering_input": "1\n5 4\n0000\n0000\n0000\n0000\n0000\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Off\u2011by\u2011one error in the cost calculation: the prefix sums S are indexed incorrectly. The interior sum should be S[r2] - S[r1+1] but the code uses S[r2-1] - S[r1], which includes the top row and excludes the bottom interior row, leading to wrong total flips.\",\n      \"line\": 37,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n5 4\\n0000\\n0000\\n0000\\n0000\\n0000\\n\"\n    },\n    {\n      \"description\": \"Same off\u2011by\u2011one error propagates to the final cost computation where S[r2-1] is used instead of S[r2]. This causes the algorithm to evaluate incorrect portal costs.\",\n      \"line\": 42,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n5 4\\n0000\\n0000\\n0000\\n0000\\n0000\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Off\u2011by\u2011one error in the cost calculation: the prefix sums S are indexed incorrectly. The interior sum should be S[r2] - S[r1+1] but the code uses S[r2-1] - S[r1], which includes the top row and excludes the bottom interior row, leading to wrong total flips.",
+                "line": 37,
+                "severity": "critical",
+                "triggering_input": "1\n5 4\n0000\n0000\n0000\n0000\n0000\n"
+              },
+              {
+                "description": "Same off\u2011by\u2011one error propagates to the final cost computation where S[r2-1] is used instead of S[r2]. This causes the algorithm to evaluate incorrect portal costs.",
+                "line": 42,
+                "severity": "critical",
+                "triggering_input": "1\n5 4\n0000\n0000\n0000\n0000\n0000\n"
+              }
+            ]
+          },
+          "input_tokens": 1749,
+          "output_tokens": 225,
+          "cost_usd": 0.000606,
+          "latency_ms": 7648
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1749,
+          "output_tokens": 0,
+          "cost_usd": 0.00043725,
+          "latency_ms": 8648
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        line = input().strip()\n        grid.append([int(c) for c in line])\n    \n    # prefix sum\n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + grid[i][j]\n    \n    def row_sum(r, c1, c2):  # inclusive, 0-indexed\n        return pre[r+1][c2+1] - pre[r+1][c1] - pre[r][c2+1] + pre[r][c1]\n    \n    ans = float('inf')\n    \n    for c1 in range(m):\n        for c2 in range(c1+3, m):\n            inner_len = c2 - c1 - 1\n            # g(r) = inner_len - row_sum(r, c1+1, c2-1)\n            # f(r) = (1-grid[r][c1]) + (1-grid[r][c2]) + row_sum(r, c1+1, c2-1)\n            S = [0] * (n+1)\n            for r in range(n):\n                fr = (1 - grid[r][c1]) + (1 - grid[r][c2]) + row_sum(r, c1+1, c2-1)\n                S[r+1] = S[r] + fr\n            \n            min_val = float('inf')\n            for r2 in range(4, n):\n                # r1 can be 0..r2-4, update min_val with r1 = r2-4\n                r1 = r2 - 4\n                g_r1 = inner_len - row_sum(r1, c1+1, c2-1)\n                val = g_r1 - S[r1+1]\n                if val < min_val:\n                    min_val = val\n                if min_val < float('inf'):\n                    g_r2 = inner_len - row_sum(r2, c1+1, c2-1)\n                    cost = min_val + g_r2 + S[r2]\n                    if cost < ans:\n                        ans = cost\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 2317,
+          "output_tokens": 893,
+          "cost_usd": 0.020346,
+          "latency_ms": 8984
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        line = input().strip()\n        grid.append([int(c) for c in line])\n    \n    # prefix sum\n    pre = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            pre[i+1][j+1] = pre[i][j+1] + pre[i+1][j] - pre[i][j] + grid[i][j]\n    \n    def row_sum(r, c1, c2):  # inclusive, 0-indexed\n        return pre[r+1][c2+1] - pre[r+1][c1] - pre[r][c2+1] + pre[r][c1]\n    \n    ans = float('inf')\n    \n    for c1 in range(m):\n        for c2 in range(c1+3, m):\n            inner_len = c2 - c1 - 1\n            # g(r) = inner_len - row_sum(r, c1+1, c2-1)\n            # f(r) = (1-grid[r][c1]) + (1-grid[r][c2]) + row_sum(r, c1+1, c2-1)\n            S = [0] * (n+1)\n            for r in range(n):\n                fr = (1 - grid[r][c1]) + (1 - grid[r][c2]) + row_sum(r, c1+1, c2-1)\n                S[r+1] = S[r] + fr\n            \n            min_val = float('inf')\n            for r2 in range(4, n):\n                # r1 can be 0..r2-4, update min_val with r1 = r2-4\n                r1 = r2 - 4\n                g_r1 = inner_len - row_sum(r1, c1+1, c2-1)\n                val = g_r1 - S[r1+1]\n                if val < min_val:\n                    min_val = val\n                if min_val < float('inf'):\n                    g_r2 = inner_len - row_sum(r2, c1+1, c2-1)\n                    cost = min_val + g_r2 + S[r2]\n                    if cost < ans:\n                        ans = cost\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+            "expected": "13",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+            "expected": "7",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+            "expected": "6",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "4",
+            "actual": "4",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+            "expected": "13",
+            "actual": "13",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+            "expected": "11",
+            "actual": "11",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+            "expected": "7",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+            "expected": "10",
+            "actual": "10",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+            "expected": "7",
+            "actual": "7",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+            "expected": "5",
+            "actual": "5",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+            "expected": "9",
+            "actual": "9",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 2,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.27112574999999994,
+  "total_latency_ms": 230803,
+  "iterations_used": null,
+  "early_stopped": null
+}

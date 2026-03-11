@@ -1,0 +1,1452 @@
+{
+  "study": "C",
+  "condition": "C7",
+  "task_id": "cc_043",
+  "replica": 1,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Key insight: The parity of popcount(XOR) is just the XOR of parities of popcount of each edge value. Because popcount(a XOR b) parity = popcount(a) parity XOR popcount(b) parity.\n\nSo for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n\nFor known edges: parity bit is fixed = popcount(v) % 2\nFor unknown edges: parity bit can be 0 or 1 (we can choose v freely)\n\nFor each elf query (a, b, p): the XOR of parity bits on the path from a to b must equal p.\n\nThis is a classic problem solvable with DSU (weighted DSU / bipartite check).\n\nAssign each node a parity value relative to root. Let dist[v] = XOR of parity bits from root to v. Then for edge (a,b,p): dist[a] XOR dist[b] = p.\n\nThis is exactly a 2-coloring / DSU with parity problem.\n\nSteps:\n1. Build the tree, compute parity of each known edge\n2. For unknown edges, assign parity bit = 0 initially (we'll determine from constraints)\n3. Root the tree, compute dist[] for each node using known parities (unknown edges contribute 0)\n4. For each elf query, check dist[a] XOR dist[b] == p. If not, we need to flip some unknown edge on the path.\n\nActually, let me think differently using DSU:\n\n- Use a weighted DSU where weight represents parity from node to its root\n- For known edges: union with fixed parity\n- For elf queries: union with constraint p\n\nIf any contradiction arises \u2192 NO.\n\nFor unknown edges not constrained: assign parity 0 (value 0 works).\nFor unknown edges constrained: assign appropriate value.\n\nAfter DSU, we need to assign actual values to unknown edges. If an unknown edge has parity 0, assign v=0. If parity 1, assign v=1.\n\nLet me implement this:\n\n1. Process all known edges in DSU with their parities\n2. Process elf queries as constraints in DSU\n3. Check consistency\n4. For each unknown edge, determine its required parity from DSU state\n\nWait, but the tree structure is fixed. The path between nodes is determined by the tree. So I should use LCA-based approach.\n\nLet me use the tree structure: root at node 1, compute dist[v] = XOR of parity bits from root to v. For unknown edges, initially treat them as 0. Then for each elf constraint, check if it's satisfied. If not, we need to flip an unknown edge on the path.\n\nThis becomes: assign binary values to unknown edges such that for each query (a,b,p): XOR of edge parities on path = p.\n\nThis is a system of linear equations over GF(2). We can solve it with DSU.\n\nUse DSU where each node has a parity distance to its component root. Process edges (known with fixed parity, unknown as free variables). Then process elf queries as constraints.\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        dist = [0]*(n+1)  # parity distance to parent in DSU\n        \n        def find(x):\n            if parent[x]==x: return x,0\n            root,d = find(parent[x])\n            dist[x] ^= dist[parent[x]]\n            parent[x] = root\n            return root, dist[x]\n        \n        def union(x,y,p):\n            rx,dx = find(x); ry,dy = find(y)\n            if rx==ry: return (dx^dy)==p\n            if rank[rx]<rank[ry]: rx,ry=ry,rx; dx,dy=dy,dx\n            parent[ry]=rx; dist[ry]=dx^dy^p\n            if rank[rx]==rank[ry]: rank[rx]+=1\n            return True\n        \n        ok = True\n        for x,y,v in edges:\n            if v!=-1:\n                p = bin(v).count('1')%2\n                if not union(x,y,p): ok=False\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        for a,b,p in queries:\n            if not union(a,b,p): ok=False; break\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        print(\"YES\")\n        for x,y,v in edges:\n            if v==-1:\n                rx,dx=find(x); ry,dy=find(y)\n                needed_p = dx^dy\n                print(x,y,needed_p)\n            else:\n                print(x,y,v)\n\nsolve()",
+      "input_tokens": 1506,
+      "output_tokens": 1455,
+      "cost_usd": 0.026343,
+      "latency_ms": 24196
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Key insight: The parity of popcount(XOR of values) = XOR of parities of popcounts of individual values. This is because popcount(a XOR b) parity = popcount(a) parity XOR popcount(b) parity.\n\nSo I only need to work with parities. Let me assign to each node a \"parity value\" d[node] = XOR of parities of edges from root to node. Then for a path a->b, the parity = d[a] XOR d[b].\n\n**Algorithm:**\n1. Root the tree, compute d[root] = 0\n2. For edges with known v: parity of edge = popcount(v) % 2, this constrains d[child] = d[parent] XOR parity(v)\n3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n4. Elf constraints: d[a] XOR d[b] = p\n\nThis is a 2-coloring / DSU with parity problem.\n\n**Steps:**\n1. Build the tree, root it\n2. For known edges, propagate parities using DFS/BFS\n3. Use DSU with parity to handle elf constraints\n4. Check consistency\n5. Assign values to unknown edges\n\nFor unknown edges with determined parity: assign value 1 if parity=1, else 0.\nFor unknown edges with undetermined parity: assign value 0.\n\nLet me implement this with a weighted DSU where the weight represents parity relative to root of component.\n\nFor the tree structure: since it's a tree, I can root it and use LCA or just BFS to set up parent relationships. The edges form a tree, so the parity constraints from known edges directly set d values.\n\nLet me use DSU with parity for all constraints (both from known edges and elf queries).\n\nEach node starts with unknown parity. Known edges give constraint: d[child] XOR d[parent] = known_parity. Elf queries give: d[a] XOR d[b] = p.\n\nAfter processing all constraints, unknown edges get free parity (assign 0).\n\nFor output: each edge (x,y) with known v stays as is. Each edge (x,y) with v=-1 gets assigned based on the determined parity (d[child] XOR d[parent]).\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        parity = [0]*(n+1)  # parity to root of DSU component\n        \n        def find(x):\n            if parent[x]==x: return x,0\n            root,p = find(parent[x])\n            parity[x] ^= parity[parent[x]]\n            parent[x] = root\n            return root, parity[x]\n        \n        def union(x,y,p):\n            rx,px = find(x)\n            ry,py = find(y)\n            if rx==ry:\n                return (px^py)==p\n            if rank[rx]<rank[ry]: rx,ry=ry,rx; px,py=py,px\n            parent[ry]=rx\n            parity[ry]=px^py^p\n            if rank[rx]==rank[ry]: rank[rx]+=1\n            return True\n        \n        ok = True\n        for x,y,v in edges:\n            if v!=-1:\n                ep = bin(v).count('1')%2\n                if not union(x,y,ep):\n                    ok=False\n        \n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n            if ok:\n                if not union(a,b,p):\n                    ok=False\n        \n        if not ok:\n            print(\"NO\")\n        else:\n            print(\"YES\")\n            for x,y,v in edges:\n                if v==-1:\n                    rx,px=find(x); ry,py=find(y)\n                    ep=px^py\n                    v=1 if ep==1 else 0\n                print(x,y,v)\n\nsolve()",
+      "input_tokens": 1506,
+      "output_tokens": 1258,
+      "cost_usd": 0.023388,
+      "latency_ms": 18633
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The `find` function incorrectly updates the parity distance. It uses `dist[parent[x]]` after the recursive call, but `parent[x]` has already been changed to the root, so the XOR operation loses the correct distance information. This leads to wrong parity calculations and inconsistent constraint handling.\",\n      \"line\": 25,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"3 2\\n1 2 5\\n2 3 -1\\n1 3 1\\n\"\n    },\n    {\n      \"description\": \"The recursive implementation of `find` can exceed Python's recursion limit on deep trees (n up to 2\u00b710^5). This may cause a `RecursionError` for long chain-like trees.\",\n      \"line\": 24,\n      \"severity\": \"major\",\n      \"triggering_input\": \"1\\n200000 0\\n\" + \"\\n\".join([f\\\"{i} {i+1} -1\\\" for i in range(1, 200000)]) + \"\\n\"\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 2457,
+          "output_tokens": 237,
+          "cost_usd": 0.000792,
+          "latency_ms": 6683
+        }
+      ],
+      "fixes": [],
+      "final_code": "Key insight: The parity of popcount(XOR) is just the XOR of parities of popcount of each edge value. Because popcount(a XOR b) parity = popcount(a) parity XOR popcount(b) parity.\n\nSo for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n\nFor known edges: parity bit is fixed = popcount(v) % 2\nFor unknown edges: parity bit can be 0 or 1 (we can choose v freely)\n\nFor each elf query (a, b, p): the XOR of parity bits on the path from a to b must equal p.\n\nThis is a classic problem solvable with DSU (weighted DSU / bipartite check).\n\nAssign each node a parity value relative to root. Let dist[v] = XOR of parity bits from root to v. Then for edge (a,b,p): dist[a] XOR dist[b] = p.\n\nThis is exactly a 2-coloring / DSU with parity problem.\n\nSteps:\n1. Build the tree, compute parity of each known edge\n2. For unknown edges, assign parity bit = 0 initially (we'll determine from constraints)\n3. Root the tree, compute dist[] for each node using known parities (unknown edges contribute 0)\n4. For each elf query, check dist[a] XOR dist[b] == p. If not, we need to flip some unknown edge on the path.\n\nActually, let me think differently using DSU:\n\n- Use a weighted DSU where weight represents parity from node to its root\n- For known edges: union with fixed parity\n- For elf queries: union with constraint p\n\nIf any contradiction arises \u2192 NO.\n\nFor unknown edges not constrained: assign parity 0 (value 0 works).\nFor unknown edges constrained: assign appropriate value.\n\nAfter DSU, we need to assign actual values to unknown edges. If an unknown edge has parity 0, assign v=0. If parity 1, assign v=1.\n\nLet me implement this:\n\n1. Process all known edges in DSU with their parities\n2. Process elf queries as constraints in DSU\n3. Check consistency\n4. For each unknown edge, determine its required parity from DSU state\n\nWait, but the tree structure is fixed. The path between nodes is determined by the tree. So I should use LCA-based approach.\n\nLet me use the tree structure: root at node 1, compute dist[v] = XOR of parity bits from root to v. For unknown edges, initially treat them as 0. Then for each elf constraint, check if it's satisfied. If not, we need to flip an unknown edge on the path.\n\nThis becomes: assign binary values to unknown edges such that for each query (a,b,p): XOR of edge parities on path = p.\n\nThis is a system of linear equations over GF(2). We can solve it with DSU.\n\nUse DSU where each node has a parity distance to its component root. Process edges (known with fixed parity, unknown as free variables). Then process elf queries as constraints.\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        dist = [0]*(n+1)  # parity distance to parent in DSU\n        \n        def find(x):\n            if parent[x]==x: return x,0\n            root,d = find(parent[x])\n            dist[x] ^= dist[parent[x]]\n            parent[x] = root\n            return root, dist[x]\n        \n        def union(x,y,p):\n            rx,dx = find(x); ry,dy = find(y)\n            if rx==ry: return (dx^dy)==p\n            if rank[rx]<rank[ry]: rx,ry=ry,rx; dx,dy=dy,dx\n            parent[ry]=rx; dist[ry]=dx^dy^p\n            if rank[rx]==rank[ry]: rank[rx]+=1\n            return True\n        \n        ok = True\n        for x,y,v in edges:\n            if v!=-1:\n                p = bin(v).count('1')%2\n                if not union(x,y,p): ok=False\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        for a,b,p in queries:\n            if not union(a,b,p): ok=False; break\n        \n        if not ok:\n            print(\"NO\"); continue\n        \n        print(\"YES\")\n        for x,y,v in edges:\n            if v==-1:\n                rx,dx=find(x); ry,dy=find(y)\n                needed_p = dx^dy\n                print(x,y,needed_p)\n            else:\n                print(x,y,v)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 48,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 45,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 51,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+            "runtime_ms": 32,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 2318,
+          "output_tokens": 0,
+          "cost_usd": 0.0005795,
+          "latency_ms": 13023
+        }
+      ],
+      "fixes": [],
+      "final_code": "Key insight: The parity of popcount(XOR of values) = XOR of parities of popcounts of individual values. This is because popcount(a XOR b) parity = popcount(a) parity XOR popcount(b) parity.\n\nSo I only need to work with parities. Let me assign to each node a \"parity value\" d[node] = XOR of parities of edges from root to node. Then for a path a->b, the parity = d[a] XOR d[b].\n\n**Algorithm:**\n1. Root the tree, compute d[root] = 0\n2. For edges with known v: parity of edge = popcount(v) % 2, this constrains d[child] = d[parent] XOR parity(v)\n3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n4. Elf constraints: d[a] XOR d[b] = p\n\nThis is a 2-coloring / DSU with parity problem.\n\n**Steps:**\n1. Build the tree, root it\n2. For known edges, propagate parities using DFS/BFS\n3. Use DSU with parity to handle elf constraints\n4. Check consistency\n5. Assign values to unknown edges\n\nFor unknown edges with determined parity: assign value 1 if parity=1, else 0.\nFor unknown edges with undetermined parity: assign value 0.\n\nLet me implement this with a weighted DSU where the weight represents parity relative to root of component.\n\nFor the tree structure: since it's a tree, I can root it and use LCA or just BFS to set up parent relationships. The edges form a tree, so the parity constraints from known edges directly set d values.\n\nLet me use DSU with parity for all constraints (both from known edges and elf queries).\n\nEach node starts with unknown parity. Known edges give constraint: d[child] XOR d[parent] = known_parity. Elf queries give: d[a] XOR d[b] = p.\n\nAfter processing all constraints, unknown edges get free parity (assign 0).\n\nFor output: each edge (x,y) with known v stays as is. Each edge (x,y) with v=-1 gets assigned based on the determined parity (d[child] XOR d[parent]).\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.read().split()\n    idx = 0\n    t = int(input_data[idx]); idx+=1\n    \n    for _ in range(t):\n        n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n        edges = []\n        for i in range(n-1):\n            x,y,v = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            edges.append((x,y,v))\n        \n        parent = list(range(n+1))\n        rank = [0]*(n+1)\n        parity = [0]*(n+1)  # parity to root of DSU component\n        \n        def find(x):\n            if parent[x]==x: return x,0\n            root,p = find(parent[x])\n            parity[x] ^= parity[parent[x]]\n            parent[x] = root\n            return root, parity[x]\n        \n        def union(x,y,p):\n            rx,px = find(x)\n            ry,py = find(y)\n            if rx==ry:\n                return (px^py)==p\n            if rank[rx]<rank[ry]: rx,ry=ry,rx; px,py=py,px\n            parent[ry]=rx\n            parity[ry]=px^py^p\n            if rank[rx]==rank[ry]: rank[rx]+=1\n            return True\n        \n        ok = True\n        for x,y,v in edges:\n            if v!=-1:\n                ep = bin(v).count('1')%2\n                if not union(x,y,ep):\n                    ok=False\n        \n        queries = []\n        for i in range(m):\n            a,b,p = int(input_data[idx]),int(input_data[idx+1]),int(input_data[idx+2]); idx+=3\n            queries.append((a,b,p))\n            if ok:\n                if not union(a,b,p):\n                    ok=False\n        \n        if not ok:\n            print(\"NO\")\n        else:\n            print(\"YES\")\n            for x,y,v in edges:\n                if v==-1:\n                    rx,px=find(x); ry,py=find(y)\n                    ep=px^py\n                    v=1 if ep==1 else 0\n                print(x,y,v)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 43,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 48,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 8\n    3. For edges with unknown v: d[child] is free (but we'll determine it from elf constraints)\n                                                        ",
+            "runtime_ms": 36,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 40,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 41,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 40,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 48,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 45,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 51,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 3\n    So for each edge, what matters is the parity of popcount of its value. Let's call this the \"parity bit\" of the edge.\n                               ",
+        "runtime_ms": 32,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.051102499999999995,
+  "total_latency_ms": 62535,
+  "iterations_used": null,
+  "early_stopped": null
+}

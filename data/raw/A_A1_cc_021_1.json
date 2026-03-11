@@ -1,0 +1,524 @@
+{
+  "study": "A",
+  "condition": "A1",
+  "task_id": "cc_021",
+  "replica": 1,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    A = []\n    for _ in range(n):\n        row = input().strip()\n        A.append([int(c) for c in row])\n    \n    # prefix sums\n    # col_prefix[i][j] = sum of A[0..i-1][j]\n    col_prefix = [[0]*(m) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            col_prefix[i+1][j] = col_prefix[i][j] + A[i][j]\n    \n    ans = float('inf')\n    \n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            # inner rows: r1+1 .. r2-1\n            # col_zeros[c] = (r2-1 - (r1+1) + 1) - col_ones in inner rows\n            inner_len = r2 - r1 - 1\n            \n            # top_zero[c] = 1 - A[r1][c], bot_zero[c] = 1 - A[r2][c]\n            # col_ones_interior[c] = ones in rows r1+1..r2-1 for col c\n            # combined[c] = top_zero[c] + bot_zero[c] + col_ones_interior[c]\n            \n            prefix_combined = [0] * (m+1)\n            for c in range(m):\n                col_ones = col_prefix[r2][c] - col_prefix[r1+1][c]\n                top_z = 1 - A[r1][c]\n                bot_z = 1 - A[r2][c]\n                prefix_combined[c+1] = prefix_combined[c] + top_z + bot_z + col_ones\n            \n            # col_zeros[c] = inner_len - (col_prefix[r2][c] - col_prefix[r1+1][c])\n            # f(c) = col_zeros[c]\n            \n            min_val = float('inf')\n            for c2 in range(3, m):\n                col_ones_c2 = col_prefix[r2][c2] - col_prefix[r1+1][c2]\n                f_c2 = inner_len - col_ones_c2\n                # g = prefix_combined[c2] - prefix_combined[c1+1] ... wait let me recheck\n                # top/bot/interior for cols c1+1..c2-1 = prefix_combined[c2] - prefix_combined[c1+1]\n                val_c2 = f_c2 + prefix_combined[c2]\n                # need min over c1 <= c2-3 of: f(c1) - prefix_combined[c1+1]\n                c1 = c2 - 3\n                col_ones_c1 = col_prefix[r2][c1] - col_prefix[r1+1][c1]\n                f_c1 = inner_len - col_ones_c1\n                candidate = f_c1 - prefix_combined[c1+1]\n                if candidate < min_val:\n                    min_val = candidate\n                if min_val < float('inf'):\n                    ans = min(ans, val_c2 + min_val)\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+    "input_tokens": 691,
+    "output_tokens": 4096,
+    "cost_usd": 0.063513,
+    "latency_ms": 50284
+  },
+  "reviews": [
+    {
+      "role": "generalist",
+      "model": "claude-opus-4-6",
+      "verdict": "FAIL",
+      "bugs_reported": 1,
+      "bugs": [
+        {
+          "description": "TLE risk: O(n^2 * m) loop in Python with n,m up to 400 gives ~64M iterations with significant per-iteration work, very likely to exceed time limit",
+          "line": 22,
+          "severity": "major",
+          "triggering_input": "1\n400 400\n<400 lines of 400 characters>"
+        }
+      ],
+      "raw_response": "Looking at this code, I need to trace through the logic carefully.\n\nThe problem asks for a portal sub-rectangle of size a\u00d7b where a\u22655, b\u22654. The portal requires:\n- Left and right columns (interior rows) are obsidian\n- Top and bottom rows (interior columns) are empty\u2192obsidian\n- Interior cells are empty\n- Corners can be anything\n\nThe cost for a portal with top-row r1, bottom-row r2, left-col c1, right-col c2:\n- Left column (rows r1+1..r2-1): cost = inner_len - col_ones[c1] (need obsidian, so cost = number of zeros)\n- Right column (rows r1+1..r2-1): cost = inner_len - col_ones[c2]\n- Top row (cols c1+1..c2-1): cost = number of zeros in top row = sum of (1-A[r1][c])\n- Bottom row (cols c1+1..c2-1): cost = number of zeros in bottom row = sum of (1-A[r2][c])\n- Interior (rows r1+1..r2-1, cols c1+1..c2-1): cost = number of ones = sum of col_ones for interior cols\n\nThe code computes `prefix_combined` which accumulates `top_z + bot_z + col_ones` per column. For columns c1+1..c2-1, the combined cost is `prefix_combined[c2] - prefix_combined[c1+1]`.\n\nTotal = f(c1) + f(c2) + prefix_combined[c2] - prefix_combined[c1+1]\n     = (f(c2) + prefix_combined[c2]) + (f(c1) - prefix_combined[c1+1])\n\nThe code tries to minimize this by tracking `min_val` for `f(c1) - prefix_combined[c1+1]`.\n\n**Bug 1**: The code only considers `c1 = c2 - 3` (exactly), but it should track the minimum over ALL `c1 \u2264 c2 - 3`. Currently it doesn't maintain a running minimum \u2014 it just computes the candidate for `c1 = c2-3` and checks if it's less than `min_val`, but `min_val` is reset to `inf` at the start of each (r1,r2) pair and only updated with single candidates. This means it IS maintaining a running min across iterations of c2, which is correct since as c2 increases from 3 to m-1, c1 = c2-3 increases from 0 to m-4, and each new c1 is considered once. So `min_val` tracks min over all c1 from 0 to c2-3. This part seems correct.\n\n**Bug 2**: The cost formula for top/bottom rows should NOT include corners (c1 and c2). The `prefix_combined` includes all columns. For the interior columns c1+1..c2-1, the cost is `prefix_combined[c2] - prefix_combined[c1+1]`, which correctly excludes c1 and c2. This seems fine.\n\n**Bug 3**: The left/right column costs use `col_prefix[r2][c] - col_prefix[r1+1][c]` which sums rows r1+1..r2-1 (since col_prefix[r2] sums rows 0..r2-1 and col_prefix[r1+1] sums rows 0..r1). This is correct.\n\n**Bug 4**: `f(c1)` and `f(c2)` represent the cost to make left/right columns all obsidian = inner_len - col_ones. This is correct (number of zeros = need to convert to obsidian).\n\nWait, re-examining: the interior cells (rows r1+1..r2-1, cols c1+1..c2-1) need to be EMPTY. The cost is the number of ones there. The `col_ones` in `prefix_combined` counts ones in interior rows for each column \u2014 this is correct for interior columns.\n\nBut for top/bottom rows, we need obsidian in cols c1+1..c2-1. So cost = number of zeros = (1-A[r1][c]). The code uses `top_z = 1 - A[r1][c]` which is correct.\n\nThe code looks logically correct to me. Let me check TLE: n up to 400, m up to 400. The loop is O(n\u00b2 \u00d7 m) which is 400\u00b2 \u00d7 400 = 64,000,000 in Python. This is very likely to TLE.\n\n{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"TLE risk: O(n^2 * m) loop in Python with n,m up to 400 gives ~64M iterations with significant per-iteration work, very likely to exceed time limit\", \"line\": 22, \"severity\": \"major\", \"triggering_input\": \"1\\n400 400\\n<400 lines of 400 characters>\"}]}",
+      "parsed": {
+        "verdict": "FAIL",
+        "bugs": [
+          {
+            "description": "TLE risk: O(n^2 * m) loop in Python with n,m up to 400 gives ~64M iterations with significant per-iteration work, very likely to exceed time limit",
+            "line": 22,
+            "severity": "major",
+            "triggering_input": "1\n400 400\n<400 lines of 400 characters>"
+          }
+        ]
+      },
+      "input_tokens": 1662,
+      "output_tokens": 1222,
+      "cost_usd": 0.11658,
+      "latency_ms": 21871
+    }
+  ],
+  "aggregated_bugs": [
+    {
+      "description": "TLE risk: O(n^2 * m) loop in Python with n,m up to 400 gives ~64M iterations with significant per-iteration work, very likely to exceed time limit",
+      "line": 22,
+      "severity": "major",
+      "triggering_input": "1\n400 400\n<400 lines of 400 characters>"
+    }
+  ],
+  "fix": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    A = []\n    for _ in range(n):\n        row = input().strip()\n        A.append([int(c) for c in row])\n    \n    col_prefix = [[0]*(m) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            col_prefix[i+1][j] = col_prefix[i][j] + A[i][j]\n    \n    ans = float('inf')\n    \n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            inner_len = r2 - r1 - 1\n            \n            prefix_combined = [0] * (m+1)\n            for c in range(m):\n                col_ones = col_prefix[r2][c] - col_prefix[r1+1][c]\n                top_z = 1 - A[r1][c]\n                bot_z = 1 - A[r2][c]\n                prefix_combined[c+1] = prefix_combined[c] + top_z + bot_z + col_ones\n            \n            min_val = float('inf')\n            \n            for c2 in range(3, m):\n                # Update min_val with c1 = c2 - 3 (the new valid c1)\n                c1 = c2 - 3\n                col_ones_c1 = col_prefix[r2][c1] - col_prefix[r1+1][c1]\n                f_c1 = inner_len - col_ones_c1\n                candidate = f_c1 - prefix_combined[c1+1]\n                if candidate < min_val:\n                    min_val = candidate\n                \n                if min_val < float('inf'):\n                    col_ones_c2 = col_prefix[r2][c2] - col_prefix[r1+1][c2]\n                    f_c2 = inner_len - col_ones_c2\n                    val = f_c2 + prefix_combined[c2] + min_val\n                    if val < ans:\n                        ans = val\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+    "input_tokens": 1677,
+    "output_tokens": 1300,
+    "cost_usd": 0.024531,
+    "latency_ms": 15055
+  },
+  "test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 23,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 25,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 26,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.204624,
+  "total_latency_ms": 87210
+}

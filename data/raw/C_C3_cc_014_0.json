@@ -1,0 +1,1424 @@
+{
+  "study": "C",
+  "condition": "C3",
+  "task_id": "cc_014",
+  "replica": 0,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom collections import defaultdict\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    mines = []\n    for _ in range(n):\n        x, y, t = map(int, input().split())\n        mines.append((x, y, t))\n    \n    parent = list(range(n))\n    def find(a):\n        while parent[a] != a:\n            parent[a] = parent[parent[a]]\n            a = parent[a]\n        return a\n    def union(a, b):\n        a, b = find(a), find(b)\n        if a != b:\n            parent[a] = b\n    \n    # Group by y, sort by x\n    by_y = defaultdict(list)\n    for i, (x, y, t) in enumerate(mines):\n        by_y[y].append((x, i))\n    for y, lst in by_y.items():\n        lst.sort()\n        for j in range(len(lst)-1):\n            if lst[j+1][0] - lst[j][0] <= k:\n                union(lst[j][1], lst[j+1][1])\n    \n    # Group by x, sort by y\n    by_x = defaultdict(list)\n    for i, (x, y, t) in enumerate(mines):\n        by_x[x].append((y, i))\n    for x, lst in by_x.items():\n        lst.sort()\n        for j in range(len(lst)-1):\n            if lst[j+1][0] - lst[j][0] <= k:\n                union(lst[j][1], lst[j+1][1])\n    \n    # For binary search, we need components and their min timer\n    # But union-find is already built (static), so components don't change with T\n    comp_min_timer = defaultdict(lambda: float('inf'))\n    for i, (x, y, t) in enumerate(mines):\n        r = find(i)\n        comp_min_timer[r] = min(comp_min_timer[r], t)\n    \n    timers = sorted(comp_min_timer.values())\n    # Number of inactive components for given T = number of timers > T\n    # Need timers > T <= T+1\n    # Binary search on T\n    import bisect\n    lo, hi = 0, 10**9 + 1\n    while lo < hi:\n        mid = (lo + hi) // 2\n        inactive = len(timers) - bisect.bisect_right(timers, mid)\n        if inactive <= mid + 1:\n            hi = mid\n        else:\n            lo = mid + 1\n    print(lo)\n\nt = int(input())\nfor _ in range(t):\n    input()  # empty line\n    solve()",
+      "input_tokens": 938,
+      "output_tokens": 1390,
+      "cost_usd": 0.023664,
+      "latency_ms": 19702
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n\nThe chain reaction graph: two mines are connected if they share the same row/column and are within distance k. But this forms groups. Actually the connectivity is transitive.\n\nWait, the chain reaction: when mine A explodes, it triggers all mines on same row within k, and same column within k. Those then trigger their row/column neighbors, etc.\n\nSo connected components: mines are in same component if reachable via chain reactions. Within a component, if any mine explodes, all explode.\n\nFor binary search on T:\n- A component \"auto-explodes\" if any mine in it has timer <= T\n- Components that don't auto-explode need a manual trigger\n- Number of manual triggers needed = number of components without auto-explosion\n- We need this count <= T+1\n\nSo: binary search on T, compute connected components, count how many have no mine with timer <= T.\n\nThe challenge is computing connected components efficiently. Two mines are connected if same row and within k distance, or same column and within k distance.\n\nFor each row, sort mines by x, connect adjacent ones if distance <= k. Similarly for columns.\n\nWait, but chain reaction is transitive: if A triggers B (same row, dist <= k) and B triggers C (same column, dist <= k), then A and C are in same component even if not directly connected.\n\nSo build a graph where edges connect mines in same row within distance k, or same column within distance k. Then find connected components via Union-Find.\n\nFor same row: sort by x, connect consecutive mines if x difference <= k.\nFor same column: sort by y, connect consecutive mines if y difference <= k.\n\nThis gives O(n log n) component computation.\n\nThen binary search on T (range 0 to 10^9):\n- Count components where min_timer > T\n- Need count <= T+1\n\nLet me implement this.\n\nThe answer is the minimum T such that (number of components with all timers > T) <= T+1.\n\nBinary search: lo=0, hi=10^9. Check if feasible(T).\n\nfeasible(T): count = number of components where min_timer_in_component > T. Return count <= T+1.\n\nThe components are fixed (don't depend on T). For each component, store min_timer. Sort these min_timers. Then for a given T, count of components with min_timer > T = number of components where min_timer > T.\n\nLet sorted_min_timers be sorted. Count of \"bad\" components = number with min_timer > T = use bisect.\n\nAnswer: minimum T >= 0 such that bad_count(T) <= T+1.\n\nbad_count(T) is non-increasing, T+1 is increasing. So binary search works.\n\nSpecial case: if all mines auto-explode (bad_count(T)=0 for some T), the answer might be the maximum timer... wait no. If bad_count(T)=0, all mines explode on their own by time T, so answer could be 0 if bad_count(-1)... hmm, actually if bad_count(0) <= 1, answer is 0 (Polycarp detonates 1 at time 0).\n\nWait, if bad_count(T)=0, all components have min_timer <= T, meaning all mines explode by time T naturally. Answer is T. But we want minimum T.\n\nActually answer is min T such that bad_count(T) <= T+1.\n\nBinary search on T from 0 to 2*10^9.",
+      "input_tokens": 938,
+      "output_tokens": 1116,
+      "cost_usd": 0.019554,
+      "latency_ms": 20402
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom collections import defaultdict\ninput = sys.stdin.readline\n\ndef solve():\n    n, k = map(int, input().split())\n    mines = []\n    for _ in range(n):\n        x, y, t = map(int, input().split())\n        mines.append((x, y, t))\n    \n    parent = list(range(n))\n    def find(a):\n        while parent[a] != a:\n            parent[a] = parent[parent[a]]\n            a = parent[a]\n        return a\n    def union(a, b):\n        a, b = find(a), find(b)\n        if a != b:\n            parent[a] = b\n    \n    # Group by y, sort by x\n    by_y = defaultdict(list)\n    for i, (x, y, t) in enumerate(mines):\n        by_y[y].append((x, i))\n    for y, lst in by_y.items():\n        lst.sort()\n        for j in range(len(lst)-1):\n            if lst[j+1][0] - lst[j][0] <= k:\n                union(lst[j][1], lst[j+1][1])\n    \n    # Group by x, sort by y\n    by_x = defaultdict(list)\n    for i, (x, y, t) in enumerate(mines):\n        by_x[x].append((y, i))\n    for x, lst in by_x.items():\n        lst.sort()\n        for j in range(len(lst)-1):\n            if lst[j+1][0] - lst[j][0] <= k:\n                union(lst[j][1], lst[j+1][1])\n    \n    # For binary search, we need components and their min timer\n    # But union-find is already built (static), so components don't change with T\n    comp_min_timer = defaultdict(lambda: float('inf'))\n    for i, (x, y, t) in enumerate(mines):\n        r = find(i)\n        comp_min_timer[r] = min(comp_min_timer[r], t)\n    \n    timers = sorted(comp_min_timer.values())\n    # Number of inactive components for given T = number of timers > T\n    # Need timers > T <= T+1\n    # Binary search on T\n    import bisect\n    lo, hi = 0, 10**9 + 1\n    while lo < hi:\n        mid = (lo + hi) // 2\n        inactive = len(timers) - bisect.bisect_right(timers, mid)\n        if inactive <= mid + 1:\n            hi = mid\n        else:\n            lo = mid + 1\n    print(lo)\n\nt = int(input())\nfor _ in range(t):\n    input()  # empty line\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n0",
+            "actual": "2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 125,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 170,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 165,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n0 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n0",
+            "actual": "2\n2\n0",
+            "stderr": "",
+            "runtime_ms": 243,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+            "expected": "2\n0\n2",
+            "actual": "2\n0\n2",
+            "stderr": "",
+            "runtime_ms": 176,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 11\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n0",
+            "actual": "2\n1\n0",
+            "stderr": "",
+            "runtime_ms": 124,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -2 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n2",
+            "actual": "2\n2\n2",
+            "stderr": "",
+            "runtime_ms": 193,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 0 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+            "expected": "2\n1\n2",
+            "actual": "2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 303,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 2\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n1 1 9\n-1 -2 7\n",
+            "expected": "2\n0\n3",
+            "actual": "2\n0\n3",
+            "stderr": "",
+            "runtime_ms": 199,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n1 2 3\n2 2 9\n\n5 2\n0 0 1\n1 1 4\n1 0 4\n1 1 3\n2 2 16\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "2\n1\n3",
+            "actual": "2\n1\n3",
+            "stderr": "",
+            "runtime_ms": 202,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3\n\n5 1\n0 0 1\n0 1 4\n1 0 2\n2 1 3\n2 4 9\n\n5 2\n0 0 1\n1 1 4\n1 0 3\n1 1 1\n2 2 28\n\n6 1\n0 -1 6\n-1 -4 4\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "1\n1\n1",
+            "actual": "1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 152,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 4\n1 1 0\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n0",
+            "actual": "2\n0\n0",
+            "stderr": "",
+            "runtime_ms": 179,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 1\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "2\n3\n3",
+            "actual": "2\n3\n3",
+            "stderr": "",
+            "runtime_ms": 200,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3\n\n5 1\n0 1 1\n0 1 0\n1 0 2\n1 1 3\n1 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 4\n2 2 9\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "0\n1\n3",
+            "actual": "0\n1\n3",
+            "stderr": "",
+            "runtime_ms": 257,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 2\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 14\n-1 -1 7\n",
+            "expected": "2\n3\n1",
+            "actual": "2\n3\n1",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 209,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 168,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 162,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 131,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 116,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 154,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 176,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 196,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 199,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 175,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 180,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 133,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 3\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 186,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 287,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 230,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 1 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "2\n0\n1",
+            "stderr": "",
+            "runtime_ms": 175,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 181,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 210,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 291,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 335,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 175,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 145,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 319,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 356,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 11\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 338,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 263,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "2\n2\n1",
+            "stderr": "",
+            "runtime_ms": 234,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 0 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 256,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 242,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 186,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 4\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 221,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n3 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "2\n1\n1",
+            "stderr": "",
+            "runtime_ms": 208,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n\nThe chain reaction graph: two mines are connected if they share the same row/column and are within distance k. But this forms groups. Actually the connectivity is transitive.\n\nWait, the chain reaction: when mine A explodes, it triggers all mines on same row within k, and same column within k. Those then trigger their row/column neighbors, etc.\n\nSo connected components: mines are in same component if reachable via chain reactions. Within a component, if any mine explodes, all explode.\n\nFor binary search on T:\n- A component \"auto-explodes\" if any mine in it has timer <= T\n- Components that don't auto-explode need a manual trigger\n- Number of manual triggers needed = number of components without auto-explosion\n- We need this count <= T+1\n\nSo: binary search on T, compute connected components, count how many have no mine with timer <= T.\n\nThe challenge is computing connected components efficiently. Two mines are connected if same row and within k distance, or same column and within k distance.\n\nFor each row, sort mines by x, connect adjacent ones if distance <= k. Similarly for columns.\n\nWait, but chain reaction is transitive: if A triggers B (same row, dist <= k) and B triggers C (same column, dist <= k), then A and C are in same component even if not directly connected.\n\nSo build a graph where edges connect mines in same row within distance k, or same column within distance k. Then find connected components via Union-Find.\n\nFor same row: sort by x, connect consecutive mines if x difference <= k.\nFor same column: sort by y, connect consecutive mines if y difference <= k.\n\nThis gives O(n log n) component computation.\n\nThen binary search on T (range 0 to 10^9):\n- Count components where min_timer > T\n- Need count <= T+1\n\nLet me implement this.\n\nThe answer is the minimum T such that (number of components with all timers > T) <= T+1.\n\nBinary search: lo=0, hi=10^9. Check if feasible(T).\n\nfeasible(T): count = number of components where min_timer_in_component > T. Return count <= T+1.\n\nThe components are fixed (don't depend on T). For each component, store min_timer. Sort these min_timers. Then for a given T, count of components with min_timer > T = number of components where min_timer > T.\n\nLet sorted_min_timers be sorted. Count of \"bad\" components = number with min_timer > T = use bisect.\n\nAnswer: minimum T >= 0 such that bad_count(T) <= T+1.\n\nbad_count(T) is non-increasing, T+1 is increasing. So binary search works.\n\nSpecial case: if all mines auto-explode (bad_count(T)=0 for some T), the answer might be the maximum timer... wait no. If bad_count(T)=0, all mines explode on their own by time T, so answer could be 0 if bad_count(-1)... hmm, actually if bad_count(0) <= 1, answer is 0 (Polycarp detonates 1 at time 0).\n\nWait, if bad_count(T)=0, all components have min_timer <= T, meaning all mines explode by time T naturally. Answer is T. But we want minimum T.\n\nActually answer is min T such that bad_count(T) <= T+1.\n\nBinary search on T from 0 to 2*10^9.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 117,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 126,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 109,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 96,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n0 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 114,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+            "expected": "2\n0\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 88,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 11\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 82,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -2 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 94,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 0 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+            "expected": "2\n1\n2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 81,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 2\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n1 1 9\n-1 -2 7\n",
+            "expected": "2\n0\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 80,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n1 2 3\n2 2 9\n\n5 2\n0 0 1\n1 1 4\n1 0 4\n1 1 3\n2 2 16\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "2\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 100,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "3\n\n5 1\n0 0 1\n0 1 4\n1 0 2\n2 1 3\n2 4 9\n\n5 2\n0 0 1\n1 1 4\n1 0 3\n1 1 1\n2 2 28\n\n6 1\n0 -1 6\n-1 -4 4\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "1\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 97,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 4\n1 1 0\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 83,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 1\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+            "expected": "2\n3\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 59,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "3\n\n5 1\n0 1 1\n0 1 0\n1 0 2\n1 1 3\n1 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 4\n2 2 9\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "0\n1\n3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 69,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 2\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 14\n-1 -1 7\n",
+            "expected": "2\n3\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 68,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 94,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 71,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 54,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 114,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 91,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 109,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 106,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 109,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 94,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 69,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 52,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 45,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 3\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 87,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 54,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 1 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n0\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 49,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 44,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 45,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 66,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 49,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 11\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 61,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 50,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+            "expected": "2\n2\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 45,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 0 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 43,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 4\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n3 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+            "expected": "2\n1\n1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Each mine can be triggered if: its timer <= T, OR it's in the same connected component (via chain reactions) as some mine that explodes by time T.\n ",
+            "runtime_ms": 37,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n0",
+        "actual": "2\n1\n0",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 125,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 170,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 165,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n0 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n0",
+        "actual": "2\n2\n0",
+        "stderr": "",
+        "runtime_ms": 243,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+        "expected": "2\n0\n2",
+        "actual": "2\n0\n2",
+        "stderr": "",
+        "runtime_ms": 176,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 11\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n0",
+        "actual": "2\n1\n0",
+        "stderr": "",
+        "runtime_ms": 124,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -2 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n2",
+        "actual": "2\n2\n2",
+        "stderr": "",
+        "runtime_ms": 193,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 0 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -2 7\n",
+        "expected": "2\n1\n2",
+        "actual": "2\n1\n2",
+        "stderr": "",
+        "runtime_ms": 303,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 5\n\n5 2\n0 -1 2\n0 1 4\n1 0 2\n1 1 2\n2 2 0\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n1 1 9\n-1 -2 7\n",
+        "expected": "2\n0\n3",
+        "actual": "2\n0\n3",
+        "stderr": "",
+        "runtime_ms": 199,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n1 2 3\n2 2 9\n\n5 2\n0 0 1\n1 1 4\n1 0 4\n1 1 3\n2 2 16\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+        "expected": "2\n1\n3",
+        "actual": "2\n1\n3",
+        "stderr": "",
+        "runtime_ms": 202,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "3\n\n5 1\n0 0 1\n0 1 4\n1 0 2\n2 1 3\n2 4 9\n\n5 2\n0 0 1\n1 1 4\n1 0 3\n1 1 1\n2 2 28\n\n6 1\n0 -1 6\n-1 -4 4\n0 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+        "expected": "1\n1\n1",
+        "actual": "1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 152,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 4\n1 1 0\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n0",
+        "actual": "2\n0\n0",
+        "stderr": "",
+        "runtime_ms": 179,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 1\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 11\n-1 -1 7\n",
+        "expected": "2\n3\n3",
+        "actual": "2\n3\n3",
+        "stderr": "",
+        "runtime_ms": 200,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "3\n\n5 1\n0 1 1\n0 1 0\n1 0 2\n1 1 3\n1 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 4\n2 2 9\n\n6 0\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "0\n1\n3",
+        "actual": "0\n1\n3",
+        "stderr": "",
+        "runtime_ms": 257,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n0 0 2\n2 1 3\n2 3 9\n\n5 0\n0 0 1\n0 1 4\n1 0 4\n1 1 3\n2 2 17\n\n6 2\n1 -1 6\n-1 -4 4\n1 1 7\n-1 0 1\n0 2 14\n-1 -1 7\n",
+        "expected": "2\n3\n1",
+        "actual": "2\n3\n1",
+        "stderr": "",
+        "runtime_ms": 131,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 209,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 168,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 162,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 141,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 131,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 116,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 154,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 176,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 196,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 199,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 175,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 180,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 133,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n5 2\n0 0 2\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 3\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 186,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 287,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 230,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3\n\n5 0\n-1 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n2 1 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n0\n1",
+        "actual": "2\n0\n1",
+        "stderr": "",
+        "runtime_ms": 175,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 181,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 210,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 1 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 291,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 335,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 175,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 145,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n1 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 319,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 356,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 1 2\n1 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n2 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 7\n-1 0 1\n0 1 14\n-1 -1 11\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 338,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 9\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 263,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n2 0 3\n2 2 9\n\n5 0\n0 0 0\n0 1 4\n2 0 2\n2 1 5\n2 2 9\n\n6 1\n1 -1 3\n0 -1 14\n0 1 6\n-1 0 1\n1 1 9\n-1 -1 7\n",
+        "expected": "2\n2\n1",
+        "actual": "2\n2\n1",
+        "stderr": "",
+        "runtime_ms": 234,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "3\n\n5 0\n0 0 1\n0 1 4\n1 0 2\n0 2 3\n2 2 9\n\n5 2\n0 0 1\n0 1 4\n1 0 2\n1 1 3\n2 2 9\n\n6 1\n1 0 3\n0 -1 9\n0 1 7\n-1 -1 1\n-1 1 9\n-2 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 256,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 3\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 242,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n2 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 186,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "3\n\n5 0\n0 0 2\n0 1 4\n1 0 2\n0 0 3\n2 2 9\n\n5 2\n0 -1 1\n0 1 4\n1 0 2\n1 1 4\n2 2 2\n\n6 1\n1 -1 3\n0 -1 9\n0 2 7\n-1 0 1\n0 1 9\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 221,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "3\n\n5 0\n0 0 1\n-1 1 4\n1 0 2\n1 0 3\n3 2 11\n\n5 2\n0 0 0\n0 1 4\n3 0 2\n1 1 3\n2 2 9\n\n6 1\n1 -1 3\n0 -1 9\n0 1 9\n-1 0 1\n0 1 15\n-1 -1 7\n",
+        "expected": "2\n1\n1",
+        "actual": "2\n1\n1",
+        "stderr": "",
+        "runtime_ms": 208,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.043218,
+  "total_latency_ms": 40104,
+  "iterations_used": null,
+  "early_stopped": null
+}

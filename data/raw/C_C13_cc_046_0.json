@@ -1,0 +1,2103 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_046",
+  "replica": 0,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for _ in range(n):\n        s.append(input().strip())\n    \n    best_surprise = -1\n    best_p = None\n    \n    for mask in range(1 << n):\n        # sigma[i] = +1 if bit i set, -1 otherwise\n        # w[j] = sum_i sigma[i] * s[i][j]\n        w = [0] * m\n        for j in range(m):\n            for i in range(n):\n                if s[i][j] == '1':\n                    if mask & (1 << i):\n                        w[j] += 1\n                    else:\n                        w[j] -= 1\n        \n        # Assign largest p to largest w\n        order = sorted(range(m), key=lambda j: w[j])\n        p = [0] * m\n        for rank, j in enumerate(order):\n            p[j] = rank + 1  # values 1..m\n        \n        # Compute r_i\n        r = [0] * n\n        for i in range(n):\n            for j in range(m):\n                if s[i][j] == '1':\n                    r[i] += p[j]\n        \n        surprise = sum(abs(x[i] - r[i]) for i in range(n))\n        if surprise > best_surprise:\n            best_surprise = surprise\n            best_p = p[:]\n    \n    print(*best_p)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 704,
+      "output_tokens": 1260,
+      "cost_usd": 0.021012,
+      "latency_ms": 20044
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Looking at this problem, I need to find a permutation p of 1..m that maximizes sum of |x_i - r_i| where r_i = sum of p_j for j where student i answered correctly.\n\nKey observations:\n- n \u2264 10, m \u2264 10^4\n- For each question j, I need to assign a value from 1..m\n- The assignment affects all students simultaneously\n\nLet me think about this differently. For each question j, let's define a binary vector v_j = (s_{1,j}, s_{2,j}, ..., s_{n,j}) indicating which students answered it correctly. Questions with the same binary vector are interchangeable in terms of their effect pattern.\n\nSince n \u2264 10, there are at most 2^10 = 1024 distinct patterns. \n\nFor each pattern, assigning a higher value increases the score of students who got that question right. The key insight is: for each pattern, we want to either assign the highest values or lowest values to maximize surprise.\n\nThis is an assignment problem. Let me think about it as: group questions by their pattern. Then decide what values to assign to each group.\n\nFor a given assignment of values to patterns, the total surprise is sum_i |x_i - r_i|. \n\nSince questions with the same pattern are interchangeable, we just need to decide: for each pattern group, which values do they get? And within a group, the order doesn't matter for the sum.\n\nActually, for each pattern, what matters is the sum of values assigned to questions with that pattern. So if pattern k has c_k questions and gets values summing to S_k, then r_i = sum over patterns k where bit i is set of S_k.\n\nWe want to maximize sum_i |x_i - r_i|.\n\nThe total sum of all values is m(m+1)/2. We need to partition values 1..m into groups (one per pattern that appears), each group having exactly c_k values.\n\nWith up to 1024 patterns and m up to 10^4, we need to think about this carefully.\n\nKey insight: For each pattern group, we should assign either the top or bottom values to maximize surprise. This is a greedy/DP approach.\n\nLet me think: sort the groups. For each group, assigning high values vs low values creates a binary choice. With up to 1024 groups but n \u2264 10, maybe we can use bitmask DP over students' score contributions.\n\nActually, let me think greedily: sort the distinct patterns. For each pattern, decide whether assigning it high or low values increases the objective. But these decisions interact.\n\nWith n \u2264 10 students and values being real numbers, maybe we can use a DP where state is the \"contribution vector\" to each student's score so far. But that's too large.\n\nAlternative: Since n \u2264 10, for each subset of patterns assigned \"high\" vs \"low\", compute the resulting r_i values. But 2^1024 is too large.\n\nBetter: The number of distinct patterns is at most min(m, 2^n) \u2264 1024. We greedily assign values. Sort patterns and use DP with state being which values have been used... too complex.\n\nActually: assign values greedily. Sort patterns. For each pattern group, we decide to give it the next highest available values or next lowest available values. This is a greedy with 2^(number of groups) choices - too many.\n\nBut with n \u2264 10, maybe we can use DP where state encodes the current r_i values for each student modulo some structure... \n\nLet me try: since we assign blocks of consecutive values (either from top or bottom), use DP over groups sorted by size, tracking cumulative sums assigned to each student. But r_i can be up to m(m+1)/2 ~ 5*10^7, too large for state.\n\nGiven CF 2200 rating and constraints, let me look at the structure more carefully and implement a solution where for each pattern we greedily decide high or low.\n\nLet me implement: sort patterns, try all 2^(number of distinct patterns) assignments of high/low - but cap at manageable size. Since patterns \u2264 min(m, 2^n) and n \u2264 10, worst case 1024 patterns \u2192 2^1024 too large.\n\nPerhaps a greedy works: process patterns one by one, for each decide high or low based on which increases the objective more given current assignments.\n\nLet me implement this greedy approach.",
+      "input_tokens": 704,
+      "output_tokens": 1062,
+      "cost_usd": 0.018042,
+      "latency_ms": 22989
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Looking at this problem, I need to find a permutation p of 1..m that maximizes \u2211|x_i - r_i| where r_i = sum of p[j] for j where s[i][j] = '1'.\n\nKey observations:\n- n \u2264 10, m \u2264 10^4\n- For each question j, each student either answered it correctly (1) or not (0)\n- We need to assign values 1..m to questions to maximize surprise\n\nFor each question j, the \"profile\" is a binary vector of length n indicating which students got it right. There are at most 2^n = 1024 distinct profiles.\n\nLet me think about this differently. Group questions by their profile. For each profile type, we have a set of values to assign. The key insight is: for each profile group, we should assign either the largest or smallest available values.\n\nThis is because the contribution of assigning value v to a question with profile b is: for each student i, if b[i]=1, r_i increases by v. The effect on |x_i - r_i| depends on whether r_i > x_i or r_i < x_i, which we don't know a priori.\n\nThis looks like it could be solved with a greedy/DP approach. Since there are at most 2^n profile types, and we need to decide for each group whether to assign high or low values...\n\nActually, let me think more carefully. We have groups of questions with the same profile. For each group of size k, we assign k values from 1..m. The total r_i = sum over all groups of (sum of values assigned to that group) * profile[i].\n\nThe problem reduces to: partition values 1..m into groups (one per profile type, sizes fixed), assign each group to a profile, to maximize the objective.\n\nFor each profile group, we assign a contiguous block of values (either top or bottom) - this is optimal because we want to maximize the sum or minimize it for each group independently... but groups interact through the absolute values.\n\nWith n\u226410, we can try all 2^(number of distinct profiles) assignments of \"high\" or \"low\" to each profile group. But with up to 1024 profiles, that's too many.\n\nWait - but we can use DP. Sort the profiles somehow and use DP over the sorted values.\n\nActually, the key insight: for each profile, we decide whether to give it high values or low values. Given these binary decisions, we can compute the optimal assignment greedily (assign highest remaining values to \"high\" groups, lowest to \"low\" groups, processing by group size).\n\nWith 2^n possible \"signs\" for each profile (whether increasing r_i helps or hurts), and n\u226410... \n\nLet me think of it as: for each profile b, we choose a sign vector (+1 or -1 for each student based on whether r_i < x_i or r_i > x_i). But this is circular.\n\nAlternative: enumerate all 2^n possible \"direction\" vectors d \u2208 {-1,+1}^n, where d_i = +1 means we want r_i to be large (r_i > x_i contributes positively) and d_i = -1 means we want r_i small. For each direction vector, the optimal p assigns large values to questions where the profile dot d is maximized.\n\nFor a fixed direction d, the score is \u2211_i d_i*(r_i - x_i) = \u2211_j p_j * (\u2211_i d_i * s[i][j]) - \u2211_i d_i*x_i. To maximize this, assign largest p values to questions with largest \u2211_i d_i*s[i][j]. The actual surprise value is \u2265 this (since |x_i-r_i| \u2265 d_i*(r_i-x_i)).\n\nSo for each of 2^n direction vectors, compute the best permutation and evaluate the actual surprise. Take the maximum.\n\nThis gives 2^n * m*log(m) per test case = 1024 * 10^4 * 14 \u2248 1.4*10^8... might be tight but let's try.\n\nFor each direction d in {-1,+1}^n:\n- For each question j, compute weight w_j = \u2211_i d_i * s[i][j]\n- Sort questions by w_j descending, assign values m, m-1, ..., 1\n- Compute actual surprise and track maximum",
+      "input_tokens": 704,
+      "output_tokens": 1073,
+      "cost_usd": 0.018207,
+      "latency_ms": 19719
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The permutation is built by sorting the weights w[j] in ascending order and assigning p[j] = rank+1, which gives the largest numbers to the largest weights. This maximizes \u03a3 p_j * w_j, but the optimal solution requires minimizing \u03a3 \u03c3_i * r_i, i.e., assigning the smallest p to the largest w (descending order). The ordering is therefore opposite, producing sub\u2011optimal surprise values.",
+              "line": 27,
+              "severity": "major",
+              "triggering_input": "1\n1 2\n3\n11\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The permutation is built by sorting the weights w[j] in ascending order and assigning p[j] = rank+1, which gives the largest numbers to the largest weights. This maximizes \u03a3 p_j * w_j, but the optimal solution requires minimizing \u03a3 \u03c3_i * r_i, i.e., assigning the smallest p to the largest w (descending order). The ordering is therefore opposite, producing sub\u2011optimal surprise values.\",\n      \"line\": 27,\n      \"severity\": \"major\",\n      \"triggering_input\": \"1\\n1 2\\n3\\n11\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The permutation is built by sorting the weights w[j] in ascending order and assigning p[j] = rank+1, which gives the largest numbers to the largest weights. This maximizes \u03a3 p_j * w_j, but the optimal solution requires minimizing \u03a3 \u03c3_i * r_i, i.e., assigning the smallest p to the largest w (descending order). The ordering is therefore opposite, producing sub\u2011optimal surprise values.",
+                "line": 27,
+                "severity": "major",
+                "triggering_input": "1\n1 2\n3\n11\n"
+              }
+            ]
+          },
+          "input_tokens": 988,
+          "output_tokens": 139,
+          "cost_usd": 0.00035125,
+          "latency_ms": 4929
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 976,
+          "output_tokens": 0,
+          "cost_usd": 0.000244,
+          "latency_ms": 8631
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for _ in range(n):\n        s.append(input().strip())\n    \n    best_surprise = -1\n    best_p = None\n    \n    for mask in range(1 << n):\n        w = [0] * m\n        for j in range(m):\n            for i in range(n):\n                if s[i][j] == '1':\n                    if mask & (1 << i):\n                        w[j] += 1\n                    else:\n                        w[j] -= 1\n        \n        order = sorted(range(m), key=lambda j: w[j])\n        p = [0] * m\n        for rank, j in enumerate(order):\n            p[j] = rank + 1\n        \n        r = [0] * n\n        for i in range(n):\n            for j in range(m):\n                if s[i][j] == '1':\n                    r[i] += p[j]\n        \n        surprise = sum(abs(x[i] - r[i]) for i in range(n))\n        if surprise > best_surprise:\n            best_surprise = surprise\n            best_p = p[:]\n    \n    print(*best_p)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 1292,
+          "output_tokens": 1163,
+          "cost_usd": 0.021321,
+          "latency_ms": 17939
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for _ in range(n):\n        s.append(input().strip())\n    \n    best_surprise = -1\n    best_p = None\n    \n    for mask in range(1 << n):\n        w = [0] * m\n        for j in range(m):\n            for i in range(n):\n                if s[i][j] == '1':\n                    if mask & (1 << i):\n                        w[j] += 1\n                    else:\n                        w[j] -= 1\n        \n        order = sorted(range(m), key=lambda j: w[j])\n        p = [0] * m\n        for rank, j in enumerate(order):\n            p[j] = rank + 1\n        \n        r = [0] * n\n        for i in range(n):\n            for j in range(m):\n                if s[i][j] == '1':\n                    r[i] += p[j]\n        \n        surprise = sum(abs(x[i] - r[i]) for i in range(n))\n        if surprise > best_surprise:\n            best_surprise = surprise\n            best_p = p[:]\n    \n    print(*best_p)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 49,
+        "failed": 1,
+        "errors": 0,
+        "pass_rate": 0.98,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n010110\n000101\n111111\n",
+            "expected": "3 1 2 \n2 3 4 1 \n3 1 4 5 2 6",
+            "actual": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+            "actual": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n1",
+            "actual": "3 1 2\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n001\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n2 3 4 1\n1",
+            "actual": "3 2 1\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+            "actual": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n4 3\n5 1 2 2\n101\n100\n001\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n1 3 4 2\n1",
+            "actual": "3 2 1\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+            "actual": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n13 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+            "actual": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3\n4 3\n5 1 4 2\n111\n101\n101\n000\n4 4\n16 1 1 11\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n2 3 4 1\n1",
+            "actual": "2 1 3\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "3\n4 3\n4 1 1 2\n101\n100\n000\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 2\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n2 1",
+            "actual": "3 1 2\n1 3 4 2\n2 1",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n000110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3\n4 3\n3 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111001\n",
+            "expected": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+            "actual": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0110\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n2 1",
+            "actual": "3 1 2\n2 3 4 1\n2 1",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3\n4 3\n5 1 1 0\n111\n000\n101\n010\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "1 2 3\n2 3 4 1\n1",
+            "actual": "1 2 3\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000001\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+            "actual": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1101\n0010\n0110\n0111\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n2 4 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+            "actual": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0011\n0110\n0001\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+            "actual": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0010\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n2 1",
+            "actual": "3 1 2\n3 1 4 2\n2 1",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3\n4 3\n5 1 2 2\n101\n101\n000\n101\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n1 3 4 2\n1",
+            "actual": "2 1 3\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n4 3\n9 1 4 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+            "actual": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3\n4 3\n1 1 2 2\n110\n100\n111\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111011\n",
+            "expected": "3 2 1\n1 2 4 3\n1",
+            "actual": "3 2 1\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n0 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n6 3 0 10\n1001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n1 2 0 10\n1101\n0010\n0100\n0111\n3 6\n38 3 7\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+            "actual": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n4 3\n1 1 2 0\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n011110\n000101\n111011\n",
+            "expected": "3 1 2\n1 2 4 3\n1",
+            "actual": "3 1 2\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 10\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n4 3\n5 1 3 4\n100\n100\n101\n100\n4 4\n12 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 4\n010110\n010101\n111111\n",
+            "expected": "1 2 3\n1 3 4 2\n1",
+            "actual": "1 2 3\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3\n4 3\n3 1 2 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 1\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+            "actual": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n4 3\n3 1 3 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "3\n4 3\n0 1 2 1\n110\n100\n100\n101\n4 4\n2 2 0 13\n1101\n0110\n0110\n0101\n3 6\n38 3 12\n010110\n000001\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+            "actual": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0001\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided code does not contain any executable Python statements; it only consists of a multi-line comment describing a solution approach. There is no input parsing, algorithm implementation, or output generation, so the program will not compile or produce any result.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "Any valid input according to the problem statement."
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The provided code does not contain any executable Python statements; it only consists of a multi-line comment describing a solution approach. There is no input parsing, algorithm implementation, or output generation, so the program will not compile or produce any result.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any valid input according to the problem statement.\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided code does not contain any executable Python statements; it only consists of a multi-line comment describing a solution approach. There is no input parsing, algorithm implementation, or output generation, so the program will not compile or produce any result.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "Any valid input according to the problem statement."
+              }
+            ]
+          },
+          "input_tokens": 1542,
+          "output_tokens": 100,
+          "cost_usd": 0.0004605,
+          "latency_ms": 1798
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The provided code contains only comments and a high-level plan; it does not implement any functional solution. No input parsing, algorithm, or output generation is present, so it will produce no result or cause a runtime error.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "Any valid input"
+            },
+            {
+              "description": "Even if the missing implementation were added, the described greedy approach of assigning high or low values per pattern independently is not guaranteed to maximize the total surprise value. The problem requires a global optimization, and a simple greedy per-pattern decision can lead to suboptimal permutations.",
+              "line": 1,
+              "severity": "major",
+              "triggering_input": "Test cases where optimal assignment requires non\u2011greedy distribution of values across patterns"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The provided code contains only comments and a high-level plan; it does not implement any functional solution. No input parsing, algorithm, or output generation is present, so it will produce no result or cause a runtime error.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any valid input\"\n    },\n    {\n      \"description\": \"Even if the missing implementation were added, the described greedy approach of assigning high or low values per pattern independently is not guaranteed to maximize the total surprise value. The problem requires a global optimization, and a simple greedy per-pattern decision can lead to suboptimal permutations.\",\n      \"line\": 1,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Test cases where optimal assignment requires non\u2011greedy distribution of values across patterns\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided code contains only comments and a high-level plan; it does not implement any functional solution. No input parsing, algorithm, or output generation is present, so it will produce no result or cause a runtime error.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "Any valid input"
+              },
+              {
+                "description": "Even if the missing implementation were added, the described greedy approach of assigning high or low values per pattern independently is not guaranteed to maximize the total surprise value. The problem requires a global optimization, and a simple greedy per-pattern decision can lead to suboptimal permutations.",
+                "line": 1,
+                "severity": "major",
+                "triggering_input": "Test cases where optimal assignment requires non\u2011greedy distribution of values across patterns"
+              }
+            ]
+          },
+          "input_tokens": 1542,
+          "output_tokens": 184,
+          "cost_usd": 0.0005235,
+          "latency_ms": 1206
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom itertools import product\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for _ in range(n):\n        s.append(input().strip())\n    \n    # Group questions by pattern\n    from collections import defaultdict\n    pattern_to_questions = defaultdict(list)\n    for j in range(m):\n        pat = tuple(int(s[i][j]) for i in range(n))\n        pattern_to_questions[pat].append(j)\n    \n    patterns = list(pattern_to_questions.keys())\n    groups = [pattern_to_questions[p] for p in patterns]\n    k = len(patterns)\n    \n    # Available values: 1..m, assign blocks from low or high end\n    # Greedy: try high or low for each group\n    # Since k can be large, use greedy decision at each step\n    \n    low = 1\n    high = m\n    r = [0] * n\n    assignment = {}  # question -> value (we'll assign sorted values to groups)\n    \n    # Sort groups by size to process\n    order = sorted(range(k), key=lambda i: len(groups[i]))\n    \n    remaining_low = 1\n    remaining_high = m\n    \n    group_values = [None] * k  # list of values assigned to each group\n    \n    def compute_surprise(r_vals):\n        return sum(abs(x[i] - r_vals[i]) for i in range(n))\n    \n    r_current = [0] * n\n    rl, rh = 1, m\n    \n    for idx in order:\n        pat = patterns[idx]\n        sz = len(groups[idx])\n        \n        # Option 1: assign lowest sz values\n        vals_low = list(range(rl, rl + sz))\n        r_low = [r_current[i] + pat[i] * sum(vals_low) for i in range(n)]\n        \n        # Option 2: assign highest sz values\n        vals_high = list(range(rh - sz + 1, rh + 1))\n        r_high = [r_current[i] + pat[i] * sum(vals_high) for i in range(n)]\n        \n        if compute_surprise(r_low) >= compute_surprise(r_high):\n            group_values[idx] = vals_low\n            r_current = r_low\n            rl += sz\n        else:\n            group_values[idx] = vals_high\n            r_current = r_high\n            rh -= sz\n    \n    result = [0] * m\n    for idx in range(k):\n        qs = groups[idx]\n        vals = sorted(group_values[idx])\n        for j, q in enumerate(qs):\n            result[q] = vals[j]\n    \n    print(*result)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 1873,
+          "output_tokens": 1147,
+          "cost_usd": 0.022824,
+          "latency_ms": 18196
+        }
+      ],
+      "final_code": "import sys\nfrom itertools import product\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for _ in range(n):\n        s.append(input().strip())\n    \n    # Group questions by pattern\n    from collections import defaultdict\n    pattern_to_questions = defaultdict(list)\n    for j in range(m):\n        pat = tuple(int(s[i][j]) for i in range(n))\n        pattern_to_questions[pat].append(j)\n    \n    patterns = list(pattern_to_questions.keys())\n    groups = [pattern_to_questions[p] for p in patterns]\n    k = len(patterns)\n    \n    # Available values: 1..m, assign blocks from low or high end\n    # Greedy: try high or low for each group\n    # Since k can be large, use greedy decision at each step\n    \n    low = 1\n    high = m\n    r = [0] * n\n    assignment = {}  # question -> value (we'll assign sorted values to groups)\n    \n    # Sort groups by size to process\n    order = sorted(range(k), key=lambda i: len(groups[i]))\n    \n    remaining_low = 1\n    remaining_high = m\n    \n    group_values = [None] * k  # list of values assigned to each group\n    \n    def compute_surprise(r_vals):\n        return sum(abs(x[i] - r_vals[i]) for i in range(n))\n    \n    r_current = [0] * n\n    rl, rh = 1, m\n    \n    for idx in order:\n        pat = patterns[idx]\n        sz = len(groups[idx])\n        \n        # Option 1: assign lowest sz values\n        vals_low = list(range(rl, rl + sz))\n        r_low = [r_current[i] + pat[i] * sum(vals_low) for i in range(n)]\n        \n        # Option 2: assign highest sz values\n        vals_high = list(range(rh - sz + 1, rh + 1))\n        r_high = [r_current[i] + pat[i] * sum(vals_high) for i in range(n)]\n        \n        if compute_surprise(r_low) >= compute_surprise(r_high):\n            group_values[idx] = vals_low\n            r_current = r_low\n            rl += sz\n        else:\n            group_values[idx] = vals_high\n            r_current = r_high\n            rh -= sz\n    \n    result = [0] * m\n    for idx in range(k):\n        qs = groups[idx]\n        vals = sorted(group_values[idx])\n        for j, q in enumerate(qs):\n            result[q] = vals[j]\n    \n    print(*result)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 1,
+        "failed": 49,
+        "errors": 0,
+        "pass_rate": 0.02,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n010110\n000101\n111111\n",
+            "expected": "3 1 2 \n2 3 4 1 \n3 1 4 5 2 6",
+            "actual": "1 2 3\n1 2 4 3\n3 5 4 1 6 2",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+            "actual": "1 2 3\n1 2 4 3\n5 3 6 1 4 2",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 3 2\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n001\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+            "actual": "1 2 3\n1 2 4 3\n2 1 3 6 5 4",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n4 3\n5 1 2 2\n101\n100\n001\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n1 3 4 2\n1",
+            "actual": "1 2 3\n2 1 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+            "actual": "1 2 3\n1 2 4 3\n2 1 6 5 4 3",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n13 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+            "actual": "1 2 3\n1 2 4 3\n3 1 6 5 2 4",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "3\n4 3\n5 1 4 2\n111\n101\n101\n000\n4 4\n16 1 1 11\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n2 3 4 1\n1",
+            "actual": "2 1 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3\n4 3\n4 1 1 2\n101\n100\n000\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 2\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n2 1",
+            "actual": "1 2 3\n2 1 4 3\n1 2",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n000110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 5 6 1 2 3",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3\n4 3\n3 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111001\n",
+            "expected": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+            "actual": "1 3 2\n4 1 3 2\n5 1 6 2 3 4",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0110\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n2 1",
+            "actual": "1 2 3\n1 2 4 3\n1 2",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "3\n4 3\n5 1 1 0\n111\n000\n101\n010\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "1 2 3\n2 3 4 1\n1",
+            "actual": "2 1 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000001\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+            "actual": "1 2 3\n1 2 4 3\n5 2 6 3 4 1",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1101\n0010\n0110\n0111\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n2 4 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 2 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0011\n0110\n0001\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 3 2 1\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 86,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0010\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n2 1",
+            "actual": "1 2 3\n1 2 4 3\n1 2",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3\n4 3\n5 1 2 2\n101\n101\n000\n101\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n1 3 4 2\n1",
+            "actual": "2 1 3\n2 1 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 100,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n4 3\n9 1 4 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3\n4 3\n1 1 2 2\n110\n100\n111\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111011\n",
+            "expected": "3 2 1\n1 2 4 3\n1",
+            "actual": "3 2 1\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n0 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 3 2\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n6 3 0 10\n1001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "1 2 3\n1 2 4 3\n6 1 3 5 2 4",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n1 2 0 10\n1101\n0010\n0100\n0111\n3 6\n38 3 7\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+            "actual": "1 2 3\n4 3 1 2\n4 1 2 6 3 5",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n4 3\n1 1 2 0\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n011110\n000101\n111011\n",
+            "expected": "3 1 2\n1 2 4 3\n1",
+            "actual": "3 2 1\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 10\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "1 2 3\n1 2 4 3\n6 1 3 5 2 4",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n4 3\n5 1 3 4\n100\n100\n101\n100\n4 4\n12 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 4\n010110\n010101\n111111\n",
+            "expected": "1 2 3\n1 3 4 2\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3\n4 3\n3 1 2 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "1 3 2\n1 2 4 3\n4 5 1 2 3 6",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 1\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+            "actual": "1 2 3\n1 4 3 2\n6 1 3 5 2 4",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n4 3\n3 1 3 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "1 3 2\n1 2 4 3\n4 5 1 2 3 6",
+            "stderr": "",
+            "runtime_ms": 101,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3\n4 3\n0 1 2 1\n110\n100\n100\n101\n4 4\n2 2 0 13\n1101\n0110\n0110\n0101\n3 6\n38 3 12\n010110\n000001\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+            "actual": "3 2 1\n4 3 2 1\n3 5 4 6 1 2",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "1 2 3\n1 2 4 3\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0001\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 4 3 2\n1",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 3 2\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 3 2\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "1 2 3\n1 2 4 3\n1",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "1 2 3\n4 1 3 2\n4 1 5 2 3 6",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided solution is incomplete; the code block contains only a high\u2011level description and no actual implementation. Consequently, it cannot be compiled, executed, or verified against the problem requirements.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "Any test case"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The provided solution is incomplete; the code block contains only a high\u2011level description and no actual implementation. Consequently, it cannot be compiled, executed, or verified against the problem requirements.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"Any test case\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided solution is incomplete; the code block contains only a high\u2011level description and no actual implementation. Consequently, it cannot be compiled, executed, or verified against the problem requirements.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "Any test case"
+              }
+            ]
+          },
+          "input_tokens": 1580,
+          "output_tokens": 72,
+          "cost_usd": 0.000449,
+          "latency_ms": 978
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The provided solution is only a high\u2011level description and does not contain any executable code. It lacks implementation of the algorithm, input parsing, and output generation, so it cannot be compiled or run.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": "any"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The provided solution is only a high\u2011level description and does not contain any executable code. It lacks implementation of the algorithm, input parsing, and output generation, so it cannot be compiled or run.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"any\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The provided solution is only a high\u2011level description and does not contain any executable code. It lacks implementation of the algorithm, input parsing, and output generation, so it cannot be compiled or run.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": "any"
+              }
+            ]
+          },
+          "input_tokens": 1588,
+          "output_tokens": 74,
+          "cost_usd": 0.0004525,
+          "latency_ms": 793
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for i in range(n):\n        s.append(input().strip())\n    \n    best_surprise = -1\n    best_perm = None\n    \n    # Try all 2^n direction vectors\n    for mask in range(1 << n):\n        d = []\n        for i in range(n):\n            if (mask >> i) & 1:\n                d.append(1)\n            else:\n                d.append(-1)\n        \n        # For each question j, compute weight\n        weights = []\n        for j in range(m):\n            w = 0\n            for i in range(n):\n                if s[i][j] == '1':\n                    w += d[i]\n            weights.append((w, j))\n        \n        # Sort by weight descending, assign values m, m-1, ..., 1\n        weights.sort(key=lambda t: -t[0])\n        \n        p = [0] * m\n        for rank, (w, j) in enumerate(weights):\n            p[j] = m - rank  # assign m, m-1, ..., 1\n        \n        # Compute actual surprise\n        surprise = 0\n        for i in range(n):\n            r = 0\n            for j in range(m):\n                if s[i][j] == '1':\n                    r += p[j]\n            surprise += abs(x[i] - r)\n        \n        if surprise > best_surprise:\n            best_surprise = surprise\n            best_perm = p[:]\n    \n    print(*best_perm)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 1851,
+          "output_tokens": 456,
+          "cost_usd": 0.012393,
+          "latency_ms": 4681
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    x = list(map(int, input().split()))\n    s = []\n    for i in range(n):\n        s.append(input().strip())\n    \n    best_surprise = -1\n    best_perm = None\n    \n    # Try all 2^n direction vectors\n    for mask in range(1 << n):\n        d = []\n        for i in range(n):\n            if (mask >> i) & 1:\n                d.append(1)\n            else:\n                d.append(-1)\n        \n        # For each question j, compute weight\n        weights = []\n        for j in range(m):\n            w = 0\n            for i in range(n):\n                if s[i][j] == '1':\n                    w += d[i]\n            weights.append((w, j))\n        \n        # Sort by weight descending, assign values m, m-1, ..., 1\n        weights.sort(key=lambda t: -t[0])\n        \n        p = [0] * m\n        for rank, (w, j) in enumerate(weights):\n            p[j] = m - rank  # assign m, m-1, ..., 1\n        \n        # Compute actual surprise\n        surprise = 0\n        for i in range(n):\n            r = 0\n            for j in range(m):\n                if s[i][j] == '1':\n                    r += p[j]\n            surprise += abs(x[i] - r)\n        \n        if surprise > best_surprise:\n            best_surprise = surprise\n            best_perm = p[:]\n    \n    print(*best_perm)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 11,
+        "failed": 39,
+        "errors": 0,
+        "pass_rate": 0.22,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n010110\n000101\n111111\n",
+            "expected": "3 1 2 \n2 3 4 1 \n3 1 4 5 2 6",
+            "actual": "3 1 2\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+            "actual": "3 1 2\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n001\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n2 3 4 1\n1",
+            "actual": "3 2 1\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 72,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+            "actual": "3 1 2\n2 3 4 1\n3 5 2 6 1 4",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3\n4 3\n5 1 2 2\n101\n100\n001\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 2 1\n1 3 4 2\n1",
+            "actual": "3 2 1\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+            "actual": "3 1 2\n2 3 4 1\n5 4 2 6 1 3",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n13 3 2\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+            "actual": "3 1 2\n2 3 4 1\n6 2 4 3 1 5",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "3\n4 3\n5 1 4 2\n111\n101\n101\n000\n4 4\n16 1 1 11\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3\n4 3\n4 1 1 2\n101\n100\n000\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 2\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n1 3 4 2\n2 1",
+            "actual": "3 1 2\n2 3 4 1\n2 1",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n000110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n5 4 3 2 1 6",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3\n4 3\n3 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111001\n",
+            "expected": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+            "actual": "3 2 1\n3 2 4 1\n5 3 4 2 1 6",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0110\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n2 1",
+            "actual": "3 1 2\n3 2 4 1\n2 1",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "3\n4 3\n5 1 1 0\n111\n000\n101\n010\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "1 2 3\n2 3 4 1\n1",
+            "actual": "3 2 1\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000001\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+            "actual": "3 1 2\n2 3 4 1\n5 3 4 2 1 6",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1101\n0010\n0110\n0111\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n4 3 1 2\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n2 4 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+            "actual": "3 1 2\n4 3 2 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0011\n0110\n0001\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 2 1\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0010\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n2 1",
+            "actual": "3 1 2\n3 2 4 1\n2 1",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3\n4 3\n5 1 2 2\n101\n101\n000\n101\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "2 1 3\n1 3 4 2\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3\n4 3\n9 1 4 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+            "actual": "3 1 2\n2 3 4 1\n6 3 5 2 1 4",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3\n4 3\n1 1 2 2\n110\n100\n111\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111011\n",
+            "expected": "3 2 1\n1 2 4 3\n1",
+            "actual": "3 2 1\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "2 1 3\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n0 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+            "expected": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "2 1 3\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n6 3 0 10\n1001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "3 1 2\n2 3 4 1\n6 2 5 4 1 3",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n1 2 0 10\n1101\n0010\n0100\n0111\n3 6\n38 3 7\n010110\n100101\n111101\n",
+            "expected": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+            "actual": "3 1 2\n4 3 1 2\n6 2 4 3 1 5",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "3\n4 3\n1 1 2 0\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n011110\n000101\n111011\n",
+            "expected": "3 1 2\n1 2 4 3\n1",
+            "actual": "3 2 1\n1 3 4 2\n1",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 10\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+            "actual": "2 1 3\n2 3 4 1\n6 2 5 4 1 3",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3\n4 3\n5 1 3 4\n100\n100\n101\n100\n4 4\n12 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 4\n010110\n010101\n111111\n",
+            "expected": "1 2 3\n1 3 4 2\n1",
+            "actual": "1 2 3\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3\n4 3\n3 1 2 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "3 2 1\n2 3 4 1\n3 2 5 4 1 6",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 1\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+            "expected": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+            "actual": "2 1 3\n2 4 3 1\n6 2 5 4 1 3",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "3\n4 3\n3 1 3 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+            "expected": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+            "actual": "1 3 2\n2 3 4 1\n3 2 5 4 1 6",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3\n4 3\n0 1 2 1\n110\n100\n100\n101\n4 4\n2 2 0 13\n1101\n0110\n0110\n0101\n3 6\n38 3 12\n010110\n000001\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+            "actual": "3 2 1\n2 3 4 1\n5 3 4 2 1 6",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+            "actual": "3 1 2\n2 3 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0001\n3 1\n20 3 2\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+            "expected": "3 1 2\n2 3 4 1\n1",
+            "actual": "3 1 2\n2 3 4 1\n1",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111101\n",
+            "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+            "actual": "3 1 2\n3 2 4 1\n5 2 4 3 1 6",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 49,
+    "failed": 1,
+    "errors": 0,
+    "pass_rate": 0.98,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n010110\n000101\n111111\n",
+        "expected": "3 1 2 \n2 3 4 1 \n3 1 4 5 2 6",
+        "actual": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+        "actual": "3 1 2\n2 3 4 1\n3 1 4 5 2 6",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+        "actual": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n1 3 4 2\n1",
+        "actual": "3 1 2\n1 3 4 2\n1",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n001\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+        "expected": "3 2 1\n2 3 4 1\n1",
+        "actual": "3 2 1\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+        "actual": "3 1 2\n2 3 4 1\n1 4 2 6 3 5",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "3\n4 3\n5 1 2 2\n101\n100\n001\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 2 1\n1 3 4 2\n1",
+        "actual": "3 2 1\n1 3 4 2\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n8 3 2\n010110\n100101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+        "actual": "3 1 2\n2 3 4 1\n3 4 1 6 2 5",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n13 3 2\n010110\n100101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+        "actual": "3 1 2\n2 3 4 1\n5 2 3 4 1 6",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "3\n4 3\n5 1 4 2\n111\n101\n101\n000\n4 4\n16 1 1 11\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+        "expected": "2 1 3\n2 3 4 1\n1",
+        "actual": "2 1 3\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "3\n4 3\n4 1 1 2\n101\n100\n000\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 2\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n1 3 4 2\n2 1",
+        "actual": "3 1 2\n1 3 4 2\n2 1",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 15\n000110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+        "actual": "3 1 2\n2 3 4 1\n2 3 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "3\n4 3\n3 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111001\n",
+        "expected": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+        "actual": "3 1 2\n3 1 4 2\n4 2 5 3 1 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0110\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n2 1",
+        "actual": "3 1 2\n2 3 4 1\n2 1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "3\n4 3\n5 1 1 0\n111\n000\n101\n010\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+        "expected": "1 2 3\n2 3 4 1\n1",
+        "actual": "1 2 3\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000001\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+        "actual": "3 1 2\n2 3 4 1\n4 1 5 2 3 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1101\n0010\n0110\n0111\n3 6\n38 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+        "actual": "3 1 2\n3 4 1 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n2 4 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+        "actual": "3 1 2\n4 1 2 3\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0011\n0110\n0001\n3 6\n38 2 8\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+        "actual": "3 1 2\n1 2 4 3\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+        "expected": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+        "actual": "3 2 1\n2 3 4 1\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "3\n4 3\n5 1 3 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1101\n0010\n0010\n0101\n3 2\n20 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 1 4 2\n2 1",
+        "actual": "3 1 2\n3 1 4 2\n2 1",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "3\n4 3\n5 1 2 2\n101\n101\n000\n101\n4 4\n6 1 0 10\n1001\n0010\n0110\n0100\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "2 1 3\n1 3 4 2\n1",
+        "actual": "2 1 3\n1 3 4 2\n1",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "3\n4 3\n9 1 4 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n20 3 7\n010110\n000100\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+        "actual": "3 1 2\n2 3 4 1\n4 3 5 1 2 6",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "3\n4 3\n1 1 2 2\n110\n100\n111\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n010110\n000101\n111011\n",
+        "expected": "3 2 1\n1 2 4 3\n1",
+        "actual": "3 2 1\n1 2 4 3\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+        "expected": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+        "actual": "2 1 3\n2 3 4 1\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "3\n4 3\n5 1 2 4\n110\n100\n001\n110\n4 4\n0 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 4 7\n010110\n000101\n111101\n",
+        "expected": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+        "actual": "2 1 3\n3 1 4 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n100\n4 4\n6 3 0 10\n1001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+        "actual": "3 1 2\n2 3 4 1\n6 2 3 4 1 5",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n1 2 0 10\n1101\n0010\n0100\n0111\n3 6\n38 3 7\n010110\n100101\n111101\n",
+        "expected": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+        "actual": "3 1 2\n3 4 1 2\n5 2 3 4 1 6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "3\n4 3\n1 1 2 0\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0011\n0111\n0101\n3 1\n20 3 2\n011110\n000101\n111011\n",
+        "expected": "3 1 2\n1 2 4 3\n1",
+        "actual": "3 1 2\n1 2 4 3\n1",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 10\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+        "expected": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+        "actual": "2 1 3\n2 3 4 1\n6 2 3 4 1 5",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3\n4 3\n5 1 3 4\n100\n100\n101\n100\n4 4\n12 2 0 10\n1001\n0010\n0111\n0101\n3 1\n20 3 4\n010110\n010101\n111111\n",
+        "expected": "1 2 3\n1 3 4 2\n1",
+        "actual": "1 2 3\n1 3 4 2\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "3\n4 3\n3 1 2 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+        "expected": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+        "actual": "3 2 1\n2 3 4 1\n2 3 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3\n4 3\n5 1 2 2\n110\n110\n101\n000\n4 4\n6 3 0 1\n0001\n0110\n0110\n0101\n3 6\n13 3 1\n010110\n100100\n111101\n",
+        "expected": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+        "actual": "2 1 3\n1 4 3 2\n6 2 3 4 1 5",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3\n4 3\n3 1 3 2\n110\n000\n100\n100\n4 4\n6 2 1 11\n1001\n0010\n0110\n0101\n3 6\n38 0 7\n110110\n000101\n111101\n",
+        "expected": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+        "actual": "1 3 2\n2 3 4 1\n2 3 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "3\n4 3\n0 1 2 1\n110\n100\n100\n101\n4 4\n2 2 0 13\n1101\n0110\n0110\n0101\n3 6\n38 3 12\n010110\n000001\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+        "actual": "3 1 2\n2 3 4 1\n4 2 5 3 1 6",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n6 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 2\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n20 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 7\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+        "actual": "3 1 2\n2 3 4 1\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n6 2 0 10\n1001\n0010\n0110\n0001\n3 1\n20 3 2\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n100\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n111111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 2 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 7\n010110\n000101\n110111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 3 8\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "3\n4 3\n5 1 2 2\n111\n100\n101\n000\n4 4\n11 1 0 10\n1001\n0010\n0110\n0101\n3 1\n34 3 2\n010110\n000101\n110111\n",
+        "expected": "3 1 2\n2 3 4 1\n1",
+        "actual": "3 1 2\n2 3 4 1\n1",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "3\n4 3\n5 1 2 2\n110\n100\n101\n100\n4 4\n2 1 0 10\n1001\n0010\n0110\n0101\n3 6\n38 2 8\n010110\n000101\n111101\n",
+        "expected": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "actual": "3 1 2\n3 1 4 2\n3 2 4 5 1 6",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.11627975,
+  "total_latency_ms": 121903,
+  "iterations_used": null,
+  "early_stopped": null
+}

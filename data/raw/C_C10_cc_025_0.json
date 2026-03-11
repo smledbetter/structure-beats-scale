@@ -1,0 +1,1057 @@
+{
+  "study": "C",
+  "condition": "C10",
+  "task_id": "cc_025",
+  "replica": 0,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    # f[i][j]: max staircase length ending at (i,j) with last move Right (type1: RDRD, type2: DRDR - last R)\n    # g[i][j]: max staircase length ending at (i,j) with last move Down\n    # For type1: f[i][j] = g[i][j-1]+1 if both free; g[i][j] = f[i-1][j]+1 if both free\n    # For type2: same recurrence! Because type2 starts D, but the recurrences are the same.\n    # Wait, type1 and type2 are actually captured by the same f,g if we think of it as:\n    # any staircase path (alternating R and D) - the recurrence is the same regardless of which comes first.\n    \n    f = [[0]*(m+2) for _ in range(n+2)]  # last move Right\n    g = [[0]*(m+2) for _ in range(n+2)]  # last move Down\n    \n    # Initialize: all free\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1  # came from left\n            g[i][j] = f[i-1][j] + 1  # came from above\n    \n    # total = n*m + sum(f[i][j]-1 + g[i][j]-1) for all i,j\n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            total += f[i][j] - 1 + g[i][j] - 1\n    \n    def recompute(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return\n        # recompute f[i][j] and g[i][j]\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1\n            # Actually f[i][j] = g[i][j-1]+1 if j>1 and cell (i,j-1) is free, else 1\n            # Wait: f[i][j] = length of staircase ending at (i,j) last move R\n            # This means (i,j-1) must be free AND g[i][j-1] >= 1 (i.e., (i,j-1) is free)\n            # g[i][j-1] is 0 if (i,j-1) is locked\n            f[i][j] = g[i][j-1] + 1  # g[i][j-1] is 0 if locked, so f becomes 1\n            g[i][j] = f[i-1][j] + 1  # f[i-1][j] is 0 if locked\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        if f[i][j] != old_f or g[i][j] != old_g:\n            # propagate: next cell that uses f[i][j] is g[i+1][j] (down)\n            # next cell that uses g[i][j] is f[i][j+1] (right)\n            recompute(i+1, j)  # g[i+1][j] uses f[i][j]... wait\n            recompute(i, j+1)  # f[i][j+1] uses g[i][j]\n    \n    # Hmm, recursion might be deep. Let me think about the propagation more carefully.\n    # When f[i][j] changes, g[i+1][j] might change (since g[i+1][j] = f[i][j]+1 if free)\n    # When g[i][j] changes, f[i][j+1] might change (since f[i][j+1] = g[i][j]+1 if free)\n    # So the chain goes: f[i][j] -> g[i+1][j] -> f[i+1][j+1] -> g[i+2][j+1] -> ...\n    # This is a diagonal chain! Length O(min(n,m)).\n    \n    # Let me redo without recursion.\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            # cell became locked, need to update f[x][y], g[x][y] and propagate\n            total -= (f[x][y] - 1) + (g[x][y] - 1) + 1  # remove single cell staircase too\n            f[x][y] = 0\n            g[x][y] = 0\n            # propagate via two chains\n            # Chain 1: g[x+1][y] depends on f[x][y], then f[x+1][y+1] depends on g[x+1][y], etc.\n            # Chain 2: f[x][y+1] depends on g[x][y], then g[x+1][y+1] depends on f[x][y+1], etc.\n            # But also need to recompute f[x][y] and g[x][y] themselves first... done above\n            # Now propagate chain starting from (x+1, y) for g, and (x, y+1) for f\n            # Actually let me just recompute all affected cells\n            \n            # After (x,y) is locked:\n            # - g[x+1][y] = f[x][y]+1 = 1 (if x+1,y free), was possibly more\n            # - f[x][y+1] = g[x][y]+1 = 1 (if x,y+1 free), was possibly more\n            # Then propagate\n            \n            # Let me do two separate diagonal propagations\n            # Propagation 1: starting from cell (x+1, y), update g, then f at (x+1,y+1), then g at (x+2,y+1)...\n            ci, cj = x+1, y\n            update_g = True  # next update is g\n            while ci <= n and cj <= m:\n                if update_g:\n                    if not locked[ci][cj]:\n                        new_val = f[ci-1][cj] + 1\n                        if new_val == g[ci][cj]:\n                            break\n                        old = g[ci][cj]\n                        total += new_val - old\n                        g[ci][cj] = new_val\n                        ci += 0; cj += 1; update_g = False\n                        # next: f[ci][cj+1]... wait\n                        # after updating g[ci][cj], next affected is f[ci][cj+1]\n                        cj_next = cj  # already incremented? No.\n                        # Let me restructure\n                    else:\n                        break\n                else:\n                    if not locked[ci][cj]:\n                        new_val = g[ci][cj-1] + 1\n                        if new_val == f[ci][cj]:\n                            break\n                        old = f[ci][cj]\n                        total += new_val - old\n                        f[ci][cj] = new_val\n                        ci += 1; update_g = True\n                    else:\n                        break\n        # This is getting complicated. Let me restructure completely.\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "input_tokens": 738,
+      "output_tokens": 8192,
+      "cost_usd": 0.125094,
+      "latency_ms": 97722
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 4,
+          "bugs": [
+            {
+              "description": "The code never handles the case when a cell becomes free (unlocked). After toggling a locked cell to free, the DP values f, g and the total are not updated, leading to incorrect results.",
+              "line": 67,
+              "severity": "critical",
+              "triggering_input": "1 1\n1 1"
+            },
+            {
+              "description": "The propagation loop after locking a cell updates indices incorrectly (ci += 0; cj += 1) and mishandles the update_g flag, causing an infinite loop or wrong DP updates. The logic for moving to the next cell in the diagonal chain is flawed.",
+              "line": 97,
+              "severity": "critical",
+              "triggering_input": "2 2 1\n1 1"
+            },
+            {
+              "description": "The helper function recompute is defined but never used, and contains contradictory assignments (line 41 is immediately overwritten by line 46). This dead code indicates incomplete logic and may hide bugs.",
+              "line": 41,
+              "severity": "minor",
+              "triggering_input": "any"
+            },
+            {
+              "description": "Locking a cell can affect DP values of many cells beyond the single diagonal chain, but the code only propagates updates along one diagonal direction. This insufficient propagation leads to stale f/g values and wrong total counts.",
+              "line": 86,
+              "severity": "major",
+              "triggering_input": "3 3 1\n2 2"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The code never handles the case when a cell becomes free (unlocked). After toggling a locked cell to free, the DP values f, g and the total are not updated, leading to incorrect results.\",\n      \"line\": 67,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1 1\\n1 1\"\n    },\n    {\n      \"description\": \"The propagation loop after locking a cell updates indices incorrectly (ci += 0; cj += 1) and mishandles the update_g flag, causing an infinite loop or wrong DP updates. The logic for moving to the next cell in the diagonal chain is flawed.\",\n      \"line\": 97,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"2 2 1\\n1 1\"\n    },\n    {\n      \"description\": \"The helper function recompute is defined but never used, and contains contradictory assignments (line 41 is immediately overwritten by line 46). This dead code indicates incomplete logic and may hide bugs.\",\n      \"line\": 41,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"any\"\n    },\n    {\n      \"description\": \"Locking a cell can affect DP values of many cells beyond the single diagonal chain, but the code only propagates updates along one diagonal direction. This insufficient propagation leads to stale f/g values and wrong total counts.\",\n      \"line\": 86,\n      \"severity\": \"major\",\n      \"triggering_input\": \"3 3 1\\n2 2\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code never handles the case when a cell becomes free (unlocked). After toggling a locked cell to free, the DP values f, g and the total are not updated, leading to incorrect results.",
+                "line": 67,
+                "severity": "critical",
+                "triggering_input": "1 1\n1 1"
+              },
+              {
+                "description": "The propagation loop after locking a cell updates indices incorrectly (ci += 0; cj += 1) and mishandles the update_g flag, causing an infinite loop or wrong DP updates. The logic for moving to the next cell in the diagonal chain is flawed.",
+                "line": 97,
+                "severity": "critical",
+                "triggering_input": "2 2 1\n1 1"
+              },
+              {
+                "description": "The helper function recompute is defined but never used, and contains contradictory assignments (line 41 is immediately overwritten by line 46). This dead code indicates incomplete logic and may hide bugs.",
+                "line": 41,
+                "severity": "minor",
+                "triggering_input": "any"
+              },
+              {
+                "description": "Locking a cell can affect DP values of many cells beyond the single diagonal chain, but the code only propagates updates along one diagonal direction. This insufficient propagation leads to stale f/g values and wrong total counts.",
+                "line": 86,
+                "severity": "major",
+                "triggering_input": "3 3 1\n2 2"
+              }
+            ]
+          },
+          "input_tokens": 2448,
+          "output_tokens": 339,
+          "cost_usd": 0.00086625,
+          "latency_ms": 6767
+        },
+        {
+          "role": "generalist_iter2",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1641,
+          "output_tokens": 0,
+          "cost_usd": 0.00041025,
+          "latency_ms": 9555
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    f = [[0]*(m+2) for _ in range(n+2)]\n    g = [[0]*(m+2) for _ in range(n+2)]\n    \n    total = 0\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1\n            g[i][j] = f[i-1][j] + 1\n            total += f[i][j] + g[i][j] - 1\n    \n    def update_cell(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return False\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = g[i][j-1] + 1\n            g[i][j] = f[i-1][j] + 1\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        return f[i][j] != old_f or g[i][j] != old_g\n    \n    def propagate(i, j):\n        # f[i][j] changed -> affects g[i+1][j] -> affects f[i+1][j+1] -> ...\n        ci, cj = i+1, j\n        next_is_g = True\n        while 1 <= ci <= n and 1 <= cj <= m:\n            if next_is_g:\n                old = g[ci][cj]\n                if locked[ci][cj]:\n                    g[ci][cj] = 0\n                else:\n                    g[ci][cj] = f[ci-1][cj] + 1\n                total += g[ci][cj] - old\n                if g[ci][cj] == old:\n                    break\n                cj += 1\n                next_is_g = False\n            else:\n                old = f[ci][cj]\n                if locked[ci][cj]:\n                    f[ci][cj] = 0\n                else:\n                    f[ci][cj] = g[ci][cj-1] + 1\n                total += f[ci][cj] - old\n                if f[ci][cj] == old:\n                    break\n                ci += 1\n                next_is_g = True\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        changed = update_cell(x, y)\n        if changed:\n            # f[x][y] changed -> propagate down-right starting g[x+1][y]\n            propagate(x, y)\n            # g[x][y] changed -> propagate right-down starting f[x][y+1]\n            # Simulate: g[x][y] -> f[x][y+1] -> g[x+1][y+1] -> ...\n            ci, cj = x, y+1\n            next_is_f = True\n            while 1 <= ci <= n and 1 <= cj <= m:\n                if next_is_f:\n                    old = f[ci][cj]\n                    if locked[ci][cj]:\n                        f[ci][cj] = 0\n                    else:\n                        f[ci][cj] = g[ci][cj-1] + 1\n                    total += f[ci][cj] - old\n                    if f[ci][cj] == old:\n                        break\n                    ci += 1\n                    next_is_f = False\n                else:\n                    old = g[ci][cj]\n                    if locked[ci][cj]:\n                        g[ci][cj] = 0\n                    else:\n                        g[ci][cj] = f[ci-1][cj] + 1\n                    total += g[ci][cj] - old\n                    if g[ci][cj] == old:\n                        break\n                    cj += 1\n                    next_is_f = True\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+          "input_tokens": 3175,
+          "output_tokens": 1676,
+          "cost_usd": 0.034665,
+          "latency_ms": 18234
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    f = [[0]*(m+2) for _ in range(n+2)]\n    g = [[0]*(m+2) for _ in range(n+2)]\n    \n    total = 0\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1\n            g[i][j] = f[i-1][j] + 1\n            total += f[i][j] + g[i][j] - 1\n    \n    def update_cell(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return False\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = g[i][j-1] + 1\n            g[i][j] = f[i-1][j] + 1\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        return f[i][j] != old_f or g[i][j] != old_g\n    \n    def propagate(i, j):\n        # f[i][j] changed -> affects g[i+1][j] -> affects f[i+1][j+1] -> ...\n        ci, cj = i+1, j\n        next_is_g = True\n        while 1 <= ci <= n and 1 <= cj <= m:\n            if next_is_g:\n                old = g[ci][cj]\n                if locked[ci][cj]:\n                    g[ci][cj] = 0\n                else:\n                    g[ci][cj] = f[ci-1][cj] + 1\n                total += g[ci][cj] - old\n                if g[ci][cj] == old:\n                    break\n                cj += 1\n                next_is_g = False\n            else:\n                old = f[ci][cj]\n                if locked[ci][cj]:\n                    f[ci][cj] = 0\n                else:\n                    f[ci][cj] = g[ci][cj-1] + 1\n                total += f[ci][cj] - old\n                if f[ci][cj] == old:\n                    break\n                ci += 1\n                next_is_g = True\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        changed = update_cell(x, y)\n        if changed:\n            # f[x][y] changed -> propagate down-right starting g[x+1][y]\n            propagate(x, y)\n            # g[x][y] changed -> propagate right-down starting f[x][y+1]\n            # Simulate: g[x][y] -> f[x][y+1] -> g[x+1][y+1] -> ...\n            ci, cj = x, y+1\n            next_is_f = True\n            while 1 <= ci <= n and 1 <= cj <= m:\n                if next_is_f:\n                    old = f[ci][cj]\n                    if locked[ci][cj]:\n                        f[ci][cj] = 0\n                    else:\n                        f[ci][cj] = g[ci][cj-1] + 1\n                    total += f[ci][cj] - old\n                    if f[ci][cj] == old:\n                        break\n                    ci += 1\n                    next_is_f = False\n                else:\n                    old = g[ci][cj]\n                    if locked[ci][cj]:\n                        g[ci][cj] = 0\n                    else:\n                        g[ci][cj] = f[ci-1][cj] + 1\n                    total += g[ci][cj] - old\n                    if g[ci][cj] == old:\n                        break\n                    cj += 1\n                    next_is_f = True\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 2,
+        "errors": 48,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "1000 1000 2\n239 634\n239 634\n",
+            "expected": "1332632508\n1333333000",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 581,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1 1 1\n1 1\n",
+            "expected": "0",
+            "actual": "-1",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1 1 2\n1 1\n1 1\n",
+            "expected": "0\n1",
+            "actual": "-1\n1",
+            "stderr": "",
+            "runtime_ms": 27,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "1000 1000 2\n252 634\n239 634\n",
+            "expected": "1332594366\n1331893874",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 670,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "1000 1000 2\n59 634\n239 634\n",
+            "expected": "1333160628\n1332460136",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 667,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n35",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+            "expected": "25\n20\n26\n22",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "1000 1000 2\n239 634\n418 634\n",
+            "expected": "1332632508\n1331406830",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 787,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "1000 1000 2\n59 323\n239 634\n",
+            "expected": "1333014458\n1332313966",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 810,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "22",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "1000 1000 2\n59 323\n239 999\n",
+            "expected": "1333014458\n1333011116",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 829,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n89",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n77",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n63\n61",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "2 1 2\n1 1\n1 1\n",
+            "expected": "1\n3",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+            "actual": "",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+            "runtime_ms": 29,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 2,
+    "errors": 48,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "1000 1000 2\n239 634\n239 634\n",
+        "expected": "1332632508\n1333333000",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 581,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "1 1 1\n1 1\n",
+        "expected": "0",
+        "actual": "-1",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "1 1 2\n1 1\n1 1\n",
+        "expected": "0\n1",
+        "actual": "-1\n1",
+        "stderr": "",
+        "runtime_ms": 27,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 26,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 25,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "1000 1000 2\n252 634\n239 634\n",
+        "expected": "1332594366\n1331893874",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 670,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "1000 1000 2\n59 634\n239 634\n",
+        "expected": "1333160628\n1332460136",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 667,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n35",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+        "expected": "25\n20\n26\n22",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "1000 1000 2\n239 634\n418 634\n",
+        "expected": "1332632508\n1331406830",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 787,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 28,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "1000 1000 2\n59 323\n239 634\n",
+        "expected": "1333014458\n1332313966",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 810,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "22",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "1000 1000 2\n59 323\n239 999\n",
+        "expected": "1333014458\n1333011116",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 829,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n89",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n77",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n63\n61",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "2 1 2\n1 1\n1 1\n",
+        "expected": "1\n3",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+        "actual": "",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 100, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 68, in solve\n    propagate(x, y)\n  File \"/ho",
+        "runtime_ms": 29,
+        "status": "error"
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 4,
+      "pass_rate_before": 0.06,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.03553125,
+      "cumulative_cost": 0.16062525000000002
+    },
+    {
+      "iteration": 2,
+      "bugs_found": 0,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.00041025,
+      "cumulative_cost": 0.16103550000000003
+    }
+  ],
+  "total_cost_usd": 0.16103550000000003,
+  "total_latency_ms": 132278,
+  "iterations_used": 2,
+  "early_stopped": true
+}

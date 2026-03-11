@@ -1,0 +1,950 @@
+{
+  "study": "C",
+  "condition": "C0",
+  "task_id": "cc_025",
+  "replica": 0,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    # f[i][j]: max staircase length ending at (i,j) with last move Right (type1: RDRD, type2: DRDR - last R)\n    # g[i][j]: max staircase length ending at (i,j) with last move Down\n    # For type1: f[i][j] = g[i][j-1]+1 if both free; g[i][j] = f[i-1][j]+1 if both free\n    # For type2: same recurrence! Because type2 starts D, but the recurrences are the same.\n    # Wait, type1 and type2 are actually captured by the same f,g if we think of it as:\n    # any staircase path (alternating R and D) - the recurrence is the same regardless of which comes first.\n    \n    f = [[0]*(m+2) for _ in range(n+2)]  # last move Right\n    g = [[0]*(m+2) for _ in range(n+2)]  # last move Down\n    \n    # Initialize: all free\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1  # came from left\n            g[i][j] = f[i-1][j] + 1  # came from above\n    \n    # total = n*m + sum(f[i][j]-1 + g[i][j]-1) for all i,j\n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            total += f[i][j] - 1 + g[i][j] - 1\n    \n    def recompute(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return\n        # recompute f[i][j] and g[i][j]\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1\n            # Actually f[i][j] = g[i][j-1]+1 if j>1 and cell (i,j-1) is free, else 1\n            # Wait: f[i][j] = length of staircase ending at (i,j) last move R\n            # This means (i,j-1) must be free AND g[i][j-1] >= 1 (i.e., (i,j-1) is free)\n            # g[i][j-1] is 0 if (i,j-1) is locked\n            f[i][j] = g[i][j-1] + 1  # g[i][j-1] is 0 if locked, so f becomes 1\n            g[i][j] = f[i-1][j] + 1  # f[i-1][j] is 0 if locked\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        if f[i][j] != old_f or g[i][j] != old_g:\n            # propagate: next cell that uses f[i][j] is g[i+1][j] (down)\n            # next cell that uses g[i][j] is f[i][j+1] (right)\n            recompute(i+1, j)  # g[i+1][j] uses f[i][j]... wait\n            recompute(i, j+1)  # f[i][j+1] uses g[i][j]\n    \n    # Hmm, recursion might be deep. Let me think about the propagation more carefully.\n    # When f[i][j] changes, g[i+1][j] might change (since g[i+1][j] = f[i][j]+1 if free)\n    # When g[i][j] changes, f[i][j+1] might change (since f[i][j+1] = g[i][j]+1 if free)\n    # So the chain goes: f[i][j] -> g[i+1][j] -> f[i+1][j+1] -> g[i+2][j+1] -> ...\n    # This is a diagonal chain! Length O(min(n,m)).\n    \n    # Let me redo without recursion.\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            # cell became locked, need to update f[x][y], g[x][y] and propagate\n            total -= (f[x][y] - 1) + (g[x][y] - 1) + 1  # remove single cell staircase too\n            f[x][y] = 0\n            g[x][y] = 0\n            # propagate via two chains\n            # Chain 1: g[x+1][y] depends on f[x][y], then f[x+1][y+1] depends on g[x+1][y], etc.\n            # Chain 2: f[x][y+1] depends on g[x][y], then g[x+1][y+1] depends on f[x][y+1], etc.\n            # But also need to recompute f[x][y] and g[x][y] themselves first... done above\n            # Now propagate chain starting from (x+1, y) for g, and (x, y+1) for f\n            # Actually let me just recompute all affected cells\n            \n            # After (x,y) is locked:\n            # - g[x+1][y] = f[x][y]+1 = 1 (if x+1,y free), was possibly more\n            # - f[x][y+1] = g[x][y]+1 = 1 (if x,y+1 free), was possibly more\n            # Then propagate\n            \n            # Let me do two separate diagonal propagations\n            # Propagation 1: starting from cell (x+1, y), update g, then f at (x+1,y+1), then g at (x+2,y+1)...\n            ci, cj = x+1, y\n            update_g = True  # next update is g\n            while ci <= n and cj <= m:\n                if update_g:\n                    if not locked[ci][cj]:\n                        new_val = f[ci-1][cj] + 1\n                        if new_val == g[ci][cj]:\n                            break\n                        old = g[ci][cj]\n                        total += new_val - old\n                        g[ci][cj] = new_val\n                        ci += 0; cj += 1; update_g = False\n                        # next: f[ci][cj+1]... wait\n                        # after updating g[ci][cj], next affected is f[ci][cj+1]\n                        cj_next = cj  # already incremented? No.\n                        # Let me restructure\n                    else:\n                        break\n                else:\n                    if not locked[ci][cj]:\n                        new_val = g[ci][cj-1] + 1\n                        if new_val == f[ci][cj]:\n                            break\n                        old = f[ci][cj]\n                        total += new_val - old\n                        f[ci][cj] = new_val\n                        ci += 1; update_g = True\n                    else:\n                        break\n        # This is getting complicated. Let me restructure completely.\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "input_tokens": 738,
+      "output_tokens": 8192,
+      "cost_usd": 0.125094,
+      "latency_ms": 97722
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m, q = map(int, input().split())\n    locked = [[False]*(m+2) for _ in range(n+2)]\n    \n    # f[i][j]: max staircase length ending at (i,j) with last move Right (type1: RDRD, type2: DRDR - last R)\n    # g[i][j]: max staircase length ending at (i,j) with last move Down\n    # For type1: f[i][j] = g[i][j-1]+1 if both free; g[i][j] = f[i-1][j]+1 if both free\n    # For type2: same recurrence! Because type2 starts D, but the recurrences are the same.\n    # Wait, type1 and type2 are actually captured by the same f,g if we think of it as:\n    # any staircase path (alternating R and D) - the recurrence is the same regardless of which comes first.\n    \n    f = [[0]*(m+2) for _ in range(n+2)]  # last move Right\n    g = [[0]*(m+2) for _ in range(n+2)]  # last move Down\n    \n    # Initialize: all free\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            f[i][j] = g[i][j-1] + 1  # came from left\n            g[i][j] = f[i-1][j] + 1  # came from above\n    \n    # total = n*m + sum(f[i][j]-1 + g[i][j]-1) for all i,j\n    total = n * m\n    for i in range(1, n+1):\n        for j in range(1, m+1):\n            total += f[i][j] - 1 + g[i][j] - 1\n    \n    def recompute(i, j):\n        nonlocal total\n        if i < 1 or i > n or j < 1 or j > m:\n            return\n        # recompute f[i][j] and g[i][j]\n        old_f = f[i][j]\n        old_g = g[i][j]\n        if locked[i][j]:\n            f[i][j] = 0\n            g[i][j] = 0\n        else:\n            f[i][j] = (g[i][j-1] + 1) if (j > 1 and not locked[i][j-1]) else 1\n            # Actually f[i][j] = g[i][j-1]+1 if j>1 and cell (i,j-1) is free, else 1\n            # Wait: f[i][j] = length of staircase ending at (i,j) last move R\n            # This means (i,j-1) must be free AND g[i][j-1] >= 1 (i.e., (i,j-1) is free)\n            # g[i][j-1] is 0 if (i,j-1) is locked\n            f[i][j] = g[i][j-1] + 1  # g[i][j-1] is 0 if locked, so f becomes 1\n            g[i][j] = f[i-1][j] + 1  # f[i-1][j] is 0 if locked\n        total += (f[i][j] - old_f) + (g[i][j] - old_g)\n        if f[i][j] != old_f or g[i][j] != old_g:\n            # propagate: next cell that uses f[i][j] is g[i+1][j] (down)\n            # next cell that uses g[i][j] is f[i][j+1] (right)\n            recompute(i+1, j)  # g[i+1][j] uses f[i][j]... wait\n            recompute(i, j+1)  # f[i][j+1] uses g[i][j]\n    \n    # Hmm, recursion might be deep. Let me think about the propagation more carefully.\n    # When f[i][j] changes, g[i+1][j] might change (since g[i+1][j] = f[i][j]+1 if free)\n    # When g[i][j] changes, f[i][j+1] might change (since f[i][j+1] = g[i][j]+1 if free)\n    # So the chain goes: f[i][j] -> g[i+1][j] -> f[i+1][j+1] -> g[i+2][j+1] -> ...\n    # This is a diagonal chain! Length O(min(n,m)).\n    \n    # Let me redo without recursion.\n    \n    results = []\n    for _ in range(q):\n        x, y = map(int, input().split())\n        locked[x][y] = not locked[x][y]\n        if locked[x][y]:\n            # cell became locked, need to update f[x][y], g[x][y] and propagate\n            total -= (f[x][y] - 1) + (g[x][y] - 1) + 1  # remove single cell staircase too\n            f[x][y] = 0\n            g[x][y] = 0\n            # propagate via two chains\n            # Chain 1: g[x+1][y] depends on f[x][y], then f[x+1][y+1] depends on g[x+1][y], etc.\n            # Chain 2: f[x][y+1] depends on g[x][y], then g[x+1][y+1] depends on f[x][y+1], etc.\n            # But also need to recompute f[x][y] and g[x][y] themselves first... done above\n            # Now propagate chain starting from (x+1, y) for g, and (x, y+1) for f\n            # Actually let me just recompute all affected cells\n            \n            # After (x,y) is locked:\n            # - g[x+1][y] = f[x][y]+1 = 1 (if x+1,y free), was possibly more\n            # - f[x][y+1] = g[x][y]+1 = 1 (if x,y+1 free), was possibly more\n            # Then propagate\n            \n            # Let me do two separate diagonal propagations\n            # Propagation 1: starting from cell (x+1, y), update g, then f at (x+1,y+1), then g at (x+2,y+1)...\n            ci, cj = x+1, y\n            update_g = True  # next update is g\n            while ci <= n and cj <= m:\n                if update_g:\n                    if not locked[ci][cj]:\n                        new_val = f[ci-1][cj] + 1\n                        if new_val == g[ci][cj]:\n                            break\n                        old = g[ci][cj]\n                        total += new_val - old\n                        g[ci][cj] = new_val\n                        ci += 0; cj += 1; update_g = False\n                        # next: f[ci][cj+1]... wait\n                        # after updating g[ci][cj], next affected is f[ci][cj+1]\n                        cj_next = cj  # already incremented? No.\n                        # Let me restructure\n                    else:\n                        break\n                else:\n                    if not locked[ci][cj]:\n                        new_val = g[ci][cj-1] + 1\n                        if new_val == f[ci][cj]:\n                            break\n                        old = f[ci][cj]\n                        total += new_val - old\n                        f[ci][cj] = new_val\n                        ci += 1; update_g = True\n                    else:\n                        break\n        # This is getting complicated. Let me restructure completely.\n        results.append(total)\n    \n    print('\\n'.join(map(str, results)))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 3,
+        "failed": 47,
+        "errors": 0,
+        "pass_rate": 0.06,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+            "actual": "49\n39\n31\n31\n31\n25\n20\n16\n16\n14",
+            "stderr": "",
+            "runtime_ms": 108,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1000 1000 2\n239 634\n239 634\n",
+            "expected": "1332632508\n1333333000",
+            "actual": "1332981672\n1332981672",
+            "stderr": "",
+            "runtime_ms": 1944,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+            "actual": "7\n7\n8\n4\n4\n2\n1\n2",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "1 1 1\n1 1\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 123,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n292\n280\n275\n265\n249\n243\n225\n207\n207\n198\n190\n190\n182\n168\n166\n148\n138\n135\n135\n113\n103\n103\n101",
+            "stderr": "",
+            "runtime_ms": 133,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+            "actual": "27\n23\n14\n14\n15\n12\n12\n12\n8\n6",
+            "stderr": "",
+            "runtime_ms": 132,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1 1 2\n1 1\n1 1\n",
+            "expected": "0\n1",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 101,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n174\n166\n152\n150\n138\n138\n135\n135\n113\n103\n103\n101",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+            "actual": "49\n39\n35\n35\n27\n22\n20\n14\n14\n13",
+            "stderr": "",
+            "runtime_ms": 130,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+            "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+            "actual": "7\n7\n8\n7\n7\n3\n3\n5",
+            "stderr": "",
+            "runtime_ms": 79,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n161\n147\n145\n133\n133\n131\n131\n109\n99\n99\n97",
+            "stderr": "",
+            "runtime_ms": 113,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+            "actual": "49\n39\n37\n37\n29\n23\n21\n15\n15\n15",
+            "stderr": "",
+            "runtime_ms": 92,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+            "actual": "43\n33\n31\n31\n23\n17\n15\n13\n13\n13",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "27\n23\n14\n14\n10\n7\n8\n8\n8\n6",
+            "stderr": "",
+            "runtime_ms": 97,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+            "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+            "actual": "49\n39\n31\n31\n31\n25\n20\n16\n13\n11",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1000 1000 2\n252 634\n239 634\n",
+            "expected": "1332594366\n1331893874",
+            "actual": "1332962562\n1332611234",
+            "stderr": "",
+            "runtime_ms": 2198,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n174\n166\n152\n150\n138\n136\n133\n133\n111\n101\n101\n99",
+            "stderr": "",
+            "runtime_ms": 134,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+            "actual": "49\n41\n37\n27\n21\n16\n16\n12\n13\n12",
+            "stderr": "",
+            "runtime_ms": 121,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n167\n153\n151\n139\n139\n137\n137\n115\n105\n105\n103",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+            "actual": "27\n23\n14\n14\n10\n7\n7\n7\n7\n5",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1000 1000 2\n59 634\n239 634\n",
+            "expected": "1333160628\n1332460136",
+            "actual": "1333246272\n1332894944",
+            "stderr": "",
+            "runtime_ms": 1880,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n258\n246\n230\n224\n206\n202\n192\n183\n175\n175\n167\n153\n151\n139\n137\n137\n137\n115\n105\n105\n103",
+            "stderr": "",
+            "runtime_ms": 105,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n167\n157\n143\n131\n131\n129\n129\n109\n99\n99\n97",
+            "stderr": "",
+            "runtime_ms": 88,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+            "actual": "27\n23\n23\n24\n20\n14\n11\n11\n11\n9",
+            "stderr": "",
+            "runtime_ms": 91,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n23",
+            "actual": "27\n23\n23\n24",
+            "stderr": "",
+            "runtime_ms": 80,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n31\n35",
+            "actual": "27\n23\n23\n23",
+            "stderr": "",
+            "runtime_ms": 111,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+            "expected": "25\n20\n26\n22",
+            "actual": "27\n22\n22\n18",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+            "actual": "112\n100\n90\n90\n90\n72\n67\n61\n61\n55",
+            "stderr": "",
+            "runtime_ms": 113,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "1000 1000 2\n239 634\n418 634\n",
+            "expected": "1332632508\n1331406830",
+            "actual": "1332981672\n1332367214",
+            "stderr": "",
+            "runtime_ms": 2310,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+            "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+            "actual": "7\n7\n8\n4\n4\n2\n2\n3",
+            "stderr": "",
+            "runtime_ms": 110,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n161\n147\n145\n133\n133\n131\n131\n109\n99\n99\n97",
+            "stderr": "",
+            "runtime_ms": 95,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+            "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+            "actual": "27\n23\n14\n14\n10\n7\n4\n4\n4\n3",
+            "stderr": "",
+            "runtime_ms": 136,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+            "actual": "405\n388\n370\n352\n336\n324\n302\n272\n260\n255\n243\n227\n221\n201\n197\n181\n172\n164\n164\n156\n148\n146\n134\n132\n129\n129\n111\n101\n101\n99",
+            "stderr": "",
+            "runtime_ms": 190,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49",
+            "actual": "49",
+            "stderr": "",
+            "runtime_ms": 122,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1000 1000 2\n59 323\n239 634\n",
+            "expected": "1333014458\n1332313966",
+            "actual": "1333172876\n1332821548",
+            "stderr": "",
+            "runtime_ms": 2875,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n256\n244\n228\n222\n204\n200\n190\n184\n176\n170\n168\n158\n144\n132\n132\n129\n129\n109\n99\n99\n98",
+            "stderr": "",
+            "runtime_ms": 88,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+            "actual": "112\n100\n92\n92\n84\n66\n66\n60\n61\n55",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+            "actual": "405\n388\n370\n352\n336\n324\n302\n272\n260\n255\n233\n217\n211\n191\n189\n169\n160\n152\n152\n144\n130\n128\n116\n114\n111\n111\n101\n91\n85\n83",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "22",
+            "actual": "22",
+            "stderr": "",
+            "runtime_ms": 102,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1000 1000 2\n59 323\n239 999\n",
+            "expected": "1333014458\n1333011116",
+            "actual": "1333172876\n1333170488",
+            "stderr": "",
+            "runtime_ms": 2145,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+            "actual": "405\n388\n370\n356\n338\n326\n304\n274\n274\n268\n256\n240\n234\n216\n212\n202\n196\n184\n178\n176\n166\n152\n140\n140\n137\n137\n117\n107\n107\n106",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n89",
+            "actual": "81\n77\n77\n77",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+            "actual": "405\n388\n370\n352\n336\n328\n306\n276\n262\n257\n235\n219\n213\n199\n197\n177\n168\n158\n158\n150\n136\n134\n122\n118\n115\n115\n105\n95\n89\n89",
+            "stderr": "",
+            "runtime_ms": 101,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+            "actual": "409\n392\n374\n360\n342\n330\n308\n278\n278\n270\n258\n242\n236\n218\n214\n204\n194\n182\n182\n180\n170\n156\n144\n144\n143\n136\n116\n106\n106\n105",
+            "stderr": "",
+            "runtime_ms": 89,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+            "actual": "405\n387\n387\n369\n353\n344\n324\n294\n281\n276\n254\n238\n232\n216\n214\n186\n177\n167\n167\n159\n145\n143\n131\n127\n124\n124\n114\n104\n90\n90",
+            "stderr": "",
+            "runtime_ms": 124,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n85\n77",
+            "actual": "81\n77\n77\n73",
+            "stderr": "",
+            "runtime_ms": 132,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+            "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+            "actual": "405\n387\n387\n369\n353\n344\n324\n294\n281\n276\n254\n240\n230\n214\n212\n184\n175\n165\n165\n149\n135\n133\n127\n119\n116\n116\n106\n106\n92\n92",
+            "stderr": "",
+            "runtime_ms": 122,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+            "expected": "79\n77\n63\n61",
+            "actual": "81\n77\n65\n61",
+            "stderr": "",
+            "runtime_ms": 90,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "2 1 2\n1 1\n1 1\n",
+            "expected": "1\n3",
+            "actual": "1\n1",
+            "stderr": "",
+            "runtime_ms": 118,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+            "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+            "actual": "49\n41\n29\n25\n25\n19\n19\n15\n17\n15",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 3,
+    "failed": 47,
+    "errors": 0,
+    "pass_rate": 0.06,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n29\n27",
+        "actual": "49\n39\n31\n31\n31\n25\n20\n16\n16\n14",
+        "stderr": "",
+        "runtime_ms": 108,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "1000 1000 2\n239 634\n239 634\n",
+        "expected": "1332632508\n1333333000",
+        "actual": "1332981672\n1332981672",
+        "stderr": "",
+        "runtime_ms": 1944,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n1\n0",
+        "actual": "7\n7\n8\n4\n4\n2\n1\n2",
+        "stderr": "",
+        "runtime_ms": 79,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "1 1 1\n1 1\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 123,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 3\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n238\n233\n222\n207\n186\n180\n162\n140\n151\n144\n137\n144\n137\n111\n109\n91\n82\n77\n87\n78\n76\n83\n81",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n292\n280\n275\n265\n249\n243\n225\n207\n207\n198\n190\n190\n182\n168\n166\n148\n138\n135\n135\n113\n103\n103\n101",
+        "stderr": "",
+        "runtime_ms": 133,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 2\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n12\n8\n13\n23\n19\n15",
+        "actual": "27\n23\n14\n14\n15\n12\n12\n12\n8\n6",
+        "stderr": "",
+        "runtime_ms": 132,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "1 1 2\n1 1\n1 1\n",
+        "expected": "0\n1",
+        "actual": "0\n0",
+        "stderr": "",
+        "runtime_ms": 101,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n86\n81\n91\n82\n80\n86\n84",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n174\n166\n152\n150\n138\n138\n135\n135\n113\n103\n103\n101",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "3 4 10\n1 4\n1 2\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n25\n39\n19\n14\n12\n9\n11\n10",
+        "actual": "49\n39\n35\n35\n27\n22\n20\n14\n14\n13",
+        "stderr": "",
+        "runtime_ms": 130,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 1\n1 1\n1 2\n2 1\n1 1\n",
+        "expected": "5\n10\n5\n3\n6\n2\n6\n3",
+        "actual": "7\n7\n8\n7\n7\n3\n3\n5",
+        "stderr": "",
+        "runtime_ms": 79,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n77\n68\n66\n72\n70",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n161\n147\n145\n133\n133\n131\n131\n109\n99\n99\n97",
+        "stderr": "",
+        "runtime_ms": 113,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "3 4 10\n1 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n35\n31\n45\n25\n17\n15\n12\n14\n16",
+        "actual": "49\n39\n37\n37\n29\n23\n21\n15\n15\n15",
+        "stderr": "",
+        "runtime_ms": 92,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "3 4 10\n2 4\n1 2\n3 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "43\n31\n27\n39\n25\n17\n14\n12\n15\n17",
+        "actual": "43\n33\n31\n31\n23\n17\n15\n13\n13\n13",
+        "stderr": "",
+        "runtime_ms": 93,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "27\n23\n14\n14\n10\n7\n8\n8\n8\n6",
+        "stderr": "",
+        "runtime_ms": 97,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "3 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 1\n3 1\n",
+        "expected": "49\n35\n24\n29\n49\n39\n31\n23\n16\n14",
+        "actual": "49\n39\n31\n31\n31\n25\n20\n16\n13\n11",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "1000 1000 2\n252 634\n239 634\n",
+        "expected": "1332594366\n1331893874",
+        "actual": "1332962562\n1332611234",
+        "stderr": "",
+        "runtime_ms": 2198,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n114\n111\n91\n89\n77\n74\n69\n79\n70\n68\n74\n72",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n174\n166\n152\n150\n138\n136\n133\n133\n111\n101\n101\n99",
+        "stderr": "",
+        "runtime_ms": 134,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "3 4 10\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n31\n21\n13\n8\n9\n6\n5\n4",
+        "actual": "49\n41\n37\n27\n21\n16\n16\n12\n13\n12",
+        "stderr": "",
+        "runtime_ms": 121,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n2 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n78\n76\n64\n77\n74\n80\n71\n69\n75\n73",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n167\n153\n151\n139\n139\n137\n137\n115\n105\n105\n103",
+        "stderr": "",
+        "runtime_ms": 104,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n14\n12\n8\n13\n23\n31\n27",
+        "actual": "27\n23\n14\n14\n10\n7\n7\n7\n7\n5",
+        "stderr": "",
+        "runtime_ms": 93,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "1000 1000 2\n59 634\n239 634\n",
+        "expected": "1333160628\n1332460136",
+        "actual": "1333246272\n1332894944",
+        "stderr": "",
+        "runtime_ms": 1880,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n4 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n206\n183\n168\n162\n140\n135\n124\n111\n104\n117\n114\n94\n92\n80\n77\n85\n101\n92\n90\n96\n94",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n258\n246\n230\n224\n206\n202\n192\n183\n175\n175\n167\n153\n151\n139\n137\n137\n137\n115\n105\n105\n103",
+        "stderr": "",
+        "runtime_ms": 105,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n98\n90\n76\n64\n77\n74\n80\n69\n67\n71\n69",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n167\n157\n143\n131\n131\n129\n129\n109\n99\n99\n97",
+        "stderr": "",
+        "runtime_ms": 88,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3 10\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23\n19\n9\n6\n10\n12\n8",
+        "actual": "27\n23\n23\n24\n20\n14\n11\n11\n11\n9",
+        "stderr": "",
+        "runtime_ms": 91,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 2\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n23",
+        "actual": "27\n23\n23\n24",
+        "stderr": "",
+        "runtime_ms": 80,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3 4\n1 2\n1 3\n1 2\n1 3\n2 3\n3 2\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n31\n35",
+        "actual": "27\n23\n23\n23",
+        "stderr": "",
+        "runtime_ms": 111,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3 4\n1 2\n1 1\n1 2\n1 3\n1 3\n3 2\n2 2\n2 2\n3 3\n3 1\n",
+        "expected": "25\n20\n26\n22",
+        "actual": "27\n22\n22\n18",
+        "stderr": "",
+        "runtime_ms": 141,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "5 4 10\n1 4\n1 2\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n83\n88\n112\n78\n70\n56\n62\n56",
+        "actual": "112\n100\n90\n90\n90\n72\n67\n61\n61\n55",
+        "stderr": "",
+        "runtime_ms": 113,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "1000 1000 2\n239 634\n418 634\n",
+        "expected": "1332632508\n1331406830",
+        "actual": "1332981672\n1332367214",
+        "stderr": "",
+        "runtime_ms": 2310,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "2 2 8\n1 1\n1 1\n1 1\n2 2\n1 1\n1 2\n2 2\n1 1\n",
+        "expected": "5\n10\n5\n2\n5\n3\n6\n3",
+        "actual": "7\n7\n8\n4\n4\n2\n2\n3",
+        "stderr": "",
+        "runtime_ms": 110,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 7\n2 4\n1 4\n4 8\n2 6\n4 1\n5 2\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n203\n180\n165\n159\n137\n132\n121\n114\n107\n102\n99\n79\n77\n65\n74\n71\n74\n65\n63\n69\n67",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n257\n245\n229\n223\n205\n201\n191\n182\n174\n169\n161\n147\n145\n133\n133\n131\n131\n109\n99\n99\n97",
+        "stderr": "",
+        "runtime_ms": 95,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3 10\n1 2\n1 3\n2 2\n2 2\n2 3\n3 2\n2 1\n3 2\n2 3\n3 1\n",
+        "expected": "25\n23\n12\n23\n19\n9\n4\n9\n13\n11",
+        "actual": "27\n23\n14\n14\n10\n7\n4\n4\n4\n3",
+        "stderr": "",
+        "runtime_ms": 136,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n180\n165\n159\n127\n122\n115\n108\n101\n108\n105\n91\n90\n78\n75\n70\n80\n71\n69\n75\n72",
+        "actual": "405\n388\n370\n352\n336\n324\n302\n272\n260\n255\n243\n227\n221\n201\n197\n181\n172\n164\n164\n156\n148\n146\n134\n132\n129\n129\n111\n101\n101\n99",
+        "stderr": "",
+        "runtime_ms": 190,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "3 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49",
+        "actual": "49",
+        "stderr": "",
+        "runtime_ms": 122,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1000 1000 2\n59 323\n239 634\n",
+        "expected": "1333014458\n1332313966",
+        "actual": "1333172876\n1332821548",
+        "stderr": "",
+        "runtime_ms": 2875,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n4 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n214\n196\n173\n158\n152\n142\n137\n126\n116\n109\n103\n99\n91\n77\n65\n78\n73\n79\n68\n66\n70\n69",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n262\n256\n244\n228\n222\n204\n200\n190\n184\n176\n170\n168\n158\n144\n132\n132\n129\n129\n109\n99\n99\n98",
+        "stderr": "",
+        "runtime_ms": 88,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "5 4 10\n1 4\n1 2\n1 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "112\n96\n92\n104\n86\n52\n54\n49\n47\n41",
+        "actual": "112\n100\n92\n92\n84\n66\n66\n60\n61\n55",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 8\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n289\n260\n218\n213\n202\n185\n170\n164\n129\n126\n115\n108\n101\n108\n105\n98\n97\n85\n82\n77\n87\n74\n72\n66\n63",
+        "actual": "405\n388\n370\n352\n336\n324\n302\n272\n260\n255\n233\n217\n211\n191\n189\n169\n160\n152\n152\n144\n130\n128\n116\n114\n111\n111\n101\n91\n85\n83",
+        "stderr": "",
+        "runtime_ms": 104,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "2 4 1\n1 4\n1 3\n2 1\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "22",
+        "actual": "22",
+        "stderr": "",
+        "runtime_ms": 102,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1000 1000 2\n59 323\n239 999\n",
+        "expected": "1333014458\n1333011116",
+        "actual": "1333172876\n1333170488",
+        "stderr": "",
+        "runtime_ms": 2145,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n332\n306\n290\n261\n219\n222\n204\n181\n166\n160\n150\n145\n134\n124\n113\n107\n103\n95\n81\n69\n82\n77\n83\n72\n70\n74\n73",
+        "actual": "405\n388\n370\n356\n338\n326\n304\n274\n274\n268\n256\n240\n234\n216\n212\n202\n196\n184\n178\n176\n166\n152\n140\n140\n137\n137\n117\n107\n107\n106",
+        "stderr": "",
+        "runtime_ms": 77,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n1 3\n1 3\n3 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n89",
+        "actual": "81\n77\n77\n77",
+        "stderr": "",
+        "runtime_ms": 74,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "5 10 30\n5 3\n5 5\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n373\n355\n328\n305\n290\n261\n219\n212\n201\n184\n169\n158\n135\n132\n121\n114\n105\n112\n109\n102\n101\n89\n83\n78\n88\n75\n73\n67\n70",
+        "actual": "405\n388\n370\n352\n336\n328\n306\n276\n262\n257\n235\n219\n213\n199\n197\n177\n168\n158\n158\n150\n136\n134\n122\n118\n115\n115\n105\n95\n89\n89",
+        "stderr": "",
+        "runtime_ms": 101,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "5 10 30\n5 2\n5 5\n5 10\n1 2\n5 7\n1 8\n4 9\n2 6\n5 10\n2 1\n4 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n5 2\n2 8\n4 4\n1 4\n4 8\n2 6\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "405\n379\n361\n338\n312\n296\n267\n225\n228\n208\n185\n170\n164\n154\n149\n138\n124\n113\n123\n119\n111\n97\n85\n98\n88\n80\n69\n67\n71\n70",
+        "actual": "409\n392\n374\n360\n342\n330\n308\n278\n278\n270\n258\n242\n236\n218\n214\n204\n194\n182\n182\n180\n170\n156\n144\n144\n143\n136\n116\n106\n106\n105",
+        "stderr": "",
+        "runtime_ms": 89,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n3 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n194\n183\n154\n151\n138\n130\n121\n129\n126\n119\n118\n106\n100\n95\n105\n92\n90\n76\n79",
+        "actual": "405\n387\n387\n369\n353\n344\n324\n294\n281\n276\n254\n238\n232\n216\n214\n186\n177\n167\n167\n159\n145\n143\n131\n127\n124\n124\n114\n104\n90\n90",
+        "stderr": "",
+        "runtime_ms": 124,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "6 3 4\n1 2\n1 3\n1 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n85\n77",
+        "actual": "81\n77\n77\n73",
+        "stderr": "",
+        "runtime_ms": 132,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "5 10 30\n5 3\n5 10\n5 10\n1 3\n5 7\n1 1\n4 9\n2 6\n4 10\n3 1\n2 5\n5 8\n1 7\n2 2\n1 5\n2 3\n3 2\n3 10\n3 2\n2 7\n2 4\n1 4\n4 8\n2 8\n4 1\n5 3\n4 6\n5 8\n4 5\n1 1\n",
+        "expected": "399\n381\n399\n372\n349\n331\n287\n245\n237\n226\n209\n199\n184\n155\n152\n139\n131\n122\n130\n123\n116\n115\n109\n101\n96\n106\n93\n95\n81\n84",
+        "actual": "405\n387\n387\n369\n353\n344\n324\n294\n281\n276\n254\n240\n230\n214\n212\n184\n175\n165\n165\n149\n135\n133\n127\n119\n116\n116\n106\n106\n92\n92",
+        "stderr": "",
+        "runtime_ms": 122,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "6 3 4\n1 2\n1 3\n2 2\n2 3\n1 3\n1 3\n2 2\n3 2\n2 3\n3 1\n",
+        "expected": "79\n77\n63\n61",
+        "actual": "81\n77\n65\n61",
+        "stderr": "",
+        "runtime_ms": 90,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "2 1 2\n1 1\n1 1\n",
+        "expected": "1\n3",
+        "actual": "1\n1",
+        "stderr": "",
+        "runtime_ms": 118,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "3 4 10\n1 4\n1 3\n2 3\n1 2\n2 3\n3 2\n1 3\n3 4\n1 3\n3 1\n",
+        "expected": "49\n41\n27\n23\n31\n21\n25\n18\n15\n13",
+        "actual": "49\n41\n29\n25\n25\n19\n19\n15\n17\n15",
+        "stderr": "",
+        "runtime_ms": 104,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.125094,
+  "total_latency_ms": 97722,
+  "iterations_used": null,
+  "early_stopped": null
+}

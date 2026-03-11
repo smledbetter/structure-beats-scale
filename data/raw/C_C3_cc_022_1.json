@@ -1,0 +1,1424 @@
+{
+  "study": "C",
+  "condition": "C3",
+  "task_id": "cc_022",
+  "replica": 1,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n\nSo exitable cells form a \"staircase\" shape - the top-left region reachable from the boundary.\n\nFor the subgrid with columns x1..x2: a cell is not exitable iff it's filled OR it's empty but blocked (no path up/left to boundary of subgrid).\n\nThe grid is NOT determinable when two different fill patterns produce the same exitability pattern. The example shows: if column x1 has a filled cell at row r, and column x1+1..x2 all have filled cells in that row, then making those empty doesn't change exitability (since they're blocked by column x1's fill).\n\nThe key insight: the grid is indeterminable when there exists a cell that is non-exitable but empty, yet we can't distinguish it from being filled. This happens when a cell (r,c) with c>x1 is empty but non-exitable, and making it filled wouldn't change the exitability of any other cell.\n\nA cell (r,c) is \"ambiguous\" if it's empty but non-exitable, and its being filled vs empty doesn't affect any other cell's exitability. This happens when (r,c+1) and (r+1,c) are either filled or non-exitable anyway.\n\nThe grid is NOT determinable iff there exists an empty, non-exitable cell (r,c) where c > x1 (not in first column of subgrid) such that the cell doesn't affect others. Actually from the examples, the condition seems to be: there's an empty non-exitable cell that is not in the leftmost column of the subgrid.\n\nWait, let me reconsider. A cell is non-exitable and empty - this is ambiguous with being filled UNLESS it has a right or bottom neighbor that IS exitable (because then making it filled would block that neighbor).\n\nSo the grid is indeterminable iff there exists an empty, non-exitable cell (r,c) where neither (r,c+1) nor (r+1,c) is exitable (within the subgrid).\n\nLet me define: for the full grid, precompute for each cell (r,c) whether it's \"problematic\": cell is empty, non-exitable, and neither right nor below neighbor is exitable. For a subgrid [x1,x2], we need to check if any such cell exists in columns x1..x2, BUT we need to recompute exitability relative to the subgrid (left boundary is x1).\n\nThis is complex. Let me think about what changes when we restrict to columns x1..x2. Exitability in the subgrid: cell (r,c) is exitable in subgrid iff empty and (c==x1 OR r==1 OR exitable(r-1,c) OR exitable(r,c-1)).\n\nFor each column x1, I need to find the minimum x2 such that the subgrid [x1,x2] is NOT determinable. Then queries can be answered with binary search or prefix info.\n\nGiven the complexity, let me look for a pattern: the subgrid is not determinable iff there exists a column c in [x1,x2] and row r such that: cell(r,c) is empty, cell(r,c) is not exitable in subgrid [x1,x2], and (r==n OR cell(r+1,c) not exitable in subgrid) and (c==x2 OR cell(r,c+1) not exitable in subgrid).\n\nThis is getting complex. Let me just implement a solution and test on examples.\n\nGiven time constraints, I'll implement a solution that for each query recomputes exitability - but that's too slow for large inputs.\n\nLet me look for the mathematical condition more carefully and implement an offline solution.\n\nAfter more analysis: the grid [x1,x2] is NOT determinable iff there exists an empty cell (r,c) with x1\u2264c\u2264x2 that is non-exitable in [x1,x2], and has no exitable neighbor to its right (c+1\u2264x2) or below (r+1\u2264n) in [x1,x2].\n\nI'll implement this with precomputation.\n\n<br>\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    # For each starting column x1, find the smallest x2 >= x1 such that subgrid [x1,x2] is not determinable\n    # If no such x2 exists, then all queries starting at x1 are YES\n    \n    # For a fixed x1, exitability in subgrid [x1, x2]:\n    # exit[r][c] = (grid[r][c]=='.') and (r==0 or exit[r-1][c] or c==x1 or exit[r][c-1])\n    # A cell (r,c) is \"bad\" if grid[r][c]=='.' and not exit[r][c] and \n    #   (r==n-1 or not exit[r+1][c]) and (c==x2 or not exit[r][c+1])\n    # But x2 is variable...\n    \n    # Key observation: exit[r][c] in subgrid [x1,*] only depends on x1 (not x2, as long as c<=x2).\n    # So for fixed x1, we can compute exit[r][c] for all c>=x1.\n    # Then \"bad\" cell (r,c) for query [x1,x2]: grid[r][c]=='.' and not exit[r][c] and\n    #   (r==n-1 or not exit[r+1][c]) and (c==x2 or not exit[r][c+1])\n    # The last condition depends on x2...\n    \n    # A cell (r,c) is \"potentially bad\" for x1 if: grid[r][c]=='.' and not exit[r][c] (w.r.t. x1)\n    #   and (r==n-1 or not exit[r+1][c])\n    # It becomes actually bad in query [x1,x2] if c<=x2 and (c==x2 or not exit[r][c+1])\n    # i.e., if c==x2: it's bad (since right neighbor is outside)\n    # if c<x2: it's bad if not exit[r][c+1]\n    \n    # So for fixed x1, define for each c: \n    #   bad_col[c] = True if exists r such that cell (r,c) is potentially bad AND (c is last col OR not exit[r][c+1])\n    # But \"c is last col\" means c==x2, which depends on query.\n    \n    # Let me define:\n    # A(c) = set of rows r where grid[r][c]=='.' and not exit[r][c] and (r==n-1 or not exit[r+1][c]) and not exit[r][c+1]\n    # B(c) = set of rows r where grid[r][c]=='.' and not exit[r][c] and (r==n-1 or not exit[r+1][c])\n    # (B(c) includes A(c), plus rows where exit[r][c+1] is True)\n    \n    # Subgrid [x1,x2] is NOT determinable iff:\n    #   exists c in [x1,x2-1] with A(c) nonempty, OR B(x2) nonempty\n    # (for c < x2: bad if A(c) nonempty; for c=x2: bad if B(x2) nonempty)\n    \n    # So for fixed x1, let f(c) = 1 if A(c) nonempty (c < x2 case), g(c) = 1 if B(c) nonempty (c = x2 case)\n    # Query [x1,x2] is NO iff (exists c in [x1,x2-1] with f(c)=1) OR g(x2)=1\n    # Equivalently: YES iff (all c in [x1,x2-1] have f(c)=0) AND g(x2)=0\n    \n    # For fixed x1, let first_bad(x1) = min c >= x1 such that f(c)=1\n    # Query [x1,x2] is NO if first_bad(x1) <= x2-1, OR g(x2)=1\n    # Query [x1,x2] is YES if first_bad(x1) >= x2 AND g(x2)=0\n    \n    # Problem: x1 varies per query, and computing exit[][] for each x1 is O(nm) total if done smartly? \n    # No, for each x1 it's O(nm) which is too slow.\n    \n    # We need a smarter approach. Let's think about how exit[r][c] changes as x1 changes.\n    # exit[r][c] w.r.t. x1: cell (r,c) is exitable from left boundary at x1.\n    # As x1 increases, fewer cells are exitable (left boundary moves right, so less access).\n    # Specifically, exit_x1[r][c] = True iff grid[r][c]=='.' and there's a path up/left from (r,c) \n    #   to either row 0 or column x1 (0-indexed), going through empty cells.\n    \n    # Actually: exit_x1[r][c] = (c >= x1) and grid[r][c]=='.' and \n    #   (r==0 or exit_x1[r-1][c] or c==x1 or exit_x1[r][c-1])\n    # where c==x1 acts as left boundary.\n    \n    # Hmm, let me think differently. exit_x1[r][c] for c >= x1:\n    # It's the same as exit_1[r][c] but with the additional constraint that the path stays in columns >= x1.\n    # \n    # exit_1[r][c] (full grid exitability from column 1):\n    # A cell is exitable iff it's empty and connected to top row or leftmost column via empty cells going up/left.\n    \n    # For exit_x1[r][c]: same but left boundary is x1 instead of 1.\n    # \n    # Note: exit_x1[r][c] = exit_1[r][c] if the path from (r,c) in exit_1 doesn't use any column < x1.\n    # Otherwise, exit_x1[r][c] might differ.\n    \n    # This is still complex. Let me think about what determines exit_x1[r][c].\n    \n    # For a cell (r,c), it's exitable w.r.t. x1 iff:\n    # - grid[r][c] == '.'\n    # - There's a monotone path (up/left) from (r,c) to either row 0 or column x1, through empty cells.\n    \n    # Key insight: The set of exitable cells w.r.t. x1 is determined by the \"staircase\" of filled cells.\n    # \n    # Let me define for each cell (r,c): \n    #   top[r][c] = number of consecutive empty cells above (r,c) including (r,c) itself (0 if filled)\n    #   left[r][c] = number of consecutive empty cells to the left of (r,c) including (r,c) itself (0 if filled)\n    \n    # A cell (r,c) is exitable w.r.t. x1=1 iff:\n    # It's empty and... actually it's equivalent to: the \"staircase\" boundary of filled cells doesn't cut it off.\n    \n    # Let me just think about the structure more carefully.\n    \n    # For the full grid (x1=1), exit[r][c] can be computed in O(nm).\n    # exit[r][c] = grid[r][c]=='.' and (r==0 or exit[r-1][c] or c==0 or exit[r][c-1])\n    # (0-indexed)\n    \n    # For x1 > 1 (0-indexed: x1-1), the computation is similar but with left boundary at column x1-1.\n    \n    # The problem is doing this for all possible x1 efficiently.\n    \n    # Alternative approach: characterize when a subgrid [x1,x2] is NOT determinable.\n    \n    # From the examples:\n    # Query 3 (columns 4-5, 1-indexed, i.e., 0-indexed 3-4): grid is XX / X. / X. / X.\n    # Exit pattern: NN / NN / NN / NN (all non-exitable since col 4 (0-indexed 3) has X in row 1)\n    # Wait let me recheck...\n    \n    # Actually the grid is (0-indexed rows 0-3, cols 0-4):\n    # Row 0: . . X X X\n    # Row 1: . . . X .\n    # Row 2: . . . X .\n    # Row 3: . . . X .\n    \n    # Query 3: columns 4-5 (1-indexed) = cols 3-4 (0-indexed)\n    # Subgrid:\n    # Row 0: X X\n    # Row 1: X .\n    # Row 2: X .\n    # Row 3: X .\n    # Exit w.r.t. x1=col3:\n    # (0,3): X -> not exitable\n    # (0,4): X -> not exitable\n    # (1,3): X -> not exitable\n    # (1,4): . -> need path up/left: (1,3) not exitable, (0,4) not exitable -> not exitable\n    # Similarly (2,4) and (3,4) not exitable.\n    # So exit pattern: all N.\n    # But cell (1,4) is empty and non-exitable. If we make it X, exit pattern is still all N. So indeterminable.\n    \n    # The ambiguous cell (1,4): it's empty, non-exitable, and its right neighbor is outside (c=x2) and its bottom neighbor (2,4) is also non-exitable. So it's bad.\n    \n    # Now the question is: how to efficiently compute, for each query [x1,x2], whether such a bad cell exists.\n    \n    # Let me think about this more carefully.\n    \n    # For fixed x1, the exitability exit_x1[r][c] is determined. \n    # A cell (r,c) with x1<=c<=x2 is \"bad\" for query [x1,x2] if:\n    # 1. grid[r][c] == '.'\n    # 2. not exit_x1[r][c]\n    # 3. r==n-1 or not exit_x1[r+1][c]  (bottom neighbor not exitable or doesn't exist)\n    # 4. c==x2 or not exit_x1[r][c+1]   (right neighbor not exitable or outside subgrid)\n    \n    # The subgrid is NOT determinable iff any bad cell exists.\n    \n    # Now I need to find, for each query [x1,x2], whether a bad cell exists.\n    \n    # Key observation about exit_x1:\n    # exit_x1[r][c] = True iff grid[r][c]=='.' and (r==0 or exit_x1[r-1][c]) or (c==x1 or exit_x1[r][c-1])\n    # Wait, it's OR not AND:\n    # exit_x1[r][c] = grid[r][c]=='.' AND (r==0 OR exit_x1[r-1][c] OR c==x1 OR exit_x1[r][c-1])\n    \n    # So exit_x1[r][c] = True iff grid[r][c]=='.' and connected to {row 0} \u222a {col x1} via up/left empty path.\n    \n    # Note: exit_x1[r][c] is monotone in x1: if x1 decreases (more columns to the left), more cells become exitable.\n    # Specifically, exit_{x1}[r][c] <= exit_{x1-1}[r][c] (more exitable with smaller x1... wait, actually with x1-1, the left boundary is further left, so more cells are exitable. Hmm but the subgrid only contains columns >= x1, so exit_{x1-1} for column c >= x1 might use column x1-1 which is outside the subgrid.)\n    \n    # Actually I realize: exit_x1[r][c] for c >= x1 considers paths that stay in columns >= x1. \n    # The left boundary at column x1 means: you can exit by going left from column x1 (i.e., being in column x1 and going left exits the subgrid). So column x1 is the leftmost column of the subgrid.\n    \n    # So exit_x1[r][c] = grid[r][c]=='.' AND (r==0 OR c==x1 OR exit_x1[r-1][c] OR exit_x1[r][c-1])\n    \n    # As x1 increases (left boundary moves right), fewer cells are exitable.\n    \n    # Hmm, this is a hard problem. Let me think of a different angle.\n    \n    # For the grid to be NOT determinable, we need an empty non-exitable cell with no exitable neighbors to the right or below (within the subgrid).\n    \n    # Let me think about what makes a cell non-exitable in subgrid [x1, x2]:\n    # Cell (r,c) is non-exitable iff it's filled OR (it's empty but cut off from the boundary).\n    # A cell is cut off if there's a \"barrier\" of filled cells between it and the top/left boundary.\n    \n    # For the grid to be determinable, every empty non-exitable cell must have an exitable cell to its right or below (within the subgrid). This is because such a cell \"proves\" that the cell is empty (since if it were filled, the exitable neighbor would still be exitable... wait, no).\n    \n    # Actually let me reconsider why the condition is correct.\n    # If cell (r,c) is empty and non-exitable, can we always determine if it's empty or filled?\n    # If we make it filled: does the exitability of other cells change?\n    # Making (r,c) filled can only affect cells that depend on (r,c) being exitable for their own exitability.\n    # Those cells are (r+1,c) and (r,c+1) (the cells below and to the right).\n    # But since (r,c) is non-exitable, it doesn't contribute to any cell's exitability anyway.\n    # So making (r,c) filled doesn't change any cell's exitability!\n    # Therefore, every empty non-exitable cell is ambiguous (we can't tell if it's empty or filled).\n    # Hence, the grid is determinable iff there are NO empty non-exitable cells!\n    \n    # Wait, is that right? Let me verify with the examples.\n    \n    # Query 1: columns 1-3 (0-indexed 0-2)\n    # Subgrid:\n    # Row 0: . . X\n    # Row 1: . . .\n    # Row 2: . . .\n    # Row 3: . . .\n    # Exit w.r.t. x1=0:\n    # (0,0): . -> exitable (left boundary)\n    # (0,1): . -> exitable (left neighbor exitable)\n    # (0,2): X -> not exitable\n    # (1,0): . -> exitable (top neighbor exitable... wait, (0,0) is exitable, so yes)\n    # Actually all '.' cells: are they all exitable?\n    # (0,0): exitable (r=0 or c=0)\n    # (0,1): exitable (exit[0][0] is true)\n    # (0,2): X, not exitable\n    # (1,0): exitable (c=0)\n    # (1,1): exitable (exit[1][0] or exit[0][1])\n    # (1,2): exitable (exit[1][1])\n    # (2,0): exitable\n    # (2,1): exitable\n    # (2,2): exitable\n    # (3,0): exitable\n    # (3,1): exitable\n    # (3,2): exitable\n    # All '.' cells are exitable! So no empty non-exitable cells -> determinable. Correct.\n    \n    # Query 3: columns 4-5 (0-indexed 3-4)\n    # Subgrid:\n    # Row 0: X X\n    # Row 1: X .\n    # Row 2: X .\n    # Row 3: X .\n    # Exit w.r.t. x1=3:\n    # (0,3): X -> not exitable\n    # (0,4): X -> not exitable\n    # (1,3): X -> not exitable\n    # (1,4): . -> need (r=0? no) or (c=x1=3? no, c=4) or exit[0][4] (no) or exit[1][3] (no) -> not exitable\n    # (2,4): . -> need exit[1][4] (no) or exit[2][3] (X, no) -> not exitable\n    # (3,4): . -> similarly not exitable\n    # Empty non-exitable cells: (1,4), (2,4), (3,4) -> NOT determinable. Correct.\n    \n    # Query 2: column 3 (0-indexed 2)\n    # Subgrid:\n    # Row 0: X\n    # Row 1: .\n    # Row 2: .\n    # Row 3: .\n    # Exit w.r.t. x1=2:\n    # (0,2): X -> not exitable\n    # (1,2): . -> r=1, c=x1=2 -> exitable! (c == x1)\n    # (2,2): . -> exit[1][2]=true -> exitable\n    # (3,2): . -> exitable\n    # No empty non-exitable cells -> determinable. Correct.\n    \n    # Query 4: column 5 (0-indexed 4)\n    # Subgrid:\n    # Row 0: X\n    # Row 1: .\n    # Row 2: .\n    # Row 3: .\n    # Same as query 2 but x1=4. c==x1=4 for all cells.\n    # (0,4): X -> not exitable\n    # (1,4): . -> c=x1=4 -> exitable\n    # etc. -> determinable. Correct.\n    \n    # Query 5: columns 1-5 (0-indexed 0-4)\n    # Full grid.\n    # Exit w.r.t. x1=0:\n    # Row 0: . . X X X -> E E N N N\n    # Row 1: . . . X . -> E E E N ?\n    # (1,4): . -> need exit[0][4] (N) or exit[1][3] (N) -> N\n    # Row 2: . . . X . -> E E E N N\n    # Row 3: . . . X . -> E E E N N\n    # Empty non-exitable cells: (1,4), (2,4), (3,4) -> NOT determinable. Correct.\n    \n    # So the condition is simply: the subgrid [x1,x2] is NOT determinable iff there exists an empty non-exitable cell in it!\n    \n    # This simplifies things enormously!\n    \n    # Now: for each query [x1,x2], is there an empty cell in columns x1..x2 that is non-exitable w.r.t. x1?\n    \n    # For fixed x1, compute exit_x1[r][c] for all r,c with x1<=c<=m.\n    # Then for each column c, check if any cell in that column is empty and non-exitable.\n    # Let bad_x1[c] = 1 if exists r such that grid[r][c]=='.' and not exit_x1[r][c].\n    # Query [x1,x2] is NO iff any c in [x1,x2] has bad_x1[c]=1.\n    # Equivalently, let first_bad(x1) = min c >= x1 such that bad_x1[c]=1.\n    # Query [x1,x2] is YES iff first_bad(x1) > x2.\n    \n    # So I need to compute first_bad(x1) for each x1 from 1 to m.\n    \n    # The question is: how to compute exit_x1[r][c] efficiently for all x1?\n    \n    # For fixed x1, exit_x1[r][c] is computed as:\n    # exit_x1[r][c] = (grid[r][c]=='.') and (r==0 or c==x1 or exit_x1[r-1][c] or exit_x1[r][c-1])\n    # (0-indexed, columns from x1 to m-1)\n    \n    # For each x1, this takes O(n*(m-x1)) time. Total: O(nm^2/2) which is too slow for large m.\n    \n    # Need a smarter approach.\n    \n    # Key observation: exit_x1[r][c] depends on x1 in a specific way.\n    # For c > x1, exit_x1[r][c] = exit_{x1-1}[r][c] OR (some additional paths through column x1-1).\n    # Hmm, actually as x1 increases, exit_x1 becomes more restrictive (fewer cells exitable).\n    \n    # Let me think about what exit_x1[r][c] looks like.\n    # exit_x1[r][c] = True iff grid[r][c]=='.' and there's a path from (r,c) going up/left through empty cells that reaches row 0 or column x1.\n    \n    # For x1=0 (leftmost possible), exit_0[r][c] = standard exitability of the full grid.\n    # For x1=c, exit_c[r][c] = grid[r][c]=='.' (since c==x1 means we're at the left boundary, and can exit immediately by going left, as long as the cell itself is empty).\n    # Wait: exit_x1[r][c] with c==x1: the cell is at the left boundary, so it's exitable iff it's empty. Yes.\n    \n    # For x1 <= c: exit_x1[r][c] = grid[r][c]=='.' and (r==0 or c==x1 or exit_x1[r-1][c] or exit_x1[r][c-1])\n    \n    # Observation: exit_x1[r][c] is non-increasing in x1 (for fixed r,c). As x1 increases from 0 to c, exit_x1[r][c] can only go from True to False (once it becomes False, it stays False).\n    \n    # For each cell (r,c), there's a threshold t(r,c) such that exit_x1[r][c]=True iff x1 <= t(r,c).\n    # (And t(r,c) = -infinity if grid[r][c]=='X', meaning it's never exitable.)\n    # (And t(r,c) = c if grid[r][c]=='.' and even with x1=c it's exitable, which is always true if it's empty.)\n    # Wait: with x1=c, exit_c[r][c] = True iff grid[r][c]=='.'. So t(r,c) >= c for any empty cell.\n    # But we only care about x1 <= c (since the subgrid contains column c only if x1 <= c).\n    # So for empty cell (r,c), t(r,c) >= c always.\n    # Hmm, but we want the minimum x1 such that exit_x1[r][c]=False, i.e., t(r,c)+1.\n    \n    # Actually, let me redefine: for empty cell (r,c), let min_x1(r,c) = the minimum x1 such that exit_x1[r][c]=False.\n    # Since exit_c[r][c]=True (empty cell at left boundary), and exit_0[r][c] might be True or False (based on full grid exitability), we have:\n    # If exit_0[r][c]=True, then exit_x1[r][c]=True for all x1 <= c (since exit is non-increasing in x1, and at x1=c it's True). Wait, exit is non-increasing means as x1 increases, exitability decreases. So exit_0[r][c] >= exit_1[r][c] >= ... >= exit_c[r][c] = True. So exit_x1[r][c]=True for all x1 in [0,c]. So min_x1(r,c) = infinity (never becomes False for x1 in [0,c]).\n    \n    # If exit_0[r][c]=False... hmm, but exit_c[r][c]=True. So there must be some threshold.\n    \n    # Wait, I think I have the monotonicity backwards. Let me reconsider.\n    # With x1=0 (leftmost boundary), more cells are exitable (can use column 0 as exit).\n    # With x1=c (boundary at column c), only cells in column c that are empty are directly exitable.\n    # So as x1 increases, fewer cells are exitable. exit_x1[r][c] is non-increasing in x1.\n    \n    # But exit_c[r][c] = True for empty (r,c). And exit_0[r][c] >= exit_c[r][c]. So exit_0[r][c]=True if (r,c) is empty.\n    \n    # Wait, that means all empty cells are exitable in the full grid (x1=0)? That can't be right.\n    \n    # Oh wait, I think I'm confusing myself. Let me redo:\n    # exit_x1[r][c] for c >= x1.\n    # With x1=0: all columns are in the subgrid, left boundary is column 0.\n    # exit_0[r][c] = standard exitability.\n    # With x1=c: only column c is in the subgrid, left boundary is column c.\n    # exit_c[r][c] = True iff grid[r][c]=='.' (since c==x1, the cell is at the left boundary).\n    \n    # Now, as x1 increases from 0 to c, does exit_x1[r][c] increase or decrease?\n    \n    # With larger x1, the left boundary is further right, so you have fewer columns to use for exiting. This means fewer cells are exitable. So exit_x1[r][c] is non-increasing in x1.\n    \n    # But exit_c[r][c]=True for empty (r,c), and exit_0[r][c] is the standard exitability.\n    # If exit_0[",
+      "input_tokens": 1168,
+      "output_tokens": 8192,
+      "cost_usd": 0.126384,
+      "latency_ms": 123669
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\ninput = sys.stdin.readline\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(data[idx]); idx+=1\n    m = int(data[idx]); idx+=1\n    \n    grid = []\n    for i in range(n):\n        grid.append(data[idx].decode()); idx+=1\n    \n    # reach[r][c]: if '.', min reachable column (0-indexed internally, but let's use 1-indexed)\n    # reach = infinity for 'X', else min(reach[r-1][c], reach[r][c-1]) with boundary 0\n    # Using 1-indexed rows and cols\n    \n    INF = float('inf')\n    # We'll store reach as a flat array\n    reach = [INF] * ((n+1) * (m+1))\n    \n    def idx2(r, c):\n        return r * (m+1) + c\n    \n    for r in range(1, n+1):\n        for c in range(1, m+1):\n            if grid[r-1][c-1] == 'X':\n                reach[idx2(r,c)] = INF\n            else:\n                # empty\n                up = reach[idx2(r-1,c)] if r > 1 else 0\n                left = reach[idx2(r,c-1)] if c > 1 else 0\n                reach[idx2(r,c)] = min(up, left)\n    \n    # For each filled cell (r,c) with r>1, c>1:\n    # bad_threshold = min(reach[r-1][c], reach[r][c-1], c-1)\n    # but reach values: if reach[r-1][c]=INF, that means non-exitable for any x1 (good for our condition)\n    # We need x1 <= bad_threshold, so if bad_threshold=INF, it's bad for all x1\n    # But bad_threshold = min(..., c-1) <= c-1 < INF always\n    \n    max_bt = [0] * (m+2)  # 1-indexed\n    \n    for r in range(2, n+1):\n        for c in range(2, m+1):\n            if grid[r-1][c-1] == 'X':\n                up_reach = reach[idx2(r-1, c)]\n                left_reach = reach[idx2(r, c-1)]\n                bt = min(up_reach, left_reach, c-1)\n                # bt can be INF if up_reach and left_reach are INF, but min with c-1 caps it\n                if bt > max_bt[c]:\n                    max_bt[c] = bt\n    \n    # prefix_max\n    prefix_max = [0] * (m+2)\n    for c in range(1, m+1):\n        prefix_max[c] = max(prefix_max[c-1], max_bt[c])\n    \n    q = int(data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(data[idx]); idx+=1\n        x2 = int(data[idx]); idx+=1\n        if prefix_max[x2] >= x1:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nmain()",
+      "input_tokens": 1168,
+      "output_tokens": 8192,
+      "cost_usd": 0.126384,
+      "latency_ms": 117856
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n\nSo exitable cells form a \"staircase\" shape - the top-left region reachable from the boundary.\n\nFor the subgrid with columns x1..x2: a cell is not exitable iff it's filled OR it's empty but blocked (no path up/left to boundary of subgrid).\n\nThe grid is NOT determinable when two different fill patterns produce the same exitability pattern. The example shows: if column x1 has a filled cell at row r, and column x1+1..x2 all have filled cells in that row, then making those empty doesn't change exitability (since they're blocked by column x1's fill).\n\nThe key insight: the grid is indeterminable when there exists a cell that is non-exitable but empty, yet we can't distinguish it from being filled. This happens when a cell (r,c) with c>x1 is empty but non-exitable, and making it filled wouldn't change the exitability of any other cell.\n\nA cell (r,c) is \"ambiguous\" if it's empty but non-exitable, and its being filled vs empty doesn't affect any other cell's exitability. This happens when (r,c+1) and (r+1,c) are either filled or non-exitable anyway.\n\nThe grid is NOT determinable iff there exists an empty, non-exitable cell (r,c) where c > x1 (not in first column of subgrid) such that the cell doesn't affect others. Actually from the examples, the condition seems to be: there's an empty non-exitable cell that is not in the leftmost column of the subgrid.\n\nWait, let me reconsider. A cell is non-exitable and empty - this is ambiguous with being filled UNLESS it has a right or bottom neighbor that IS exitable (because then making it filled would block that neighbor).\n\nSo the grid is indeterminable iff there exists an empty, non-exitable cell (r,c) where neither (r,c+1) nor (r+1,c) is exitable (within the subgrid).\n\nLet me define: for the full grid, precompute for each cell (r,c) whether it's \"problematic\": cell is empty, non-exitable, and neither right nor below neighbor is exitable. For a subgrid [x1,x2], we need to check if any such cell exists in columns x1..x2, BUT we need to recompute exitability relative to the subgrid (left boundary is x1).\n\nThis is complex. Let me think about what changes when we restrict to columns x1..x2. Exitability in the subgrid: cell (r,c) is exitable in subgrid iff empty and (c==x1 OR r==1 OR exitable(r-1,c) OR exitable(r,c-1)).\n\nFor each column x1, I need to find the minimum x2 such that the subgrid [x1,x2] is NOT determinable. Then queries can be answered with binary search or prefix info.\n\nGiven the complexity, let me look for a pattern: the subgrid is not determinable iff there exists a column c in [x1,x2] and row r such that: cell(r,c) is empty, cell(r,c) is not exitable in subgrid [x1,x2], and (r==n OR cell(r+1,c) not exitable in subgrid) and (c==x2 OR cell(r,c+1) not exitable in subgrid).\n\nThis is getting complex. Let me just implement a solution and test on examples.\n\nGiven time constraints, I'll implement a solution that for each query recomputes exitability - but that's too slow for large inputs.\n\nLet me look for the mathematical condition more carefully and implement an offline solution.\n\nAfter more analysis: the grid [x1,x2] is NOT determinable iff there exists an empty cell (r,c) with x1\u2264c\u2264x2 that is non-exitable in [x1,x2], and has no exitable neighbor to its right (c+1\u2264x2) or below (r+1\u2264n) in [x1,x2].\n\nI'll implement this with precomputation.\n\n<br>\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    # For each starting column x1, find the smallest x2 >= x1 such that subgrid [x1,x2] is not determinable\n    # If no such x2 exists, then all queries starting at x1 are YES\n    \n    # For a fixed x1, exitability in subgrid [x1, x2]:\n    # exit[r][c] = (grid[r][c]=='.') and (r==0 or exit[r-1][c] or c==x1 or exit[r][c-1])\n    # A cell (r,c) is \"bad\" if grid[r][c]=='.' and not exit[r][c] and \n    #   (r==n-1 or not exit[r+1][c]) and (c==x2 or not exit[r][c+1])\n    # But x2 is variable...\n    \n    # Key observation: exit[r][c] in subgrid [x1,*] only depends on x1 (not x2, as long as c<=x2).\n    # So for fixed x1, we can compute exit[r][c] for all c>=x1.\n    # Then \"bad\" cell (r,c) for query [x1,x2]: grid[r][c]=='.' and not exit[r][c] and\n    #   (r==n-1 or not exit[r+1][c]) and (c==x2 or not exit[r][c+1])\n    # The last condition depends on x2...\n    \n    # A cell (r,c) is \"potentially bad\" for x1 if: grid[r][c]=='.' and not exit[r][c] (w.r.t. x1)\n    #   and (r==n-1 or not exit[r+1][c])\n    # It becomes actually bad in query [x1,x2] if c<=x2 and (c==x2 or not exit[r][c+1])\n    # i.e., if c==x2: it's bad (since right neighbor is outside)\n    # if c<x2: it's bad if not exit[r][c+1]\n    \n    # So for fixed x1, define for each c: \n    #   bad_col[c] = True if exists r such that cell (r,c) is potentially bad AND (c is last col OR not exit[r][c+1])\n    # But \"c is last col\" means c==x2, which depends on query.\n    \n    # Let me define:\n    # A(c) = set of rows r where grid[r][c]=='.' and not exit[r][c] and (r==n-1 or not exit[r+1][c]) and not exit[r][c+1]\n    # B(c) = set of rows r where grid[r][c]=='.' and not exit[r][c] and (r==n-1 or not exit[r+1][c])\n    # (B(c) includes A(c), plus rows where exit[r][c+1] is True)\n    \n    # Subgrid [x1,x2] is NOT determinable iff:\n    #   exists c in [x1,x2-1] with A(c) nonempty, OR B(x2) nonempty\n    # (for c < x2: bad if A(c) nonempty; for c=x2: bad if B(x2) nonempty)\n    \n    # So for fixed x1, let f(c) = 1 if A(c) nonempty (c < x2 case), g(c) = 1 if B(c) nonempty (c = x2 case)\n    # Query [x1,x2] is NO iff (exists c in [x1,x2-1] with f(c)=1) OR g(x2)=1\n    # Equivalently: YES iff (all c in [x1,x2-1] have f(c)=0) AND g(x2)=0\n    \n    # For fixed x1, let first_bad(x1) = min c >= x1 such that f(c)=1\n    # Query [x1,x2] is NO if first_bad(x1) <= x2-1, OR g(x2)=1\n    # Query [x1,x2] is YES if first_bad(x1) >= x2 AND g(x2)=0\n    \n    # Problem: x1 varies per query, and computing exit[][] for each x1 is O(nm) total if done smartly? \n    # No, for each x1 it's O(nm) which is too slow.\n    \n    # We need a smarter approach. Let's think about how exit[r][c] changes as x1 changes.\n    # exit[r][c] w.r.t. x1: cell (r,c) is exitable from left boundary at x1.\n    # As x1 increases, fewer cells are exitable (left boundary moves right, so less access).\n    # Specifically, exit_x1[r][c] = True iff grid[r][c]=='.' and there's a path up/left from (r,c) \n    #   to either row 0 or column x1 (0-indexed), going through empty cells.\n    \n    # Actually: exit_x1[r][c] = (c >= x1) and grid[r][c]=='.' and \n    #   (r==0 or exit_x1[r-1][c] or c==x1 or exit_x1[r][c-1])\n    # where c==x1 acts as left boundary.\n    \n    # Hmm, let me think differently. exit_x1[r][c] for c >= x1:\n    # It's the same as exit_1[r][c] but with the additional constraint that the path stays in columns >= x1.\n    # \n    # exit_1[r][c] (full grid exitability from column 1):\n    # A cell is exitable iff it's empty and connected to top row or leftmost column via empty cells going up/left.\n    \n    # For exit_x1[r][c]: same but left boundary is x1 instead of 1.\n    # \n    # Note: exit_x1[r][c] = exit_1[r][c] if the path from (r,c) in exit_1 doesn't use any column < x1.\n    # Otherwise, exit_x1[r][c] might differ.\n    \n    # This is still complex. Let me think about what determines exit_x1[r][c].\n    \n    # For a cell (r,c), it's exitable w.r.t. x1 iff:\n    # - grid[r][c] == '.'\n    # - There's a monotone path (up/left) from (r,c) to either row 0 or column x1, through empty cells.\n    \n    # Key insight: The set of exitable cells w.r.t. x1 is determined by the \"staircase\" of filled cells.\n    # \n    # Let me define for each cell (r,c): \n    #   top[r][c] = number of consecutive empty cells above (r,c) including (r,c) itself (0 if filled)\n    #   left[r][c] = number of consecutive empty cells to the left of (r,c) including (r,c) itself (0 if filled)\n    \n    # A cell (r,c) is exitable w.r.t. x1=1 iff:\n    # It's empty and... actually it's equivalent to: the \"staircase\" boundary of filled cells doesn't cut it off.\n    \n    # Let me just think about the structure more carefully.\n    \n    # For the full grid (x1=1), exit[r][c] can be computed in O(nm).\n    # exit[r][c] = grid[r][c]=='.' and (r==0 or exit[r-1][c] or c==0 or exit[r][c-1])\n    # (0-indexed)\n    \n    # For x1 > 1 (0-indexed: x1-1), the computation is similar but with left boundary at column x1-1.\n    \n    # The problem is doing this for all possible x1 efficiently.\n    \n    # Alternative approach: characterize when a subgrid [x1,x2] is NOT determinable.\n    \n    # From the examples:\n    # Query 3 (columns 4-5, 1-indexed, i.e., 0-indexed 3-4): grid is XX / X. / X. / X.\n    # Exit pattern: NN / NN / NN / NN (all non-exitable since col 4 (0-indexed 3) has X in row 1)\n    # Wait let me recheck...\n    \n    # Actually the grid is (0-indexed rows 0-3, cols 0-4):\n    # Row 0: . . X X X\n    # Row 1: . . . X .\n    # Row 2: . . . X .\n    # Row 3: . . . X .\n    \n    # Query 3: columns 4-5 (1-indexed) = cols 3-4 (0-indexed)\n    # Subgrid:\n    # Row 0: X X\n    # Row 1: X .\n    # Row 2: X .\n    # Row 3: X .\n    # Exit w.r.t. x1=col3:\n    # (0,3): X -> not exitable\n    # (0,4): X -> not exitable\n    # (1,3): X -> not exitable\n    # (1,4): . -> need path up/left: (1,3) not exitable, (0,4) not exitable -> not exitable\n    # Similarly (2,4) and (3,4) not exitable.\n    # So exit pattern: all N.\n    # But cell (1,4) is empty and non-exitable. If we make it X, exit pattern is still all N. So indeterminable.\n    \n    # The ambiguous cell (1,4): it's empty, non-exitable, and its right neighbor is outside (c=x2) and its bottom neighbor (2,4) is also non-exitable. So it's bad.\n    \n    # Now the question is: how to efficiently compute, for each query [x1,x2], whether such a bad cell exists.\n    \n    # Let me think about this more carefully.\n    \n    # For fixed x1, the exitability exit_x1[r][c] is determined. \n    # A cell (r,c) with x1<=c<=x2 is \"bad\" for query [x1,x2] if:\n    # 1. grid[r][c] == '.'\n    # 2. not exit_x1[r][c]\n    # 3. r==n-1 or not exit_x1[r+1][c]  (bottom neighbor not exitable or doesn't exist)\n    # 4. c==x2 or not exit_x1[r][c+1]   (right neighbor not exitable or outside subgrid)\n    \n    # The subgrid is NOT determinable iff any bad cell exists.\n    \n    # Now I need to find, for each query [x1,x2], whether a bad cell exists.\n    \n    # Key observation about exit_x1:\n    # exit_x1[r][c] = True iff grid[r][c]=='.' and (r==0 or exit_x1[r-1][c]) or (c==x1 or exit_x1[r][c-1])\n    # Wait, it's OR not AND:\n    # exit_x1[r][c] = grid[r][c]=='.' AND (r==0 OR exit_x1[r-1][c] OR c==x1 OR exit_x1[r][c-1])\n    \n    # So exit_x1[r][c] = True iff grid[r][c]=='.' and connected to {row 0} \u222a {col x1} via up/left empty path.\n    \n    # Note: exit_x1[r][c] is monotone in x1: if x1 decreases (more columns to the left), more cells become exitable.\n    # Specifically, exit_{x1}[r][c] <= exit_{x1-1}[r][c] (more exitable with smaller x1... wait, actually with x1-1, the left boundary is further left, so more cells are exitable. Hmm but the subgrid only contains columns >= x1, so exit_{x1-1} for column c >= x1 might use column x1-1 which is outside the subgrid.)\n    \n    # Actually I realize: exit_x1[r][c] for c >= x1 considers paths that stay in columns >= x1. \n    # The left boundary at column x1 means: you can exit by going left from column x1 (i.e., being in column x1 and going left exits the subgrid). So column x1 is the leftmost column of the subgrid.\n    \n    # So exit_x1[r][c] = grid[r][c]=='.' AND (r==0 OR c==x1 OR exit_x1[r-1][c] OR exit_x1[r][c-1])\n    \n    # As x1 increases (left boundary moves right), fewer cells are exitable.\n    \n    # Hmm, this is a hard problem. Let me think of a different angle.\n    \n    # For the grid to be NOT determinable, we need an empty non-exitable cell with no exitable neighbors to the right or below (within the subgrid).\n    \n    # Let me think about what makes a cell non-exitable in subgrid [x1, x2]:\n    # Cell (r,c) is non-exitable iff it's filled OR (it's empty but cut off from the boundary).\n    # A cell is cut off if there's a \"barrier\" of filled cells between it and the top/left boundary.\n    \n    # For the grid to be determinable, every empty non-exitable cell must have an exitable cell to its right or below (within the subgrid). This is because such a cell \"proves\" that the cell is empty (since if it were filled, the exitable neighbor would still be exitable... wait, no).\n    \n    # Actually let me reconsider why the condition is correct.\n    # If cell (r,c) is empty and non-exitable, can we always determine if it's empty or filled?\n    # If we make it filled: does the exitability of other cells change?\n    # Making (r,c) filled can only affect cells that depend on (r,c) being exitable for their own exitability.\n    # Those cells are (r+1,c) and (r,c+1) (the cells below and to the right).\n    # But since (r,c) is non-exitable, it doesn't contribute to any cell's exitability anyway.\n    # So making (r,c) filled doesn't change any cell's exitability!\n    # Therefore, every empty non-exitable cell is ambiguous (we can't tell if it's empty or filled).\n    # Hence, the grid is determinable iff there are NO empty non-exitable cells!\n    \n    # Wait, is that right? Let me verify with the examples.\n    \n    # Query 1: columns 1-3 (0-indexed 0-2)\n    # Subgrid:\n    # Row 0: . . X\n    # Row 1: . . .\n    # Row 2: . . .\n    # Row 3: . . .\n    # Exit w.r.t. x1=0:\n    # (0,0): . -> exitable (left boundary)\n    # (0,1): . -> exitable (left neighbor exitable)\n    # (0,2): X -> not exitable\n    # (1,0): . -> exitable (top neighbor exitable... wait, (0,0) is exitable, so yes)\n    # Actually all '.' cells: are they all exitable?\n    # (0,0): exitable (r=0 or c=0)\n    # (0,1): exitable (exit[0][0] is true)\n    # (0,2): X, not exitable\n    # (1,0): exitable (c=0)\n    # (1,1): exitable (exit[1][0] or exit[0][1])\n    # (1,2): exitable (exit[1][1])\n    # (2,0): exitable\n    # (2,1): exitable\n    # (2,2): exitable\n    # (3,0): exitable\n    # (3,1): exitable\n    # (3,2): exitable\n    # All '.' cells are exitable! So no empty non-exitable cells -> determinable. Correct.\n    \n    # Query 3: columns 4-5 (0-indexed 3-4)\n    # Subgrid:\n    # Row 0: X X\n    # Row 1: X .\n    # Row 2: X .\n    # Row 3: X .\n    # Exit w.r.t. x1=3:\n    # (0,3): X -> not exitable\n    # (0,4): X -> not exitable\n    # (1,3): X -> not exitable\n    # (1,4): . -> need (r=0? no) or (c=x1=3? no, c=4) or exit[0][4] (no) or exit[1][3] (no) -> not exitable\n    # (2,4): . -> need exit[1][4] (no) or exit[2][3] (X, no) -> not exitable\n    # (3,4): . -> similarly not exitable\n    # Empty non-exitable cells: (1,4), (2,4), (3,4) -> NOT determinable. Correct.\n    \n    # Query 2: column 3 (0-indexed 2)\n    # Subgrid:\n    # Row 0: X\n    # Row 1: .\n    # Row 2: .\n    # Row 3: .\n    # Exit w.r.t. x1=2:\n    # (0,2): X -> not exitable\n    # (1,2): . -> r=1, c=x1=2 -> exitable! (c == x1)\n    # (2,2): . -> exit[1][2]=true -> exitable\n    # (3,2): . -> exitable\n    # No empty non-exitable cells -> determinable. Correct.\n    \n    # Query 4: column 5 (0-indexed 4)\n    # Subgrid:\n    # Row 0: X\n    # Row 1: .\n    # Row 2: .\n    # Row 3: .\n    # Same as query 2 but x1=4. c==x1=4 for all cells.\n    # (0,4): X -> not exitable\n    # (1,4): . -> c=x1=4 -> exitable\n    # etc. -> determinable. Correct.\n    \n    # Query 5: columns 1-5 (0-indexed 0-4)\n    # Full grid.\n    # Exit w.r.t. x1=0:\n    # Row 0: . . X X X -> E E N N N\n    # Row 1: . . . X . -> E E E N ?\n    # (1,4): . -> need exit[0][4] (N) or exit[1][3] (N) -> N\n    # Row 2: . . . X . -> E E E N N\n    # Row 3: . . . X . -> E E E N N\n    # Empty non-exitable cells: (1,4), (2,4), (3,4) -> NOT determinable. Correct.\n    \n    # So the condition is simply: the subgrid [x1,x2] is NOT determinable iff there exists an empty non-exitable cell in it!\n    \n    # This simplifies things enormously!\n    \n    # Now: for each query [x1,x2], is there an empty cell in columns x1..x2 that is non-exitable w.r.t. x1?\n    \n    # For fixed x1, compute exit_x1[r][c] for all r,c with x1<=c<=m.\n    # Then for each column c, check if any cell in that column is empty and non-exitable.\n    # Let bad_x1[c] = 1 if exists r such that grid[r][c]=='.' and not exit_x1[r][c].\n    # Query [x1,x2] is NO iff any c in [x1,x2] has bad_x1[c]=1.\n    # Equivalently, let first_bad(x1) = min c >= x1 such that bad_x1[c]=1.\n    # Query [x1,x2] is YES iff first_bad(x1) > x2.\n    \n    # So I need to compute first_bad(x1) for each x1 from 1 to m.\n    \n    # The question is: how to compute exit_x1[r][c] efficiently for all x1?\n    \n    # For fixed x1, exit_x1[r][c] is computed as:\n    # exit_x1[r][c] = (grid[r][c]=='.') and (r==0 or c==x1 or exit_x1[r-1][c] or exit_x1[r][c-1])\n    # (0-indexed, columns from x1 to m-1)\n    \n    # For each x1, this takes O(n*(m-x1)) time. Total: O(nm^2/2) which is too slow for large m.\n    \n    # Need a smarter approach.\n    \n    # Key observation: exit_x1[r][c] depends on x1 in a specific way.\n    # For c > x1, exit_x1[r][c] = exit_{x1-1}[r][c] OR (some additional paths through column x1-1).\n    # Hmm, actually as x1 increases, exit_x1 becomes more restrictive (fewer cells exitable).\n    \n    # Let me think about what exit_x1[r][c] looks like.\n    # exit_x1[r][c] = True iff grid[r][c]=='.' and there's a path from (r,c) going up/left through empty cells that reaches row 0 or column x1.\n    \n    # For x1=0 (leftmost possible), exit_0[r][c] = standard exitability of the full grid.\n    # For x1=c, exit_c[r][c] = grid[r][c]=='.' (since c==x1 means we're at the left boundary, and can exit immediately by going left, as long as the cell itself is empty).\n    # Wait: exit_x1[r][c] with c==x1: the cell is at the left boundary, so it's exitable iff it's empty. Yes.\n    \n    # For x1 <= c: exit_x1[r][c] = grid[r][c]=='.' and (r==0 or c==x1 or exit_x1[r-1][c] or exit_x1[r][c-1])\n    \n    # Observation: exit_x1[r][c] is non-increasing in x1 (for fixed r,c). As x1 increases from 0 to c, exit_x1[r][c] can only go from True to False (once it becomes False, it stays False).\n    \n    # For each cell (r,c), there's a threshold t(r,c) such that exit_x1[r][c]=True iff x1 <= t(r,c).\n    # (And t(r,c) = -infinity if grid[r][c]=='X', meaning it's never exitable.)\n    # (And t(r,c) = c if grid[r][c]=='.' and even with x1=c it's exitable, which is always true if it's empty.)\n    # Wait: with x1=c, exit_c[r][c] = True iff grid[r][c]=='.'. So t(r,c) >= c for any empty cell.\n    # But we only care about x1 <= c (since the subgrid contains column c only if x1 <= c).\n    # So for empty cell (r,c), t(r,c) >= c always.\n    # Hmm, but we want the minimum x1 such that exit_x1[r][c]=False, i.e., t(r,c)+1.\n    \n    # Actually, let me redefine: for empty cell (r,c), let min_x1(r,c) = the minimum x1 such that exit_x1[r][c]=False.\n    # Since exit_c[r][c]=True (empty cell at left boundary), and exit_0[r][c] might be True or False (based on full grid exitability), we have:\n    # If exit_0[r][c]=True, then exit_x1[r][c]=True for all x1 <= c (since exit is non-increasing in x1, and at x1=c it's True). Wait, exit is non-increasing means as x1 increases, exitability decreases. So exit_0[r][c] >= exit_1[r][c] >= ... >= exit_c[r][c] = True. So exit_x1[r][c]=True for all x1 in [0,c]. So min_x1(r,c) = infinity (never becomes False for x1 in [0,c]).\n    \n    # If exit_0[r][c]=False... hmm, but exit_c[r][c]=True. So there must be some threshold.\n    \n    # Wait, I think I have the monotonicity backwards. Let me reconsider.\n    # With x1=0 (leftmost boundary), more cells are exitable (can use column 0 as exit).\n    # With x1=c (boundary at column c), only cells in column c that are empty are directly exitable.\n    # So as x1 increases, fewer cells are exitable. exit_x1[r][c] is non-increasing in x1.\n    \n    # But exit_c[r][c] = True for empty (r,c). And exit_0[r][c] >= exit_c[r][c]. So exit_0[r][c]=True if (r,c) is empty.\n    \n    # Wait, that means all empty cells are exitable in the full grid (x1=0)? That can't be right.\n    \n    # Oh wait, I think I'm confusing myself. Let me redo:\n    # exit_x1[r][c] for c >= x1.\n    # With x1=0: all columns are in the subgrid, left boundary is column 0.\n    # exit_0[r][c] = standard exitability.\n    # With x1=c: only column c is in the subgrid, left boundary is column c.\n    # exit_c[r][c] = True iff grid[r][c]=='.' (since c==x1, the cell is at the left boundary).\n    \n    # Now, as x1 increases from 0 to c, does exit_x1[r][c] increase or decrease?\n    \n    # With larger x1, the left boundary is further right, so you have fewer columns to use for exiting. This means fewer cells are exitable. So exit_x1[r][c] is non-increasing in x1.\n    \n    # But exit_c[r][c]=True for empty (r,c), and exit_0[r][c] is the standard exitability.\n    # If exit_0[",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1 1\n.\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+            "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "1 1\nX\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+            "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR (r-1,c) is exitable OR (r,c-1) is exitable).\n                                 ^\nSyntaxError",
+            "runtime_ms": 35,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(data[idx]); idx+=1\n    m = int(data[idx]); idx+=1\n    \n    grid = []\n    for i in range(n):\n        grid.append(data[idx].decode()); idx+=1\n    \n    # reach[r][c]: if '.', min reachable column (0-indexed internally, but let's use 1-indexed)\n    # reach = infinity for 'X', else min(reach[r-1][c], reach[r][c-1]) with boundary 0\n    # Using 1-indexed rows and cols\n    \n    INF = float('inf')\n    # We'll store reach as a flat array\n    reach = [INF] * ((n+1) * (m+1))\n    \n    def idx2(r, c):\n        return r * (m+1) + c\n    \n    for r in range(1, n+1):\n        for c in range(1, m+1):\n            if grid[r-1][c-1] == 'X':\n                reach[idx2(r,c)] = INF\n            else:\n                # empty\n                up = reach[idx2(r-1,c)] if r > 1 else 0\n                left = reach[idx2(r,c-1)] if c > 1 else 0\n                reach[idx2(r,c)] = min(up, left)\n    \n    # For each filled cell (r,c) with r>1, c>1:\n    # bad_threshold = min(reach[r-1][c], reach[r][c-1], c-1)\n    # but reach values: if reach[r-1][c]=INF, that means non-exitable for any x1 (good for our condition)\n    # We need x1 <= bad_threshold, so if bad_threshold=INF, it's bad for all x1\n    # But bad_threshold = min(..., c-1) <= c-1 < INF always\n    \n    max_bt = [0] * (m+2)  # 1-indexed\n    \n    for r in range(2, n+1):\n        for c in range(2, m+1):\n            if grid[r-1][c-1] == 'X':\n                up_reach = reach[idx2(r-1, c)]\n                left_reach = reach[idx2(r, c-1)]\n                bt = min(up_reach, left_reach, c-1)\n                # bt can be INF if up_reach and left_reach are INF, but min with c-1 caps it\n                if bt > max_bt[c]:\n                    max_bt[c] = bt\n    \n    # prefix_max\n    prefix_max = [0] * (m+2)\n    for c in range(1, m+1):\n        prefix_max[c] = max(prefix_max[c-1], max_bt[c])\n    \n    q = int(data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(data[idx]); idx+=1\n        x2 = int(data[idx]); idx+=1\n        if prefix_max[x2] >= x1:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nmain()",
+      "test_results": {
+        "total": 50,
+        "passed": 23,
+        "failed": 27,
+        "errors": 0,
+        "pass_rate": 0.46,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1 1\n.\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+            "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1 1\nX\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nNO\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 73,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES",
+            "actual": "YES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+            "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 23,
+    "failed": 27,
+    "errors": 0,
+    "pass_rate": 0.46,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "1 1\n.\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "YES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+        "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "NO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "1 1\nX\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "YES",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nNO\nNO\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 73,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 76,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES",
+        "actual": "YES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+        "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.252768,
+  "total_latency_ms": 241525,
+  "iterations_used": null,
+  "early_stopped": null
+}

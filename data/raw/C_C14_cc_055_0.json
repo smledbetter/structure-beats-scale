@@ -1,0 +1,974 @@
+{
+  "study": "C",
+  "condition": "C14",
+  "task_id": "cc_055",
+  "replica": 0,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "def solve(n, m):\n    if n > m:\n        return 0\n    L = m + 1\n    # find min n^p for p >= L\n    # try each bit position where we can \"branch\"\n    best = float('inf')\n    # go bit by bit\n    bits = 30\n    for i in range(bits, -1, -1):\n        # consider setting bit i of p to be 1 when n's bit i is 0 (or vice versa)\n        # making p > current prefix of L at bit i, then minimize remaining bits = match n\n        mask = (1 << (i+1)) - 1\n        prefix_L = L >> (i+1) << (i+1)  # upper bits of L\n        # if upper bits of p match L, and bit i of p > bit i of L\n        # then lower bits can be anything -> set to match n\n        bit_L = (L >> i) & 1\n        # set bit i of p to be > bit_L (i.e., 1 when bit_L=0)\n        if bit_L == 0:\n            p_candidate = prefix_L | (1 << i) | (n & ((1 << i) - 1))\n            best = min(best, n ^ p_candidate)\n    # also check p = L itself... already covered if we match all bits\n    best = min(best, n ^ L) # not always valid but L >= L\n    return best",
+      "input_tokens": 730,
+      "output_tokens": 2846,
+      "cost_usd": 0.04488,
+      "latency_ms": 44045
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "claude-opus-4-6",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "Looking at this problem, I need to find the MEX of {n\u22950, n\u22951, ..., n\u2295m}.\n\nThe set {n\u22950, n\u22951, ..., n\u2295m} = {n\u2295i : 0 \u2264 i \u2264 m}. The MEX is the smallest non-negative integer NOT in this set. A value v is in the set iff n\u2295v is in [0, m], i.e., n\u2295v \u2264 m. So MEX = smallest v such that n\u2295v > m.\n\nThe code attempts to find the minimum value of n\u2295p for p \u2265 L where L = m+1. This is the correct reformulation. However, the algorithm is wrong.\n\n**Bug analysis:**\n\n1. **Wrong algorithm for finding minimum n\u2295p where p \u2265 L**: The code only considers candidates where upper bits of p match L and then at some bit position p's bit exceeds L's bit (from 0\u21921), then fills lower bits to match n. But it misses the case where p exactly follows L's prefix for all bits (p = L itself is checked, but intermediate prefixes where p follows L exactly up to some point and then branches are not all covered). More critically, when bit_L=1, the code doesn't consider the branch where p's bit matches L's bit (staying on the boundary) \u2014 it only generates candidates when bit_L=0. The standard approach requires a bit-by-bit greedy or trie-like traversal tracking whether p is still constrained by L.\n\n2. **Test case `3 2` returns wrong answer**: n=3, m=2, L=3. Since n(3) > m(2) is false (3>2 is true), it returns 0. Wait, 3>2 is true, so it returns 0. That matches expected output.\n\n3. **Test case `3 5`**: n=3, m=5, L=6. The code checks bit_L=0 positions and p=L. For p=6: 3\u22956=5. For bit positions where bit_L=0: bit 0 of 6(=110) is 0, gives p_candidate = 6|1|0=7, 3\u22957=4. bit 2 of 6 is 1, skip. bit 1 of 6 is 1, skip. So best=min(5,4)=4. Correct.\n\n4. **Test case `4 6`**: n=4, m=6, L=7(=111). All bits of L are 1, so bit_L=0 never triggers. Only p=L=7 is checked: 4\u22957=3. Answer=3. Correct.\n\n5. **Test case `69 696`**: Expected 640. L=697. n=69. Let me check... this requires careful bit analysis. The greedy approach of only branching when bit_L=0 misses cases where we need to follow L's prefix through bit_L=1 positions before branching later. For instance, if L has bit=1 at position i, we could set p's bit=1 (following L) and continue to lower bits, potentially finding a better minimum. The code doesn't handle this \u2014 it only branches at bit_L=0 positions from the full prefix of L.\n\nThis is fundamentally an incomplete search. The correct approach needs to walk down bits, maintaining whether we're still tight with L, and at each bit where L has a 1, we can branch off (setting that bit to 0, making p < L at that point is invalid \u2014 wait, we need p \u2265 L). Actually for p \u2265 L, we can branch to \"greater\" at any bit where L's bit is 0, which is what the code does, but we also need to \"follow\" L through bits where L's bit is 1. The code doesn't accumulate the prefix properly when following through 1-bits.\n\nThe code's `prefix_L` is always computed from L's upper bits, but it doesn't account for the constraint that all bits above position i must exactly match L. When branching at a lower 0-bit, the upper bits must match L exactly, but the code uses `prefix_L` which is just L's upper bits \u2014 this happens to be correct only if we're following L exactly. However, the code never verifies that the candidate p is actually \u2265 L in all cases.\n\nAfter deeper analysis, the core issue is the algorithm is incomplete/incorrect for the general case.\n\n{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Incomplete search algorithm: only considers branching at bit positions where L's bit is 0, but doesn't properly handle following L's bits through 1-positions and accumulating prefix constraints. Misses valid candidates where p follows L's prefix through several 1-bits before branching at a lower 0-bit with the correct accumulated prefix.\", \"line\": 14, \"severity\": \"critical\", \"triggering_input\": \"1\\n69 696\"}, {\"description\": \"The initial check 'if n > m: return 0' is incorrect. When n > m, the value 0 = n\u2295n requires n \u2264 m, so 0 is not in the set. But other small values might also be missing. However 0 is indeed the MEX since n\u22950 = n > m means 0 is not produced... wait, MEX is smallest missing from the OUTPUT set. n\u22950=n which IS in the set. The question is whether 0 is in the output set: 0 = n\u2295n, need n \u2264 m. If n > m, then 0 is not in output, so MEX=0. This check is actually correct.\", \"line\": 3, \"severity\": \"minor\", \"triggering_input\": \"N/A\"}]}",
+          "parsed": null,
+          "input_tokens": 1164,
+          "output_tokens": 1387,
+          "cost_usd": 0.121485,
+          "latency_ms": 30870
+        }
+      ],
+      "fixes": [],
+      "final_code": "def solve(n, m):\n    if n > m:\n        return 0\n    L = m + 1\n    # find min n^p for p >= L\n    # try each bit position where we can \"branch\"\n    best = float('inf')\n    # go bit by bit\n    bits = 30\n    for i in range(bits, -1, -1):\n        # consider setting bit i of p to be 1 when n's bit i is 0 (or vice versa)\n        # making p > current prefix of L at bit i, then minimize remaining bits = match n\n        mask = (1 << (i+1)) - 1\n        prefix_L = L >> (i+1) << (i+1)  # upper bits of L\n        # if upper bits of p match L, and bit i of p > bit i of L\n        # then lower bits can be anything -> set to match n\n        bit_L = (L >> i) & 1\n        # set bit i of p to be > bit_L (i.e., 1 when bit_L=0)\n        if bit_L == 0:\n            p_candidate = prefix_L | (1 << i) | (n & ((1 << i) - 1))\n            best = min(best, n ^ p_candidate)\n    # also check p = L itself... already covered if we match all bits\n    best = min(best, n ^ L) # not always valid but L >= L\n    return best",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "5\n3 5\n4 6\n3 2\n69 696\n123456 654321\n",
+            "expected": "4\n3\n0\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "5\n3 5\n4 0\n3 2\n69 696\n123456 654321\n",
+            "expected": "4\n0\n0\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "5\n6 5\n2 0\n3 2\n69 696\n123456 654321\n",
+            "expected": "0\n0\n0\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "5\n6 5\n2 0\n6 2\n69 696\n185099 654321\n",
+            "expected": "0\n0\n0\n640\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "5\n9 5\n3 0\n6 1\n100 696\n341251 1051160\n",
+            "expected": "0\n0\n0\n640\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "5\n14 1\n3 0\n1 3\n100 696\n528350 1051160\n",
+            "expected": "0\n0\n4\n640\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "5\n14 0\n3 0\n1 1\n100 696\n282977 1051160\n",
+            "expected": "0\n0\n2\n640\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "5\n12 0\n3 0\n2 1\n100 696\n282977 1403098\n",
+            "expected": "0\n0\n0\n640\n1122304",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "5\n12 0\n1 1\n3 1\n100 696\n497468 663627\n",
+            "expected": "0\n2\n0\n640\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "5\n3 5\n4 6\n3 4\n69 696\n123456 654321\n",
+            "expected": "4\n3\n4\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "5\n3 5\n2 0\n1 2\n69 696\n123456 654321\n",
+            "expected": "4\n0\n2\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "5\n6 5\n2 0\n2 2\n69 696\n123456 654321\n",
+            "expected": "0\n0\n1\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "5\n6 5\n2 0\n6 2\n39 696\n185099 654321\n",
+            "expected": "0\n0\n0\n664\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "5\n6 5\n3 0\n6 2\n69 696\n185099 425808\n",
+            "expected": "0\n0\n0\n640\n262144",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "5\n6 5\n3 0\n6 2\n73 696\n105037 654321\n",
+            "expected": "0\n0\n0\n640\n549296",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "5\n9 5\n0 0\n6 1\n73 696\n341251 654321\n",
+            "expected": "0\n1\n0\n640\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "5\n5 5\n3 0\n6 1\n100 696\n341251 1051160\n",
+            "expected": "2\n0\n0\n640\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "5\n14 5\n3 0\n6 6\n100 696\n528350 1051160\n",
+            "expected": "0\n0\n1\n640\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "5\n14 1\n3 0\n1 3\n100 696\n528350 843278\n",
+            "expected": "0\n0\n4\n640\n315392",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "5\n12 0\n3 1\n2 1\n000 696\n282977 1403098\n",
+            "expected": "0\n0\n0\n697\n1122304",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "5\n12 0\n5 1\n2 1\n000 696\n497468 1403098\n",
+            "expected": "0\n0\n0\n697\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "5\n3 5\n4 6\n3 4\n69 696\n51217 654321\n",
+            "expected": "4\n3\n4\n640\n603106",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "5\n3 5\n2 0\n1 2\n69 696\n87131 654321\n",
+            "expected": "4\n0\n2\n640\n567296",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "5\n6 5\n0 0\n2 2\n69 696\n123456 654321\n",
+            "expected": "0\n1\n1\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "5\n6 5\n2 0\n6 2\n39 696\n185099 29706\n",
+            "expected": "0\n0\n0\n664\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "5\n5 5\n3 0\n6 2\n69 696\n185099 425808\n",
+            "expected": "2\n0\n0\n640\n262144",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "5\n6 5\n3 0\n12 2\n73 696\n27222 654321\n",
+            "expected": "0\n0\n0\n640\n627104",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "5\n9 5\n3 0\n12 2\n41 696\n341251 654321\n",
+            "expected": "0\n0\n0\n656\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "5\n5 5\n3 0\n6 1\n100 1071\n341251 1051160\n",
+            "expected": "2\n0\n0\n1024\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "5\n15 5\n3 0\n6 2\n100 696\n528350 1595882\n",
+            "expected": "0\n0\n0\n640\n1069056",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "5\n14 5\n3 0\n6 6\n100 696\n528350 179212\n",
+            "expected": "0\n0\n1\n640\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "5\n14 1\n3 0\n1 6\n100 696\n528350 843278\n",
+            "expected": "0\n0\n6\n640\n315392",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "5\n12 0\n3 0\n1 1\n101 696\n282977 615956\n",
+            "expected": "0\n0\n2\n640\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "5\n12 0\n3 0\n2 1\n101 907\n282977 1403098\n",
+            "expected": "0\n0\n0\n896\n1122304",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "5\n12 0\n5 1\n2 2\n000 696\n497468 1403098\n",
+            "expected": "0\n0\n1\n697\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "5\n3 5\n4 6\n3 4\n69 1305\n51217 654321\n",
+            "expected": "4\n3\n4\n1280\n603106",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "5\n2 5\n4 1\n3 2\n69 696\n112255 654321\n",
+            "expected": "4\n0\n0\n640\n542720",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "5\n3 5\n2 0\n1 2\n129 696\n87131 654321\n",
+            "expected": "4\n0\n2\n568\n567296",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "5\n6 5\n0 0\n1 2\n69 696\n123456 654321\n",
+            "expected": "0\n1\n2\n640\n530866",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "5\n1 5\n3 0\n6 2\n69 696\n185099 425808\n",
+            "expected": "6\n0\n0\n640\n262144",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "5\n6 5\n4 0\n6 2\n73 1287\n105037 654321\n",
+            "expected": "0\n0\n0\n1280\n549296",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "5\n6 5\n3 0\n12 2\n73 696\n31137 654321\n",
+            "expected": "0\n0\n0\n640\n623186",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "5\n9 2\n0 0\n6 1\n73 164\n341251 654321\n",
+            "expected": "0\n1\n0\n128\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "5\n14 1\n3 0\n1 6\n100 696\n1055961 843278\n",
+            "expected": "0\n0\n6\n640\n0",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "5\n14 1\n3 0\n2 0\n110 1252\n528350 1051160\n",
+            "expected": "0\n0\n0\n1152\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "5\n14 0\n3 0\n1 1\n100 830\n978289 1051160\n",
+            "expected": "0\n0\n2\n768\n1048576",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "5\n12 0\n3 0\n2 1\n101 419\n282977 1403098\n",
+            "expected": "0\n0\n0\n384\n1122304",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "5\n2 5\n4 1\n1 2\n69 696\n112255 654321\n",
+            "expected": "4\n0\n2\n640\n542720",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "5\n3 5\n2 0\n1 2\n36 696\n87131 654321\n",
+            "expected": "4\n0\n2\n664\n567296",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "5\n6 5\n0 0\n1 2\n69 696\n141601 654321\n",
+            "expected": "0\n1\n2\n640\n524288",
+            "actual": "",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 50,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "5\n3 5\n4 6\n3 2\n69 696\n123456 654321\n",
+        "expected": "4\n3\n0\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "5\n3 5\n4 0\n3 2\n69 696\n123456 654321\n",
+        "expected": "4\n0\n0\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "5\n6 5\n2 0\n3 2\n69 696\n123456 654321\n",
+        "expected": "0\n0\n0\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "5\n6 5\n2 0\n6 2\n69 696\n185099 654321\n",
+        "expected": "0\n0\n0\n640\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "5\n9 5\n3 0\n6 1\n100 696\n341251 1051160\n",
+        "expected": "0\n0\n0\n640\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "5\n14 1\n3 0\n1 3\n100 696\n528350 1051160\n",
+        "expected": "0\n0\n4\n640\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "5\n14 0\n3 0\n1 1\n100 696\n282977 1051160\n",
+        "expected": "0\n0\n2\n640\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "5\n12 0\n3 0\n2 1\n100 696\n282977 1403098\n",
+        "expected": "0\n0\n0\n640\n1122304",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "5\n12 0\n1 1\n3 1\n100 696\n497468 663627\n",
+        "expected": "0\n2\n0\n640\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "5\n3 5\n4 6\n3 4\n69 696\n123456 654321\n",
+        "expected": "4\n3\n4\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "5\n3 5\n2 0\n1 2\n69 696\n123456 654321\n",
+        "expected": "4\n0\n2\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "5\n6 5\n2 0\n2 2\n69 696\n123456 654321\n",
+        "expected": "0\n0\n1\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "5\n6 5\n2 0\n6 2\n39 696\n185099 654321\n",
+        "expected": "0\n0\n0\n664\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "5\n6 5\n3 0\n6 2\n69 696\n185099 425808\n",
+        "expected": "0\n0\n0\n640\n262144",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "5\n6 5\n3 0\n6 2\n73 696\n105037 654321\n",
+        "expected": "0\n0\n0\n640\n549296",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "5\n9 5\n0 0\n6 1\n73 696\n341251 654321\n",
+        "expected": "0\n1\n0\n640\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "5\n5 5\n3 0\n6 1\n100 696\n341251 1051160\n",
+        "expected": "2\n0\n0\n640\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "5\n14 5\n3 0\n6 6\n100 696\n528350 1051160\n",
+        "expected": "0\n0\n1\n640\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "5\n14 1\n3 0\n1 3\n100 696\n528350 843278\n",
+        "expected": "0\n0\n4\n640\n315392",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "5\n12 0\n3 1\n2 1\n000 696\n282977 1403098\n",
+        "expected": "0\n0\n0\n697\n1122304",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "5\n12 0\n5 1\n2 1\n000 696\n497468 1403098\n",
+        "expected": "0\n0\n0\n697\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "5\n3 5\n4 6\n3 4\n69 696\n51217 654321\n",
+        "expected": "4\n3\n4\n640\n603106",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "5\n3 5\n2 0\n1 2\n69 696\n87131 654321\n",
+        "expected": "4\n0\n2\n640\n567296",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "5\n6 5\n0 0\n2 2\n69 696\n123456 654321\n",
+        "expected": "0\n1\n1\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "5\n6 5\n2 0\n6 2\n39 696\n185099 29706\n",
+        "expected": "0\n0\n0\n664\n0",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "5\n5 5\n3 0\n6 2\n69 696\n185099 425808\n",
+        "expected": "2\n0\n0\n640\n262144",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "5\n6 5\n3 0\n12 2\n73 696\n27222 654321\n",
+        "expected": "0\n0\n0\n640\n627104",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "5\n9 5\n3 0\n12 2\n41 696\n341251 654321\n",
+        "expected": "0\n0\n0\n656\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "5\n5 5\n3 0\n6 1\n100 1071\n341251 1051160\n",
+        "expected": "2\n0\n0\n1024\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "5\n15 5\n3 0\n6 2\n100 696\n528350 1595882\n",
+        "expected": "0\n0\n0\n640\n1069056",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "5\n14 5\n3 0\n6 6\n100 696\n528350 179212\n",
+        "expected": "0\n0\n1\n640\n0",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "5\n14 1\n3 0\n1 6\n100 696\n528350 843278\n",
+        "expected": "0\n0\n6\n640\n315392",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "5\n12 0\n3 0\n1 1\n101 696\n282977 615956\n",
+        "expected": "0\n0\n2\n640\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "5\n12 0\n3 0\n2 1\n101 907\n282977 1403098\n",
+        "expected": "0\n0\n0\n896\n1122304",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "5\n12 0\n5 1\n2 2\n000 696\n497468 1403098\n",
+        "expected": "0\n0\n1\n697\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "5\n3 5\n4 6\n3 4\n69 1305\n51217 654321\n",
+        "expected": "4\n3\n4\n1280\n603106",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "5\n2 5\n4 1\n3 2\n69 696\n112255 654321\n",
+        "expected": "4\n0\n0\n640\n542720",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "5\n3 5\n2 0\n1 2\n129 696\n87131 654321\n",
+        "expected": "4\n0\n2\n568\n567296",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "5\n6 5\n0 0\n1 2\n69 696\n123456 654321\n",
+        "expected": "0\n1\n2\n640\n530866",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "5\n1 5\n3 0\n6 2\n69 696\n185099 425808\n",
+        "expected": "6\n0\n0\n640\n262144",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "5\n6 5\n4 0\n6 2\n73 1287\n105037 654321\n",
+        "expected": "0\n0\n0\n1280\n549296",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "5\n6 5\n3 0\n12 2\n73 696\n31137 654321\n",
+        "expected": "0\n0\n0\n640\n623186",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "5\n9 2\n0 0\n6 1\n73 164\n341251 654321\n",
+        "expected": "0\n1\n0\n128\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "5\n14 1\n3 0\n1 6\n100 696\n1055961 843278\n",
+        "expected": "0\n0\n6\n640\n0",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "5\n14 1\n3 0\n2 0\n110 1252\n528350 1051160\n",
+        "expected": "0\n0\n0\n1152\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "5\n14 0\n3 0\n1 1\n100 830\n978289 1051160\n",
+        "expected": "0\n0\n2\n768\n1048576",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "5\n12 0\n3 0\n2 1\n101 419\n282977 1403098\n",
+        "expected": "0\n0\n0\n384\n1122304",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "5\n2 5\n4 1\n1 2\n69 696\n112255 654321\n",
+        "expected": "4\n0\n2\n640\n542720",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "5\n3 5\n2 0\n1 2\n36 696\n87131 654321\n",
+        "expected": "4\n0\n2\n664\n567296",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "5\n6 5\n0 0\n1 2\n69 696\n141601 654321\n",
+        "expected": "0\n1\n2\n640\n524288",
+        "actual": "",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 0,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 0.0,
+      "cost_this_iteration": 0.121485,
+      "cumulative_cost": 0.16636499999999999
+    }
+  ],
+  "total_cost_usd": 0.16636499999999999,
+  "total_latency_ms": 74915,
+  "iterations_used": 1,
+  "early_stopped": true
+}

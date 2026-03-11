@@ -1,0 +1,1424 @@
+{
+  "study": "C",
+  "condition": "C3",
+  "task_id": "cc_043",
+  "replica": 1,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Let me define for each node `v`, a value `f[v]` = parity of XOR from root to `v` (in terms of popcount parity). For an edge (u,v) with value w, the contribution to the path parity is `popcount(w) % 2`.\n\nSo for each edge (x,y,v):\n- If v != -1: edge parity = `popcount(v) % 2` (known)\n- If v == -1: edge parity is unknown (0 or 1)\n\nFor a path from a to b, the parity = XOR of edge parities along the path = `f[a] XOR f[b]` where f[root] = 0 and f[node] = XOR of edge parities from root to node.\n\nEach elf gives: `f[a] XOR f[b] = p`.\n\nThis is a 2-coloring/bipartite problem (like Union-Find with parity).\n\nSteps:\n1. Root the tree, compute `f[v]` for known edges. For unknown edges, `f[v]` is a free variable.\n2. Each elf constraint becomes `f[a] XOR f[b] = p_i`, which is a constraint in a weighted DSU.\n3. Check consistency of all constraints.\n4. Assign free variables (unknown edge parities) to 0 by default.\n5. Output edge values: known edges unchanged, unknown edges get value 0 (if parity should be 0) or 1 (if parity should be 1).\n\nWait, but the unknown edges form the tree structure. Let me think more carefully.\n\nThe tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent(v), v)`.\n\nFor known edges: edge_parity is fixed.\nFor unknown edges: edge_parity is a free variable.\n\nElf constraints: `f[a] XOR f[b] = p`.\n\nI can use weighted DSU where each node has a parity relative to its component root. \n\nFirst, process all known edges to set up the tree and compute partial `f` values. Then process elf constraints to determine required parities for unknown edges.\n\nActually, let me use weighted DSU directly on the nodes with the elf constraints, while also incorporating known edge constraints.\n\nEach tree edge (x,y) gives a constraint: `f[x] XOR f[y] = edge_parity`. Known edges have fixed parity, unknown edges have free parity.\n\nSo: build DSU with all known-parity edges first (they give hard constraints). Then add elf constraints. Check consistency. For unknown edges, determine what parity they need (or assign freely).\n\nLet me implement weighted DSU (parity DSU):\n\n1. Initialize DSU with n nodes.\n2. For each known edge (x,y,v): union with parity `popcount(v)%2`.\n3. For each elf (a,b,p): add constraint `f[a] XOR f[b] = p` \u2192 check/union.\n4. Check consistency.\n5. For unknown edges: we need to assign parity. Each unknown edge (x,y) connects two nodes. After step 3, they may be in same or different components. If same component, parity is determined. If different, assign parity 0 (or whatever, merge them).\n6. Output: known edges unchanged, unknown edges get value 0 if parity=0, value 1 if parity=1.\n\nWait, unknown edges are also tree edges, so they connect the tree. I need to be careful - tree edges create the structure.\n\nLet me just do weighted DSU treating all edges (known and unknown) as constraints, where unknown edges have undetermined weight initially.\n\nProcess: first add known edges, then elf constraints (checking consistency), then for unknown edges determine their parity from DSU state.",
+      "input_tokens": 1506,
+      "output_tokens": 1013,
+      "cost_usd": 0.019713,
+      "latency_ms": 19616
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity of (a XOR b) = parity(a) XOR parity(b) where parity(x) = popcount(x) mod 2.\n\nSo parity(popcount(XOR of path edges)) = XOR of parity(popcount(edge_value)) for edges on path.\n\nSo if I let f(e) = popcount(v_e) mod 2 for each edge e, then for each elf query (a, b, p): XOR of f(e) for e on path(a,b) = p.\n\nThis is a classic problem: assign 0/1 to each edge (or some are fixed), such that path XOR constraints are satisfied.\n\nThis can be solved with DSU/bipartite approach on nodes. Let d[v] = XOR of f(e) for edges on path from root to v. Then for edge (u,v), f(e) = d[u] XOR d[v]. For known edges, d[u] XOR d[v] = popcount(v_e) mod 2. For unknown edges, d[u] XOR d[v] can be 0 or 1 (free).\n\nFor elf query (a, b, p): XOR of f(e) on path = d[a] XOR d[b] = p.\n\nSo I need to assign d[v] \u2208 {0,1} for each node such that:\n- For known edges (u,v,val): d[u] XOR d[v] = popcount(val) mod 2\n- For elf queries (a,b,p): d[a] XOR d[b] = p\n\nThis is a 2-coloring / bipartite check with DSU with parity (weighted DSU).\n\nOnce I have valid d[] values, for unknown edges (u,v): set f(e) = d[u] XOR d[v], and assign any value with that parity (e.g., 0 if parity=0, 1 if parity=1).\n\nLet me implement weighted DSU where we track parity from node to root.\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    edges = []\n    for _ in range(n-1):\n        x, y, v = map(int, input().split())\n        edges.append((x, y, v))\n    queries = []\n    for _ in range(m):\n        a, b, p = map(int, input().split())\n        queries.append((a, b, p))\n    \n    parent = list(range(n+1))\n    rank = [0]*(n+1)\n    dist = [0]*(n+1)  # parity from node to root\n    \n    def find(x):\n        if parent[x] == x:\n            return x, 0\n        root, d = find(parent[x])\n        dist[x] ^= dist[parent[x]]\n        parent[x] = root\n        return root, dist[x]\n    \n    def union(x, y, w):  # d[x] XOR d[y] = w\n        rx, dx = find(x)\n        ry, dy = find(y)\n        if rx == ry:\n            return (dx ^ dy) == w\n        if rank[rx] < rank[ry]:\n            rx, ry = ry, rx\n            dx, dy = dy, dx\n        parent[ry] = rx\n        dist[ry] = dx ^ dy ^ w\n        if rank[rx] == rank[ry]:\n            rank[rx] += 1\n        return True\n    \n    # Process known edges\n    for x, y, v in edges:\n        if v != -1:\n            w = bin(v).count('1') % 2\n            if not union(x, y, w):\n                print(\"NO\")\n                return\n    \n    # Process queries\n    for a, b, p in queries:\n        if not union(a, b, p):\n            print(\"NO\")\n            return\n    \n    print(\"YES\")\n    for x, y, v in edges:\n        if v != -1:\n            print(x, y, v)\n        else:\n            rx, dx = find(x)\n            ry, dy = find(y)\n            needed_parity = dx ^ dy\n            print(x, y, needed_parity)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 1506,
+      "output_tokens": 1232,
+      "cost_usd": 0.022998,
+      "latency_ms": 17027
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Let me define for each node `v`, a value `f[v]` = parity of XOR from root to `v` (in terms of popcount parity). For an edge (u,v) with value w, the contribution to the path parity is `popcount(w) % 2`.\n\nSo for each edge (x,y,v):\n- If v != -1: edge parity = `popcount(v) % 2` (known)\n- If v == -1: edge parity is unknown (0 or 1)\n\nFor a path from a to b, the parity = XOR of edge parities along the path = `f[a] XOR f[b]` where f[root] = 0 and f[node] = XOR of edge parities from root to node.\n\nEach elf gives: `f[a] XOR f[b] = p`.\n\nThis is a 2-coloring/bipartite problem (like Union-Find with parity).\n\nSteps:\n1. Root the tree, compute `f[v]` for known edges. For unknown edges, `f[v]` is a free variable.\n2. Each elf constraint becomes `f[a] XOR f[b] = p_i`, which is a constraint in a weighted DSU.\n3. Check consistency of all constraints.\n4. Assign free variables (unknown edge parities) to 0 by default.\n5. Output edge values: known edges unchanged, unknown edges get value 0 (if parity should be 0) or 1 (if parity should be 1).\n\nWait, but the unknown edges form the tree structure. Let me think more carefully.\n\nThe tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent(v), v)`.\n\nFor known edges: edge_parity is fixed.\nFor unknown edges: edge_parity is a free variable.\n\nElf constraints: `f[a] XOR f[b] = p`.\n\nI can use weighted DSU where each node has a parity relative to its component root. \n\nFirst, process all known edges to set up the tree and compute partial `f` values. Then process elf constraints to determine required parities for unknown edges.\n\nActually, let me use weighted DSU directly on the nodes with the elf constraints, while also incorporating known edge constraints.\n\nEach tree edge (x,y) gives a constraint: `f[x] XOR f[y] = edge_parity`. Known edges have fixed parity, unknown edges have free parity.\n\nSo: build DSU with all known-parity edges first (they give hard constraints). Then add elf constraints. Check consistency. For unknown edges, determine what parity they need (or assign freely).\n\nLet me implement weighted DSU (parity DSU):\n\n1. Initialize DSU with n nodes.\n2. For each known edge (x,y,v): union with parity `popcount(v)%2`.\n3. For each elf (a,b,p): add constraint `f[a] XOR f[b] = p` \u2192 check/union.\n4. Check consistency.\n5. For unknown edges: we need to assign parity. Each unknown edge (x,y) connects two nodes. After step 3, they may be in same or different components. If same component, parity is determined. If different, assign parity 0 (or whatever, merge them).\n6. Output: known edges unchanged, unknown edges get value 0 if parity=0, value 1 if parity=1.\n\nWait, unknown edges are also tree edges, so they connect the tree. I need to be careful - tree edges create the structure.\n\nLet me just do weighted DSU treating all edges (known and unknown) as constraints, where unknown edges have undetermined weight initially.\n\nProcess: first add known edges, then elf constraints (checking consistency), then for unknown edges determine their parity from DSU state.",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 22\n    The tree has n-1 edges. Root it at node 1. For each node v (non-root), there's exactly one parent edge. `f[v] = f[parent(v)] XOR edge_parity(parent",
+            "runtime_ms": 30,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity of (a XOR b) = parity(a) XOR parity(b) where parity(x) = popcount(x) mod 2.\n\nSo parity(popcount(XOR of path edges)) = XOR of parity(popcount(edge_value)) for edges on path.\n\nSo if I let f(e) = popcount(v_e) mod 2 for each edge e, then for each elf query (a, b, p): XOR of f(e) for e on path(a,b) = p.\n\nThis is a classic problem: assign 0/1 to each edge (or some are fixed), such that path XOR constraints are satisfied.\n\nThis can be solved with DSU/bipartite approach on nodes. Let d[v] = XOR of f(e) for edges on path from root to v. Then for edge (u,v), f(e) = d[u] XOR d[v]. For known edges, d[u] XOR d[v] = popcount(v_e) mod 2. For unknown edges, d[u] XOR d[v] can be 0 or 1 (free).\n\nFor elf query (a, b, p): XOR of f(e) on path = d[a] XOR d[b] = p.\n\nSo I need to assign d[v] \u2208 {0,1} for each node such that:\n- For known edges (u,v,val): d[u] XOR d[v] = popcount(val) mod 2\n- For elf queries (a,b,p): d[a] XOR d[b] = p\n\nThis is a 2-coloring / bipartite check with DSU with parity (weighted DSU).\n\nOnce I have valid d[] values, for unknown edges (u,v): set f(e) = d[u] XOR d[v], and assign any value with that parity (e.g., 0 if parity=0, 1 if parity=1).\n\nLet me implement weighted DSU where we track parity from node to root.\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    edges = []\n    for _ in range(n-1):\n        x, y, v = map(int, input().split())\n        edges.append((x, y, v))\n    queries = []\n    for _ in range(m):\n        a, b, p = map(int, input().split())\n        queries.append((a, b, p))\n    \n    parent = list(range(n+1))\n    rank = [0]*(n+1)\n    dist = [0]*(n+1)  # parity from node to root\n    \n    def find(x):\n        if parent[x] == x:\n            return x, 0\n        root, d = find(parent[x])\n        dist[x] ^= dist[parent[x]]\n        parent[x] = root\n        return root, dist[x]\n    \n    def union(x, y, w):  # d[x] XOR d[y] = w\n        rx, dx = find(x)\n        ry, dy = find(y)\n        if rx == ry:\n            return (dx ^ dy) == w\n        if rank[rx] < rank[ry]:\n            rx, ry = ry, rx\n            dx, dy = dy, dx\n        parent[ry] = rx\n        dist[ry] = dx ^ dy ^ w\n        if rank[rx] == rank[ry]:\n            rank[rx] += 1\n        return True\n    \n    # Process known edges\n    for x, y, v in edges:\n        if v != -1:\n            w = bin(v).count('1') % 2\n            if not union(x, y, w):\n                print(\"NO\")\n                return\n    \n    # Process queries\n    for a, b, p in queries:\n        if not union(a, b, p):\n            print(\"NO\")\n            return\n    \n    print(\"YES\")\n    for x, y, v in edges:\n        if v != -1:\n            print(x, y, v)\n        else:\n            rx, dx = find(x)\n            ry, dy = find(y)\n            needed_parity = dx ^ dy\n            print(x, y, needed_parity)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+            "expected": "NO\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+            "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+            "runtime_ms": 34,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n3 5 -1\n2 3 1\n2 5 0\n1 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 0\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n1 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 0\n2 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n1 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 0\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 0\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n3 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 2\n4 5 0\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 2\n4 5 0\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 3 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n1 5 1\n5 3\n1 2 0\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 1 0\n",
+        "expected": "NO\nNO\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n4 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 11\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 2 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 11\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 0\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 0",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 1 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 1 0\n2 1\n1 2 2\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 1\nYES\n1 2 2",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 0\n2 1 1\n5 6 1\n3 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 1\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 1 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n2 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 2 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 0\n2 5 1\n3 3\n1 2 0\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 9\n6 2 1\n3 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 9\n6 2 1\n3 5 1\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n1 3 0\n2 1\n1 2 1\n2 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n1 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 3 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 1\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nNO\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 4 0\n2 5 0\n2 2 1\n2 1 0\n5 5 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 1 1\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 0\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n1 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n6 5\n1 2 -1\n2 3 1\n4 2 7\n6 2 0\n2 5 -1\n1 4 1\n2 1 0\n5 6 1\n6 2 1\n4 5 0\n5 3\n1 2 -1\n2 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 1\n2 3 1\n1 4 1\n4 5 1\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 5 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n2 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "NO\nYES\n1 2 0\n1 3 1\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 1\n2 1 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 0\n4 5 -1\n2 4 0\n3 4 0\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 4 0\n2 5 0\nNO\nYES\n1 2 1\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n6 5\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 0\n2 2 0\n1 3 1\n2 3 0\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nNO\nYES\n1 2 1\n2 3 0\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 3 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 1\n3 4 1\n2 4 1\n3 3\n1 2 -1\n1 3 -1\n2 2 0\n1 3 1\n2 3 0\n2 0\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 0\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 1\n1 3 1\nYES\n1 2 1",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 4 0\n2 5 -1\n2 3 2\n2 1 0\n5 6 1\n6 1 1\n4 5 0\n5 3\n1 2 0\n1 3 -1\n2 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n1 3 -1\n1 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "NO\nNO\nYES\n1 2 0\n1 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n6 5\n1 2 -1\n1 3 1\n4 2 7\n6 3 0\n2 5 -1\n2 4 1\n2 5 0\n5 6 1\n6 1 1\n4 5 1\n5 3\n1 2 -1\n1 3 -1\n1 4 1\n4 5 -1\n2 4 0\n3 4 1\n2 3 1\n3 3\n1 2 -1\n2 3 -1\n2 2 0\n1 3 1\n2 3 1\n2 1\n1 2 1\n1 2 0\n",
+        "expected": "YES\n1 2 0\n1 3 1\n4 2 7\n6 3 0\n2 5 0\nYES\n1 2 1\n1 3 0\n1 4 1\n4 5 1\nYES\n1 2 0\n2 3 1\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    Wait, let me think again. The parity of popcount(v) = v's bit parity = XOR of all bits of v. And XOR of values: parity(popcount(a XOR b)) = parity o",
+        "runtime_ms": 34,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.042711,
+  "total_latency_ms": 36643,
+  "iterations_used": null,
+  "early_stopped": null
+}

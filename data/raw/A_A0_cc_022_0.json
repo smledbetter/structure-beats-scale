@@ -1,0 +1,479 @@
+{
+  "study": "A",
+  "condition": "A0",
+  "task_id": "cc_022",
+  "replica": 0,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff it's empty AND (either c=1, or (r,c-1) is exitable, or r=1, or (r-1,c) is exitable). Actually, (r,c) is exitable iff it's empty and there's a path up/left to boundary through empty cells.\n\nMore precisely: (r,c) is exitable iff it's empty AND ((r=1 or c=1) OR (r-1,c) is exitable OR (r,c-1) is exitable).\n\n**When is a grid NOT determinable?**\nThe grid is not determinable if two different fill patterns produce the same exitability pattern. \n\nKey insight: A cell (r,c) is NOT exitable in the subgrid. This could be because it's filled, OR because all paths up/left are blocked. If we can't distinguish these cases, the grid is not determinable.\n\nFrom the examples, query 3 (columns 4-5): column 4 is all X except row 1. In the subgrid, col 4 row 1 is X, col 5 rows 2-4 are '.'. The exitability shows col 4 row 1 is N (filled), but col 5 rows 2-4 are also N because col 4 blocks them. We can't tell if those cells in col 5 rows 2-4 are filled or empty.\n\n**The condition for non-determinability:** A cell that is empty but not exitable \u2014 we can't distinguish it from a filled cell. So the grid is determinable iff every non-exitable cell is actually filled.\n\nWait, but we need to check: given the exitability pattern, can we uniquely reconstruct the grid? A cell is non-exitable either because it's filled OR because it's empty but blocked. If any empty cell is non-exitable, we could replace it with a filled cell and get the same exitability pattern \u2192 not determinable.\n\nSo: **the subgrid is determinable iff there are no empty cells that are non-exitable**.\n\nAn empty cell (r,c) is non-exitable iff all paths up and left from it are blocked (some filled cell exists in every path). \n\nAn empty cell (r,c) is non-exitable iff: (r>1 and (r-1,c) is non-exitable or filled) AND (c > c1 (left boundary) and (r,c-1) is non-exitable or filled).\n\nSo: empty cell (r,c) is \"trapped\" (empty but non-exitable) iff its top neighbor is not exitable AND its left neighbor is not exitable (within the subgrid).\n\nThe grid is NOT determinable iff there exists a trapped cell.\n\nFor a subgrid with columns [x1, x2], I need to check if any empty cell becomes trapped.\n\nLet me define for each cell (r,c): it's \"bad\" if it's empty but non-exitable in the subgrid [x1,x2]. This depends on x1.\n\nFor a fixed x1, cell (r,c) with c>=x1 is bad if: empty, and top cell is bad-or-filled, and left cell (if c>x1) is bad-or-filled (if c=x1, left boundary is the exit, so it's always exitable if empty).\n\nSo for each column c and row r, I want to find the minimum x1 such that (r,c) becomes trapped when the subgrid starts at x1.\n\nThe subgrid [x1,x2] is bad if any cell (r,c) with x1<=c<=x2 is trapped for that x1.\n\nFor each cell (r,c), let f(r,c) = minimum x1 such that (r,c) is trapped in subgrid starting at x1. Then query [x1,x2] is NO iff any cell (r,c) with c in [x1,x2] has f(r,c) <= x1... wait, f(r,c) = exactly x1 where it becomes trapped? Actually trapped depends on x1 (the left boundary).\n\nLet me think differently: for each cell (r,c) that is empty, compute the leftmost column L(r,c) such that if x1 > L(r,c), then (r,c) is trapped. Query [x1,x2] is NO iff exists c in [x1,x2] with x1 > L(r,c), i.e., L(r,c) < x1.\n\nFor each column x2, I need: min L(r,c) over all r, c<=x2 where c > L(r,c) ... Query is NO iff min_{c in [x1,x2]} of (something) < x1.\n\nLet me implement and think more carefully with code.\n\nAfter more analysis: For each empty cell (r,c), L(r,c) = max(L(r-1,c), L(r,c-1)) where if top/left is filled, L = c (or c for filled). Let me code this up.\n\n```python\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n, m = int(input_data[idx]), int(input_data[idx+1]); idx+=2\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    # For each empty cell (r,c) (0-indexed), compute L[r][c] = \n    # the largest x1 (1-indexed col) such that cell is exitable when subgrid starts at x1\n    # i.e., if x1 <= L[r][c], cell is exitable; if x1 > L[r][c], cell is trapped\n    # L[r][c] for empty cell: \n    #   if r==0: always exitable (top row), L = m (always exitable for any x1)\n    #   if c==0 (relative to subgrid start): always exitable\n    # Actually L[r][c] = min column (1-indexed) such that cell is still exitable\n    # Cell (r,c) exitable in subgrid [x1,x2] iff x1 <= L[r][c]\n    # L[r][c] = max(L[r-1][c], L[r][c-1]) ... if both neighbors non-exitable means trapped\n    # For filled cell, L = 0 (never exitable)\n    # For empty cell at row 0 or col boundary: L = c+1 (1-indexed col itself, always exitable since top row or left boundary)\n    # Wait: empty cell at row 0 is always exitable regardless of x1 (can go up to exit). L = m (infinity)\n    # Empty cell at col c (0-indexed), when x1 = c+1 (1-indexed), it's the leftmost col, so exitable. L >= c+1.\n    # L[r][c] = the maximum x1 for which (r,c) remains exitable\n    #          = if filled: 0\n    #          = if r==0: m (top row, always exitable)  \n    #          = if c==0: m... no wait c is absolute column\n    # Let me redefine: for subgrid [x1, x2] (1-indexed), cell (r,c) with c in [x1,x2]:\n    # exitable iff empty and (r==0 or c==x1-1+1=x1 means left boundary... \n    # Let me use 0-indexed throughout.\n    # Subgrid columns [a, b] (0-indexed). Cell (r,c) exitable in [a,b] iff:\n    #   empty AND (r==0 OR c==a OR (r>0 and exitable(r-1,c)) OR (c>a and exitable(r,c-1)))\n    \n    # For fixed a, define E[r][c] for c in [a,b]:\n    # E[r][c] = 1 if exitable, 0 otherwise\n    # E[r][c] = 0 if filled\n    # E[r][c] = 1 if empty and (r==0 or c==a or E[r-1][c] or E[r][c-1])\n    # E[r][c] = 0 if empty and r>0 and c>a and not E[r-1][c] and not E[r][c-1]\n    \n    # A cell is \"bad\" (empty but non-exitable) iff empty and r>0 and c>a and not E[r-1][c] and not E[r][c-1]\n    # Note: E[r-1][c]=0 means either filled or bad; E[r][c-1]=0 means either filled or bad.\n    \n    # Define B[r][c] = 1 if cell (r,c) is filled OR bad (for given a)\n    # B[r][c] = 1 if filled\n    # B[r][c] = 1 if empty and r>0 and c>a and B[r-1][c] and B[r][c-1]\n    # B[r][c] = 0 otherwise (empty and (r==0 or c==a or not B[r-1][c] or not B[r][c-1]))\n    \n    # Grid is not determinable iff exists empty cell (r,c) with B[r][c]=1, i.e., \n    # exists empty cell that is bad.\n    \n    # For each empty cell (r,c), define threshold(r,c) = minimum a such that B[r][c]=1\n    # i.e., minimum left boundary (0-indexed) making this cell trapped.\n    # Query [a,b] (0-indexed) is NO iff exists c in [a,b], exists r, cell(r,c) empty and threshold(r,c) <= a\n    # Equivalently: exists c in [a,b] with min_r threshold(r,c) <= a (only for empty cells)\n    \n    # Let's compute threshold(r,c) for each empty cell:\n    # B[r][c]=1 when a >= threshold(r,c)\n    # B[r][c]=1 iff r>0 and c>a and B[r-1][c]=1 and B[r][c-1]=1\n    # For filled cell: B=1 always, threshold=0 (or -inf, always blocked)\n    # For empty cell at r=0: B=0 always (top row always exitable), threshold=infinity\n    # For empty cell at c=a (left boundary): B=0, threshold=infinity (always exitable from left)\n    #   -> threshold(r,c) = c+1 (since when a<=c, c is not the left boundary only if a<c... \n    #      wait: c==a means it's the left boundary. So B[r][c]=0 when a==c.\n    #      When a < c (i.e., a <= c-1), c is not the left boundary, so B depends on neighbors.\n    #      threshold(r,c) = minimum a such that B[r][c]=1\n    #                     = minimum a such that a < c AND r>0 AND B[r-1][c]=1 for that a AND B[r][c-1]=1 for that a\n    # \n    # Since B[r-1][c] and B[r][c-1] also depend on a, this is recursive.\n    # \n    # Key insight: B[r][c]=1 (for given a) iff filled OR (r>0 and c>a and B[r-1][c] and B[r][c-1])\n    # \n    # For empty cell, threshold(r,c) = min a such that:\n    #   r > 0 AND c > a AND B[r-1][c](a)=1 AND B[r][c-1](a)=1\n    # = min a such that a < c AND a >= threshold(r-1,c) AND a >= threshold(r,c-1)\n    # (since B[r-1][c](a)=1 iff a >= threshold(r-1,c), and similarly for B[r][c-1])\n    # \n    # Wait, is B[r][c](a) monotone in a? If a increases (left boundary moves right), does B[r][c] stay 1 or can it flip?\n    # When a increases, c==a becomes true for larger a, making B=0. So B is NOT monotone.\n    # \n    # Hmm. Let me reconsider. When a=c, B[r][c]=0 (left boundary). When a=c-1, B[r][c] depends on B[r-1][c] and B[r][c-1].\n    # When a < c-1 vs a = c-1: for a < c-1, B[r][c-1] might be 0 (since c-1 > a, so c-1 is not left boundary but might be exitable).\n    # \n    # Actually wait. B[r][c](a) = is cell (r,c) blocked (filled or bad) in subgrid with left boundary a.\n    # As a increases from 0 to c:\n    # - At a=c: B=0 (left boundary, exitable if empty)\n    # - At a<c: B=1 iff r>0 and B[r-1][c](a)=1 and B[r][c-1](a)=1\n    # \n    # So B[r][c](a) for a in [0, c-1] depends on B[r-1][c](a) and B[r][c-1](a).\n    # B[r][c](c) = 0.\n    # \n    # This is complex. Let me think about what threshold(r,c) means more carefully.\n    # \n    # For filled cell: B=1 for all a, so \"threshold\" = 0 (always blocked). Let's say threshold=-inf or 0.\n    # For empty cell at r=0: B=0 for all a (top row). threshold=+inf.\n    # For empty cell at r>0, c>0:\n    #   B[r][c](a) = 1 iff a < c AND B[r-1][c](a)=1 AND B[r][c-1](a)=1\n    #   B[r][c](a) = 0 if a >= c (i.e., a=c since a<=c for cell to be in subgrid... actually a can be > c? No, a <= c since cell is in subgrid [a,b] and c >= a)\n    #   Actually a <= c always (cell c is in subgrid starting at a, so a <= c).\n    #   B[r][c](a) = 0 when a = c.\n    #   B[r][c](a) = 1 when a < c AND B[r-1][c](a) AND B[r][c-1](a).\n    # \n    # So B[r][c](a) as a function of a (for a from 0 to c):\n    # - B[r][c](c) = 0\n    # - B[r][c](a) for a < c: depends on neighbors\n    # \n    # Is B[r][c](a) monotone non-decreasing as a decreases (i.e., as subgrid gets wider)?\n    # Intuitively, wider subgrid = more ways to escape = less blocked. So B should be non-increasing as a decreases.\n    # i.e., B[r][c](a) is non-decreasing in a (for a <= c).\n    # \n    # If this monotonicity holds, then there's a threshold T(r,c) such that:\n    # B[r][c](a) = 1 iff a >= T(r,c) (and a <= c, with B[r][c](c)=0, so T(r,c) <= c... wait B[r][c](c)=0 so T > c? No.)\n    # \n    # Hmm, B[r][c](c)=0 and B might be 1 for some a < c. So B is 1 for a in [",
+    "input_tokens": 1165,
+    "output_tokens": 4096,
+    "cost_usd": 0.064935,
+    "latency_ms": 63192
+  },
+  "reviews": [],
+  "aggregated_bugs": [],
+  "fix": null,
+  "test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 912,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 874,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "1 1\n.\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 685,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 833,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 829,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 838,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 755,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1058,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+        "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 964,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 913,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "1 1\nX\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 879,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 822,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 658,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1296,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 2083,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 784,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 678,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 624,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 980,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 867,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 790,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 912,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 736,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1020,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1018,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1084,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1057,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 874,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 665,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 882,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 1180,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 985,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 837,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 923,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 879,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 771,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 589,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 956,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 663,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 563,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 579,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+        "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 785,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 775,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 629,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 788,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 686,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 697,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 791,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 859,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+        "actual": "",
+        "stderr": "  File \"/home/sandbox/work/solution.py\", line 1\n    A cell (r,c) is exitable if you can reach the left edge or top edge by moving only up and left through empty cells. This means (r,c) is exitable iff",
+        "runtime_ms": 854,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.064935,
+  "total_latency_ms": 63192
+}

@@ -1,0 +1,1898 @@
+{
+  "study": "C",
+  "condition": "C6",
+  "task_id": "cc_018",
+  "replica": 1,
+  "strategy_family": "gen-only",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom bisect import bisect_left, insort\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    # dp[v] = max matches using elements ending with value v matched at position v\n    # This needs more thought - use DP with sorted structure\n    # dp[k] = minimum index needed to achieve k matches\n    INF = float('inf')\n    dp = [INF] * (n + 2)\n    dp[0] = -1\n    for i, v in enumerate(a):\n        if v <= n:\n            # try to place v as the v-th match, need dp[v-1] < i and update dp[v]\n            if dp[v-1] < i and i < dp[v]:\n                dp[v] = i\n    print(max(k for k in range(n+1) if dp[k] < INF))\n\nsolve()",
+      "input_tokens": 475,
+      "output_tokens": 1347,
+      "cost_usd": 0.02163,
+      "latency_ms": 23449
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "So I need to find the largest subset S of indices (in increasing order) such that if S = {i_1 < i_2 < ... < i_k}, then for as many j as possible, a[i_j] = j.\n\nI want to maximize the number of positions j (1-indexed) in the subsequence where a[i_j] = j.\n\nLet me think differently. I want to select a subsequence of elements, and count how many elements a[i_j] equal their new position j. I want to maximize this count.\n\nKey insight: The elements that become fixed points must satisfy a[i_j] = j. So if I pick elements with values v_1, v_2, ..., v_k (in order of their original positions), the ones that are fixed points are those where v_j = j for some positions j.\n\nLet me think about which elements can be fixed points. If element at original position p has value v = a[p], it can be a fixed point at new position v only if:\n- It's placed at new position v (so exactly v-1 elements are kept before it)\n- Its original position p must be \u2265 v (since we need at least v-1 elements before it in the original array, but we can skip elements, so actually p \u2265 v is required since we need v-1 elements before position p, and there are only p-1 elements before p in the original)\n\nWait, more carefully: if element at original position p becomes new position j, we need exactly j-1 elements kept before it. Since there are p-1 elements before it originally, we need j-1 \u2264 p-1, so j \u2264 p.\n\nFor a fixed point: a[p] = j \u2264 p, so a[p] \u2264 p.\n\nSo only elements where a[p] \u2264 p can be fixed points.\n\nNow, I want to select a set of fixed-point candidates. If I select candidates at original positions p_1 < p_2 < ... < p_m with values v_1, v_2, ..., v_m (where v_i = a[p_i] \u2264 p_i), they can ALL be fixed points simultaneously if:\n- v_1 < v_2 < ... < v_m (their new positions must be strictly increasing)\n- Between consecutive fixed points, we need v_{i+1} - v_i - 1 \u2265 0 elements kept between p_i and p_{i+1} (non-fixed-point elements kept), but also the count must work out: the number of elements kept between p_i and p_{i+1} (exclusive) must equal v_{i+1} - v_i - 1.\n\nActually we can always achieve this: between p_i and p_{i+1} in the original, there are p_{i+1} - p_i - 1 elements. We need to keep exactly v_{i+1} - v_i - 1 of them. This requires:\n- v_{i+1} - v_i - 1 \u2264 p_{i+1} - p_i - 1, i.e., v_{i+1} - v_i \u2264 p_{i+1} - p_i\n- v_{i+1} - v_i - 1 \u2265 0, i.e., v_{i+1} > v_i\n\nAlso before the first fixed point: need v_1 - 1 elements kept before p_1, so v_1 - 1 \u2264 p_1 - 1, i.e., v_1 \u2264 p_1 \u2713 (already guaranteed).\n\nSo the condition for a set of fixed points is:\n- v_i = a[p_i] \u2264 p_i for all i\n- v_1 < v_2 < ... < v_m (strictly increasing values)\n- v_{i+1} - v_i \u2264 p_{i+1} - p_i for consecutive pairs, i.e., v_{i+1} - p_{i+1} \u2264 v_i - p_i\n\nLet d_i = v_i - p_i = a[p_i] - p_i \u2264 0.\n\nThe condition v_{i+1} - p_{i+1} \u2264 v_i - p_i means d_{i+1} \u2264 d_i (non-increasing d values).\n\nSo I need the longest subsequence of elements (with a[p] \u2264 p) such that values are strictly increasing AND d = a[p] - p is non-increasing.\n\nThis is a 2D LIS problem. I need longest subsequence with v strictly increasing and d non-increasing, where elements are taken in order of p.\n\nSince v = d + p and p is increasing, v strictly increasing and d non-increasing... Let me find this with DP.\n\nn can be 2e5. I'll use patience sorting / BIT approach.\n\nimport sys\nfrom sortedcontainers import SortedList\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n = int(input_data[0])\n    a = list(map(int, input_data[1:n+1]))\n    \n    candidates = []\n    for p in range(1, n+1):\n        v = a[p-1]\n        if v <= p:\n            d = v - p  # d <= 0\n            candidates.append((p, v, d))\n    \n    # Need longest subsequence (in order of p) with v strictly increasing and d non-increasing\n    # dp[i] = length of longest valid subsequence ending at candidates[i]\n    # For each candidate, find max dp[j] where v[j] < v[i] and d[j] >= d[i]\n    \n    # This is 2D: v increasing, d non-increasing (equivalently -d non-decreasing)\n    # Sort by v increasing, break ties by d decreasing (so same v can't extend)\n    # Then find LIS on d non-increasing = LDS on d = LIS on -d\n    \n    # But order must follow original p order... candidates are already in p order.\n    \n    # BIT indexed by d values. d ranges from -(n-1) to 0. Shift by n-1.\n    # For each candidate in order of p, query max dp where d[j] >= d[i] and v[j] < v[i].\n    \n    # 2D problem: need BIT of BIT or CDQ divide and conquer.\n    # CDQ: sort by v, process in order, query on d.\n    \n    # Let me do CDQ divide and conquer.\n    \n    if not candidates:\n        print(0)\n        return\n    \n    # Coordinate compress d values (they're already integers from -(n-1) to 0)\n    # d ranges: a[p]-p, a[p] in [1,2e5], p in [1,n], so d in [1-n, 2e5-1]\n    # but we filtered a[p]<=p so d<=0, d>=1-n\n    \n    INF = float('inf')\n    \n    # dp array\n    m = len(candidates)\n    dp = [1] * m\n    \n    # CDQ divide and conquer\n    # candidates are in order of p (index 0..m-1)\n    # We want: for i, max dp[j] for j<i with v[j]<v[i] and d[j]>=d[i]\n    \n    # Offset for d: d in [-(n-1), 0], offset = n-1, so index 0..n-1\n    offset = n - 1\n    size = n + 1\n    \n    bit = [0] * (size + 2)\n    \n    def bit_update(pos, val):\n        pos += 1\n        while pos <= size + 1:\n            if bit[pos] < val:\n                bit[pos] = val\n            pos += pos & (-pos)\n    \n    def bit_query(pos):\n        pos += 1\n        res = 0\n        while pos > 0:\n            if bit[pos] > res:\n                res = bit[pos]\n            pos -= pos & (-pos)\n        return res\n    \n    def bit_clear(pos):\n        pos += 1\n        while pos <= size + 1:\n            bit[pos] = 0\n            pos += pos & (-pos)\n    \n    # CDQ: indices into candidates list\n    # We process: left half computes dp, then contributes to right half\n    \n    def cdq(indices):\n        if len(indices) <= 1:\n            return\n        mid = len(indices) // 2\n        left = indices[:mid]\n        right = indices[mid:]\n        \n        cdq(left)\n        \n        # Left contributes to right\n        # Sort left by v ascending, right by v ascending\n        # For each in right (v[r]), query max dp[l] where v[l]<v[r] and d[l]>=d[r]\n        # = query prefix max on d (from d[r] to max_d) using BIT indexed by d descending\n        # Actually: d[l] >= d[r], BIT query sum from d[r] to 0 (in d-space)\n        # BIT indexed by d+offset (0-indexed), query from d[r]+offset to size-1\n        # = suffix query = total - prefix(d[r]+offset-1)\n        # Let's use BIT for suffix max: index by (offset - d) so higher d = lower index\n        # d >= d[r] means (offset-d) <= (offset-d[r])\n        # So query prefix max up to (offset - d[r])\n        \n        left_sorted = sorted(left, key=lambda i: candidates[i][1])\n        right_sorted = sorted(right, key=lambda i: candidates[i][1])\n        \n        to_clear = []\n        li = 0\n        for ri in right_sorted:\n            rv = candidates[ri][1]\n            rd = candidates[ri][2]\n            # Add all left with v < rv\n            while li < len(left_sorted) and candidates[left_sorted[li]][1] < rv:\n                lv = candidates[left_sorted[li]][1]\n                ld = candidates[left_sorted[li]][2]\n                # BIT index = offset - ld (so larger d = smaller index)\n                idx = offset - ld\n                bit_update(idx, dp[left_sorted[li]])\n                to_clear.append(idx)\n                li += 1\n            # Query: d[l] >= rd => (offset - d[l]) <= (offset - rd)\n            idx_r = offset - rd\n            val = bit_query(idx_r)\n            if val > 0:\n                dp[ri] = max(dp[ri], val + 1)\n        \n        for idx in to_clear:\n            bit_clear(idx)\n        \n        cdq(right)\n    \n    cdq(list(range(m)))\n    \n    print(max(dp) if dp else 0)\n\nsolve()",
+      "input_tokens": 475,
+      "output_tokens": 2786,
+      "cost_usd": 0.043215,
+      "latency_ms": 48446
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom bisect import bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n = int(input_data[0])\n    a = list(map(int, input_data[1:n+1]))\n    \n    candidates = []\n    for i in range(1, n+1):\n        v = a[i-1]\n        if i >= v:\n            candidates.append((v, i - v))\n    \n    candidates.sort(key=lambda x: x[0])\n    \n    # Find longest non-decreasing subsequence of the second values\n    # with distinct first values (but since v are distinct positions we want, \n    # we should pick at most one per v value)\n    # Group by v, pick best (minimum i-v? or we need LIS of i-v non-decreasing)\n    # For each v, keep only one candidate. To maximize LIS, keep minimum i-v? \n    # Actually we want longest non-decreasing subseq, so for duplicate v, keep min i-v.\n    \n    from collections import defaultdict\n    best = {}\n    for v, d in candidates:\n        if v not in best or d < best[v]:\n            best[v] = d\n    \n    seq = [best[v] for v in sorted(best.keys())]\n    \n    # LIS non-decreasing\n    tails = []\n    for x in seq:\n        pos = bisect_right(tails, x)\n        if pos == len(tails):\n            tails.append(x)\n        else:\n            tails[pos] = x\n    \n    print(len(tails))\n\nsolve()",
+      "input_tokens": 475,
+      "output_tokens": 1636,
+      "cost_usd": 0.025965,
+      "latency_ms": 26859
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom bisect import bisect_left, insort\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    # dp[v] = max matches using elements ending with value v matched at position v\n    # This needs more thought - use DP with sorted structure\n    # dp[k] = minimum index needed to achieve k matches\n    INF = float('inf')\n    dp = [INF] * (n + 2)\n    dp[0] = -1\n    for i, v in enumerate(a):\n        if v <= n:\n            # try to place v as the v-th match, need dp[v-1] < i and update dp[v]\n            if dp[v-1] < i and i < dp[v]:\n                dp[v] = i\n    print(max(k for k in range(n+1) if dp[k] < INF))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 49,
+        "failed": 1,
+        "errors": 0,
+        "pass_rate": 0.98,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4 2 3 1\n",
+            "expected": "2",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "7\n2 1 4 2 5 3 7\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n1\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n200000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n001\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n69861\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n70524\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n46702\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n7068\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n10491\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8373\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n15424\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n2597\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n2781\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n1895\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n1303\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n726\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n266\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n83\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n165\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n324\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n426\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n279\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n513\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n696\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n1014\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n1529\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n1995\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n530\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n777\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n270\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n410\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n481\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n304\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n566\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n538\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n728\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n1245\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n577\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n476\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n522\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n645\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n1237\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n2125\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n92\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n99\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n101\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n100\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n110\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "So I need to find the largest subset S of indices (in increasing order) such that if S = {i_1 < i_2 < ... < i_k}, then for as many j as possible, a[i_j] = j.\n\nI want to maximize the number of positions j (1-indexed) in the subsequence where a[i_j] = j.\n\nLet me think differently. I want to select a subsequence of elements, and count how many elements a[i_j] equal their new position j. I want to maximize this count.\n\nKey insight: The elements that become fixed points must satisfy a[i_j] = j. So if I pick elements with values v_1, v_2, ..., v_k (in order of their original positions), the ones that are fixed points are those where v_j = j for some positions j.\n\nLet me think about which elements can be fixed points. If element at original position p has value v = a[p], it can be a fixed point at new position v only if:\n- It's placed at new position v (so exactly v-1 elements are kept before it)\n- Its original position p must be \u2265 v (since we need at least v-1 elements before it in the original array, but we can skip elements, so actually p \u2265 v is required since we need v-1 elements before position p, and there are only p-1 elements before p in the original)\n\nWait, more carefully: if element at original position p becomes new position j, we need exactly j-1 elements kept before it. Since there are p-1 elements before it originally, we need j-1 \u2264 p-1, so j \u2264 p.\n\nFor a fixed point: a[p] = j \u2264 p, so a[p] \u2264 p.\n\nSo only elements where a[p] \u2264 p can be fixed points.\n\nNow, I want to select a set of fixed-point candidates. If I select candidates at original positions p_1 < p_2 < ... < p_m with values v_1, v_2, ..., v_m (where v_i = a[p_i] \u2264 p_i), they can ALL be fixed points simultaneously if:\n- v_1 < v_2 < ... < v_m (their new positions must be strictly increasing)\n- Between consecutive fixed points, we need v_{i+1} - v_i - 1 \u2265 0 elements kept between p_i and p_{i+1} (non-fixed-point elements kept), but also the count must work out: the number of elements kept between p_i and p_{i+1} (exclusive) must equal v_{i+1} - v_i - 1.\n\nActually we can always achieve this: between p_i and p_{i+1} in the original, there are p_{i+1} - p_i - 1 elements. We need to keep exactly v_{i+1} - v_i - 1 of them. This requires:\n- v_{i+1} - v_i - 1 \u2264 p_{i+1} - p_i - 1, i.e., v_{i+1} - v_i \u2264 p_{i+1} - p_i\n- v_{i+1} - v_i - 1 \u2265 0, i.e., v_{i+1} > v_i\n\nAlso before the first fixed point: need v_1 - 1 elements kept before p_1, so v_1 - 1 \u2264 p_1 - 1, i.e., v_1 \u2264 p_1 \u2713 (already guaranteed).\n\nSo the condition for a set of fixed points is:\n- v_i = a[p_i] \u2264 p_i for all i\n- v_1 < v_2 < ... < v_m (strictly increasing values)\n- v_{i+1} - v_i \u2264 p_{i+1} - p_i for consecutive pairs, i.e., v_{i+1} - p_{i+1} \u2264 v_i - p_i\n\nLet d_i = v_i - p_i = a[p_i] - p_i \u2264 0.\n\nThe condition v_{i+1} - p_{i+1} \u2264 v_i - p_i means d_{i+1} \u2264 d_i (non-increasing d values).\n\nSo I need the longest subsequence of elements (with a[p] \u2264 p) such that values are strictly increasing AND d = a[p] - p is non-increasing.\n\nThis is a 2D LIS problem. I need longest subsequence with v strictly increasing and d non-increasing, where elements are taken in order of p.\n\nSince v = d + p and p is increasing, v strictly increasing and d non-increasing... Let me find this with DP.\n\nn can be 2e5. I'll use patience sorting / BIT approach.\n\nimport sys\nfrom sortedcontainers import SortedList\n\ndef solve():\n    input_data = sys.stdin.read().split()\n    n = int(input_data[0])\n    a = list(map(int, input_data[1:n+1]))\n    \n    candidates = []\n    for p in range(1, n+1):\n        v = a[p-1]\n        if v <= p:\n            d = v - p  # d <= 0\n            candidates.append((p, v, d))\n    \n    # Need longest subsequence (in order of p) with v strictly increasing and d non-increasing\n    # dp[i] = length of longest valid subsequence ending at candidates[i]\n    # For each candidate, find max dp[j] where v[j] < v[i] and d[j] >= d[i]\n    \n    # This is 2D: v increasing, d non-increasing (equivalently -d non-decreasing)\n    # Sort by v increasing, break ties by d decreasing (so same v can't extend)\n    # Then find LIS on d non-increasing = LDS on d = LIS on -d\n    \n    # But order must follow original p order... candidates are already in p order.\n    \n    # BIT indexed by d values. d ranges from -(n-1) to 0. Shift by n-1.\n    # For each candidate in order of p, query max dp where d[j] >= d[i] and v[j] < v[i].\n    \n    # 2D problem: need BIT of BIT or CDQ divide and conquer.\n    # CDQ: sort by v, process in order, query on d.\n    \n    # Let me do CDQ divide and conquer.\n    \n    if not candidates:\n        print(0)\n        return\n    \n    # Coordinate compress d values (they're already integers from -(n-1) to 0)\n    # d ranges: a[p]-p, a[p] in [1,2e5], p in [1,n], so d in [1-n, 2e5-1]\n    # but we filtered a[p]<=p so d<=0, d>=1-n\n    \n    INF = float('inf')\n    \n    # dp array\n    m = len(candidates)\n    dp = [1] * m\n    \n    # CDQ divide and conquer\n    # candidates are in order of p (index 0..m-1)\n    # We want: for i, max dp[j] for j<i with v[j]<v[i] and d[j]>=d[i]\n    \n    # Offset for d: d in [-(n-1), 0], offset = n-1, so index 0..n-1\n    offset = n - 1\n    size = n + 1\n    \n    bit = [0] * (size + 2)\n    \n    def bit_update(pos, val):\n        pos += 1\n        while pos <= size + 1:\n            if bit[pos] < val:\n                bit[pos] = val\n            pos += pos & (-pos)\n    \n    def bit_query(pos):\n        pos += 1\n        res = 0\n        while pos > 0:\n            if bit[pos] > res:\n                res = bit[pos]\n            pos -= pos & (-pos)\n        return res\n    \n    def bit_clear(pos):\n        pos += 1\n        while pos <= size + 1:\n            bit[pos] = 0\n            pos += pos & (-pos)\n    \n    # CDQ: indices into candidates list\n    # We process: left half computes dp, then contributes to right half\n    \n    def cdq(indices):\n        if len(indices) <= 1:\n            return\n        mid = len(indices) // 2\n        left = indices[:mid]\n        right = indices[mid:]\n        \n        cdq(left)\n        \n        # Left contributes to right\n        # Sort left by v ascending, right by v ascending\n        # For each in right (v[r]), query max dp[l] where v[l]<v[r] and d[l]>=d[r]\n        # = query prefix max on d (from d[r] to max_d) using BIT indexed by d descending\n        # Actually: d[l] >= d[r], BIT query sum from d[r] to 0 (in d-space)\n        # BIT indexed by d+offset (0-indexed), query from d[r]+offset to size-1\n        # = suffix query = total - prefix(d[r]+offset-1)\n        # Let's use BIT for suffix max: index by (offset - d) so higher d = lower index\n        # d >= d[r] means (offset-d) <= (offset-d[r])\n        # So query prefix max up to (offset - d[r])\n        \n        left_sorted = sorted(left, key=lambda i: candidates[i][1])\n        right_sorted = sorted(right, key=lambda i: candidates[i][1])\n        \n        to_clear = []\n        li = 0\n        for ri in right_sorted:\n            rv = candidates[ri][1]\n            rd = candidates[ri][2]\n            # Add all left with v < rv\n            while li < len(left_sorted) and candidates[left_sorted[li]][1] < rv:\n                lv = candidates[left_sorted[li]][1]\n                ld = candidates[left_sorted[li]][2]\n                # BIT index = offset - ld (so larger d = smaller index)\n                idx = offset - ld\n                bit_update(idx, dp[left_sorted[li]])\n                to_clear.append(idx)\n                li += 1\n            # Query: d[l] >= rd => (offset - d[l]) <= (offset - rd)\n            idx_r = offset - rd\n            val = bit_query(idx_r)\n            if val > 0:\n                dp[ri] = max(dp[ri], val + 1)\n        \n        for idx in to_clear:\n            bit_clear(idx)\n        \n        cdq(right)\n    \n    cdq(list(range(m)))\n    \n    print(max(dp) if dp else 0)\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4 2 3 1\n",
+            "expected": "2",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "7\n2 1 4 2 5 3 7\n",
+            "expected": "3",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n1\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n200000\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n001\n",
+            "expected": "1",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 43,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n69861\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n70524\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n46702\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n7068\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n10491\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8373\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 25,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n15424\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n2597\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n2781\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 23,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n1895\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 22,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n1303\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 22,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n726\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 22,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n266\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n83\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n165\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n324\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n426\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n279\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n513\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n696\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n1014\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n1529\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n1995\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n530\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n777\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n270\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n410\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n481\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n304\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n566\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n538\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n728\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n1245\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n577\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n476\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n522\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n645\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n1237\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n2125\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n92\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n99\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n101\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n100\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n110\n",
+            "expected": "0",
+            "actual": "",
+            "stderr": "  File \"/home/sandbox/work/solution.py\", line 10\n    - It's placed at new position v (so exactly v-1 elements are kept before it)\n        ^\nSyntaxError: unterminated string literal (detected at line 1",
+            "runtime_ms": 33,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [],
+      "fixes": [],
+      "final_code": "import sys\nfrom bisect import bisect_right, insort\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    n = int(input_data[0])\n    a = list(map(int, input_data[1:n+1]))\n    \n    candidates = []\n    for i in range(1, n+1):\n        v = a[i-1]\n        if i >= v:\n            candidates.append((v, i - v))\n    \n    candidates.sort(key=lambda x: x[0])\n    \n    # Find longest non-decreasing subsequence of the second values\n    # with distinct first values (but since v are distinct positions we want, \n    # we should pick at most one per v value)\n    # Group by v, pick best (minimum i-v? or we need LIS of i-v non-decreasing)\n    # For each v, keep only one candidate. To maximize LIS, keep minimum i-v? \n    # Actually we want longest non-decreasing subseq, so for duplicate v, keep min i-v.\n    \n    from collections import defaultdict\n    best = {}\n    for v, d in candidates:\n        if v not in best or d < best[v]:\n            best[v] = d\n    \n    seq = [best[v] for v in sorted(best.keys())]\n    \n    # LIS non-decreasing\n    tails = []\n    for x in seq:\n        pos = bisect_right(tails, x)\n        if pos == len(tails):\n            tails.append(x)\n        else:\n            tails[pos] = x\n    \n    print(len(tails))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n4 2 3 1\n",
+            "expected": "2",
+            "actual": "2",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "7\n2 1 4 2 5 3 7\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n1\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n200000\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n2\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n001\n",
+            "expected": "1",
+            "actual": "1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n69861\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n70524\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n46702\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n7068\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n10491\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n8373\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n15424\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n2597\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n2781\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n1895\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n1303\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n726\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n266\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n83\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n165\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n324\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n426\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n279\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n513\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n696\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n1014\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n1529\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n1995\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n530\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n777\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n270\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n410\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n481\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n304\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n566\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n538\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n728\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n1245\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n577\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n476\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n522\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n645\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n1237\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n2125\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n92\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n99\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n101\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n100\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n110\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 2,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n4 2 3 1\n",
+        "expected": "2",
+        "actual": "2",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "7\n2 1 4 2 5 3 7\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n1\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n200000\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n2\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n001\n",
+        "expected": "1",
+        "actual": "1",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n69861\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n70524\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n46702\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n7068\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n10491\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n8373\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n15424\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n2597\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n2781\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n1895\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n1303\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n726\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n266\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n83\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n165\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n324\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n426\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n279\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n513\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n696\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n1014\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n1529\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n1995\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n530\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n777\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n270\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n410\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n481\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n304\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n566\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n538\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n728\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n1245\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n577\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n476\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n522\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n645\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n1237\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n2125\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n92\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n99\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n101\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n100\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n110\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.09081,
+  "total_latency_ms": 98754,
+  "iterations_used": null,
+  "early_stopped": null
+}

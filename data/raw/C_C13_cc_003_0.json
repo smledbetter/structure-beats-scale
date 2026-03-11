@@ -1,0 +1,2081 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_003",
+  "replica": 0,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "So state = (mex, has_mex_plus_one). Let me define:\n- `dp[m][0]` = number of subsequences with MEX=m, where m+1 is NOT in the set\n- `dp[m][1]` = number of subsequences with MEX=m, where m+1 IS in the set\n\nWhen we see element `v`:\n- It can extend subsequences where MEX = v (add v, MEX changes)\n- It can extend subsequences where MEX = v+1 (add v = MEX-1, MEX stays v+1)  \n- It can extend subsequences where MEX = v-1 (add v = MEX+1, MEX stays v-1)\n- It starts a new subsequence of length 1 with just [v]: MEX = 0 if v\u22600, MEX=1 if v=0\n\nFor dp[m][0] + adding v=m: new MEX is m+1, m+2 not in set \u2192 goes to dp[m+1][0]\nFor dp[m][1] + adding v=m: new MEX is m+1, m+2 might or might not... we don't track m+2. Hmm.\n\nThis gets complicated. Let me just track dp[m][flag] where flag = whether m+1 is present.\n\nWhen adding v=m to state (m, flag):\n- New set has 0..m, and flag indicates if m+1 present\n- New MEX = m+1 if not flag, or we need to know about m+2...\n\nThis cascades. Let me look for a cleaner formulation. Since MEX can only increase or stay, and the values are bounded, perhaps dp[m] = count of subsequences with MEX exactly m, and separately track those with m+1 present.\n\nLet me just implement dp[m][0/1] and handle transitions carefully, noting that when MEX jumps we might need to chain, but actually MEX can jump at most by 1 at each step (since we add one element at a time and it was MEX, so new MEX is MEX+1 only if MEX+1 was already there, but we track that).\n\nMOD = 998244353\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[m][0] = subsequences with MEX=m, m+1 not in set\n    # dp[m][1] = subsequences with MEX=m, m+1 in set\n    dp = [[0, 0] for _ in range(n + 2)]\n    \n    for v in a:\n        # Process in careful order to avoid using updated values\n        # Adding v to subsequences with MEX = v+1 (v = MEX-1, MEX stays v+1)\n        # Adding v to subsequences with MEX = v (v = MEX, MEX increases)\n        # Adding v to subsequences with MEX = v-1 (v = MEX+1, MEX stays v-1)\n        \n        new_dp = [row[:] for row in dp]\n        \n        # Case: start new subsequence [v]\n        if v == 0:\n            # MEX=1, 2 not in set\n            new_dp[1][0] = (new_dp[1][0] + 1) % MOD\n        else:\n            # MEX=0, 1 in set if v==1, else not\n            if v == 1:\n                new_dp[0][1] = (new_dp[0][1] + 1) % MOD\n            else:\n                new_dp[0][0] = (new_dp[0][0] + 1) % MOD\n        \n        # Case: extend subsequence with MEX = v+1 (adding v=MEX-1, MEX stays v+1)\n        # v is already in set (0..v are present since MEX=v+1), so adding duplicate\n        # MEX stays v+1, and presence of v+2 unchanged\n        m = v + 1\n        if m <= n:\n            new_dp[m][0] = (new_dp[m][0] + dp[m][0]) % MOD\n            new_dp[m][1] = (new_dp[m][1] + dp[m][1]) % MOD\n        \n        # Case: extend subsequence with MEX = v (adding v=MEX, MEX increases)\n        # dp[v][0]: v+1 not in set, new MEX = v+1, v+2 not in set -> dp[v+1][0]\n        # dp[v][1]: v+1 in set, new MEX = v+1, v+2 not tracked...\n        # When MEX was v and v+1 was present, after adding v, MEX becomes v+1\n        # Is v+2 present? We don't know. Treat as not present (conservative - but wrong)\n        # Hmm, we need dp[v][1] to know about v+2...\n        # Let's say dp[m][1] means m+1 is in set but m+2 is not (simplification)\n        # Actually let's just say: when MEX=v, flag=1 means v+1 present\n        # After adding v: MEX=v+1 (since v+1 present), is v+2 present? Unknown -> assume 0\n        m = v\n        if m <= n:\n            new_dp[v+1][0] = (new_dp[v+1][0] + dp[v][0]) % MOD\n            # dp[v][1]: after adding v, MEX becomes v+1 (v+1 was present)\n            # new MEX = v+1, v+2 unknown -> goes to dp[v+1][0] conservatively? \n            # But this loses information about v+2...\n            # Actually this approach has a flaw. Let me reconsider.\n            new_dp[v+1][0] = (new_dp[v+1][0] + dp[v][1]) % MOD\n        \n        # Case: extend subsequence with MEX = v-1 (adding v=MEX+1, MEX stays v-1)\n        # v = (v-1)+1 = MEX+1, so after adding, MEX stays v-1, and now v is in set\n        # Previously dp[v-1][0]: v not in set. After adding v, v=(v-1)+1 is now in set -> dp[v-1][1]\n        # Previously dp[v-1][1]: v already in set. After adding v again, still in set -> dp[v-1][1]\n        m = v - 1\n        if m >= 0:\n            new_dp[m][1] = (new_dp[m][1] + dp[m][0]) % MOD  # 0->1\n            new_dp[m][1] = (new_dp[m][1] + dp[m][1]) % MOD  # 1->1\n            # But we double-counted the original dp[m][1] staying... wait\n            # new_dp already has dp[m][1] from initialization, and we're adding dp[m][0]+dp[m][1]\n            # But the original dp[m][1] subsequences that DON'T include v are already in new_dp[m][1]\n            # We need to add only the ones that DO include v\n            # So: new_dp[m][1] += dp[m][0] (those that had flag=0, now get v added -> flag=1)\n            #     new_dp[m][1] += dp[m][1] (those that had flag=1, v already there, add duplicate -> flag=1)\n            # But I already added dp[m][0]+dp[m][1] above after initializing new_dp = dp copy\n            # So I need to redo this section\n        \n        dp = new_dp\n    \n    ans = sum(dp[m][0] + dp[m][1] for m in range(n+2)) % MOD\n    print(ans)\n\n# This approach has issues. Let me restart more carefully.\n\ndef solve2():\n    n = int(input())\n    a = list(map(int, input().split()))\n    MOD = 998244353\n    \n    # dp[m][f]: number of subsequences with MEX=m, f=0 means m+1 not in set, f=1 means m+1 in set\n    dp = {}\n    \n    for v in a:\n        updates = {}\n        \n        def add(m, f, val):\n            key = (m, f)\n            updates[key] = (updates.get(key, 0) + val) % MOD\n        \n        # New singleton [v]\n        if v == 0:\n            add(1, 0, 1)\n        else:\n            add(0, 1 if v == 1 else 0, 1)\n        \n        for (m, f), cnt in dp.items():\n            if cnt == 0:\n                continue\n            # Can we add v to this subsequence?\n            # Need |v - m| <= 1\n            if abs(v - m) > 1:\n                continue\n            \n            if v == m - 1:\n                # v already in set (since MEX=m means 0..m-1 all present)\n                # MEX stays m, flag unchanged\n                add(m, f, cnt)\n            elif v == m:\n                # MEX increases\n                if f == 0:\n                    # m+1 not in set, new MEX = m+1, is m+2 in set? No info -> 0\n                    add(m+1, 0, cnt)\n                else:\n                    # m+1 in set, new MEX = m+1, is m+2 in set? No info -> 0\n                    add(m+1, 0, cnt)\n            elif v == m + 1:\n                # MEX stays m, m+1 is now in set\n                add(m, 1, cnt)\n        \n        for key, val in updates.items():\n            dp[key] = (dp.get(key, 0) + val) % MOD\n    \n    print(sum(dp.values()) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve2()",
+      "input_tokens": 735,
+      "output_tokens": 3131,
+      "cost_usd": 0.04917,
+      "latency_ms": 43439
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Key insight: If current MEX is m, all values 0..m-1 are in the subsequence. If we add x = m, new MEX is m+1 (since m is now present, but m+1 might not be - actually we don't know if m+1 is present).\n\nHmm, but actually for MEX-correctness we only need |x_i - MEX(prefix)| \u2264 1. The MEX after adding doesn't need to be tracked exactly unless it affects future additions.\n\nLet me reconsider: dp[m] = number of subsequences where current MEX is exactly m.\n\nWhen we process a new element a[i] = v:\n- It can extend subsequences where MEX = v-1, v, or v+1 (if those are valid).\n\nCase v = m (x = MEX): new MEX after adding v is m+1 only if m+1 is not already in subsequence... but we don't track that.\n\nWait - if MEX is m, then values 0..m-1 are all present, and m is absent. Values > m may or may not be present.\n\nIf we add x = m: now 0..m are present, new MEX \u2265 m+1. But could be higher. We don't know.\n\nThis seems hard to track. But wait - if we add x = m+1 (with MEX = m): m is still absent, so new MEX = m still.\n\nIf we add x = m-1 (duplicate, MEX = m): new MEX = m still.\n\nSo only adding x = m changes the MEX. And when x = m is added, new MEX = m+1 IF m+1 is not in the subsequence. But m+1 could be there.\n\nHowever, can m+1 be in a subsequence with MEX = m? Yes! E.g., subsequence [1, 2] has MEX = 0, and 1 and 2 are present.\n\nSo tracking just MEX is insufficient... unless we realize that MEX can only increase when we add x = MEX, and at that point new MEX is exactly m+1 only if m+1 wasn't added before. But if m+1 was added with MEX constraint... \n\nActually let me think again: dp[m] = number of valid subsequences with current MEX = m, where we additionally guarantee that m+1, m+2, ... are NOT in the subsequence. This would make the state well-defined and when we add x=m, new MEX becomes exactly m+1.\n\nIs this achievable? If MEX = m and we add x = m+1, new MEX = m (since m is still missing). So m+1 is now in the subsequence with MEX = m. This breaks the \"m+1 not present\" invariant.\n\nLet me just try dp[m] = number of subsequences with MEX exactly m, without the invariant, and see if the examples work out with a greedy assumption.\n\nAfter more thought: when x = m+1 is added to a subsequence with MEX m, MEX stays m. When x = m is then added, new MEX could be m+1 or higher. This makes exact tracking hard.\n\nLet me look at the constraints and try dp[m] tracking carefully with the realization that adding x=m to MEX=m gives new MEX = m+1 (assume m+1 not present as invariant maintained by construction).\n\nMOD = 998244353\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    dp = {}\n    ans = 0\n    for v in a:\n        ways = 0\n        # new subsequence of just [v]: MEX after = ?\n        # [v] alone: if v=0, MEX=1; else MEX=0\n        # extend from MEX = v-1, v, v+1\n        # From MEX=v: add v, new MEX=v+1\n        # From MEX=v+1: add v (=MEX-1, duplicate... wait v=MEX-1=(v+1)-1=v yes), new MEX=v+1\n        # From MEX=v-1 (if v>=1): add v=MEX+1, new MEX=v-1\n        # Start new: MEX after adding v alone = 0 if v!=0, else 1\n        \n        new_dp = dict(dp)\n        \n        # extend MEX=v subsequences with element v -> new MEX = v+1\n        cnt_v = dp.get(v, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v) % MOD\n        \n        # extend MEX=v+1 subsequences with element v (v = (v+1)-1, duplicate) -> new MEX = v+1\n        cnt_v1 = dp.get(v+1, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v1) % MOD\n        \n        # extend MEX=v-1 subsequences with element v (v = (v-1)+1) -> new MEX = v-1\n        if v >= 1:\n            cnt_vm1 = dp.get(v-1, 0)\n            new_dp[v-1] = (new_dp.get(v-1, 0) + cnt_vm1) % MOD\n        \n        # start new subsequence [v]\n        if v == 0:\n            new_dp[1] = (new_dp.get(1, 0) + 1) % MOD\n        else:\n            new_dp[0] = (new_dp.get(0, 0) + 1) % MOD\n        \n        dp = new_dp\n    \n    print(sum(dp.values()) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 735,
+      "output_tokens": 1821,
+      "cost_usd": 0.02952,
+      "latency_ms": 28621
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "But wait, x must be a non-negative integer, so if m=0, x \u2208 {0, 1}.\n\nNow, what happens to MEX after adding x?\n- If x = m: MEX increases (at least to m+1, possibly more but since we're building incrementally, MEX becomes m+1 if m+1 not in set... actually MEX is the minimum non-negative not in set)\n- If x = m-1: m-1 is already in the set (since MEX was m, meaning 0..m-1 are all present), so adding a duplicate doesn't change MEX. MEX stays m.\n- If x = m+1: m is still not in the set, so MEX stays m.\n\nWait, if x = m, then m is now in the set. The new MEX is the smallest non-negative not in the new set. Since 0..m-1 were already there and now m is there, MEX becomes at least m+1. But could be higher if m+1 was already there... \n\nHmm, but we're building subsequences and we don't track the full set. However, we only track MEX. The problem is that if x = m+1 is added, MEX stays m, but now m+1 is in the set. Later if m is added, MEX would jump past m+1.\n\nThis makes state tracking complex. Let me reconsider.\n\nActually, let me think about what state we need. The MEX after each addition depends on the full set. But if we track (MEX, whether MEX+1 is in the set), that might be enough.\n\nState: (mex, has_mex_plus_one)\n- If we add mex: new set has 0..mex. If has_mex_plus_one, new MEX is mex+2 (need to check mex+2... but we don't know). Hmm this gets complicated.\n\nWait, actually let me think differently. The only elements that can be added are mex-1, mex, or mex+1. \n\nIf current state is (mex, flag) where flag = whether mex+1 is in the set:\n- Add mex-1 (duplicate, if mex>0): MEX unchanged, flag unchanged \u2192 (mex, flag)\n- Add mex: now 0..mex in set. If flag (mex+1 in set), new MEX \u2265 mex+2, but we don't know about mex+2. This still explodes.\n\nActually, since we can only ever add mex-1, mex, or mex+1, and mex-1 is always already present (duplicate), mex+1 might or might not be present. If we track whether mex+1 is present, then:\n- Add mex: if mex+1 present, new mex is mex+2, and mex+2 is unknown (not present since we never added it\u2014we could only add up to old_mex+1 = mex+1). So new state is (mex+2, False).\n- Add mex: if mex+1 not present, new mex is mex+1, new state is (mex+1, False).\n- Add mex+1: mex unchanged, mex+1 now present \u2192 (mex, True).\n- Add mex-1: duplicate, state unchanged \u2192 (mex, flag).\n\nSo state is (mex, flag) and transitions are clear! Let me use dp[mex][flag] = number of subsequences with that state.\n\nWhen processing element `v`:\n- It can extend subsequences where mex = v (flag=0 or 1): adds v=mex\n- It can extend subsequences where mex = v+1 (flag=0 or 1): adds v=mex-1\n- It can extend subsequences where mex = v-1 (flag=0 or 1): adds v=mex+1\n- It starts a new subsequence of length 1.\n\nMOD = 998244353\n\nimport sys\ninput = sys.stdin.readline\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[(mex, flag)] = count\n    from collections import defaultdict\n    dp = defaultdict(int)\n    ans = 0\n    \n    for v in a:\n        new_contributions = defaultdict(int)\n        # v starts new subseq: mex after = 0 if v!=0, or 1 if v==0\n        # single element [v]: MEX({v})\n        if v == 0:\n            new_contributions[(1, False)] += 1\n        else:\n            new_contributions[(0, False)] += 1  # wait, MEX of {v} where v>0 is 0, flag = (1 in {v}) = (v==1)\n            # Actually flag = whether mex+1=1 is in set = (v==1)\n            if v == 1:\n                new_contributions[(0, True)] += 1\n            else:\n                new_contributions[(0, False)] += 1\n        \n        # extend existing\n        # case: add v = mex (v == mex)\n        for flag in [False, True]:\n            cnt = dp[(v, flag)]\n            if cnt:\n                if flag:\n                    new_contributions[(v+2, False)] = (new_contributions[(v+2, False)] + cnt) % MOD\n                else:\n                    new_contributions[(v+1, False)] = (new_contributions[(v+1, False)] + cnt) % MOD\n        \n        # case: add v = mex-1 (v == mex-1, mex = v+1)\n        for flag in [False, True]:\n            cnt = dp[(v+1, flag)]\n            if cnt:\n                new_contributions[(v+1, flag)] = (new_contributions[(v+1, flag)] + cnt) % MOD\n        \n        # case: add v = mex+1 (v == mex+1, mex = v-1), only if v >= 1\n        if v >= 1:\n            for flag in [False, True]:\n                cnt = dp[(v-1, flag)]\n                if cnt:\n                    # adding mex+1, new state: mex unchanged=v-1, flag becomes True\n                    new_contributions[(v-1, True)] = (new_contributions[(v-1, True)] + cnt) % MOD\n        \n        for key, val in new_contributions.items():\n            dp[key] = (dp[key] + val) % MOD\n        \n        ans = (ans + sum(new_contributions.values())) % MOD\n    \n    print(ans % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "input_tokens": 735,
+      "output_tokens": 1788,
+      "cost_usd": 0.029025,
+      "latency_ms": 27407
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"When extending a subsequence with MEX = v and flag = 1 (meaning v+1 is present), the code always adds the resulting subsequence to dp[v+1][0], discarding the information that v+2 might already be present. This loses necessary state and leads to incorrect counts.\",\n      \"line\": 117,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n3\\n0 1 2\"\n    },\n    {\n      \"description\": \"In the transition for extending subsequences with MEX = v-1 (lines 65-66), the code adds dp[m][0] and dp[m][1] to new_dp[m][1] while new_dp already contains the original dp[m][1] from the copy, causing double-counting of subsequences that already had flag=1 and do not include the current element.\",\n      \"line\": 65,\n      \"severity\": \"major\",\n      \"triggering_input\": \"1\\n2\\n1 1\"\n    },\n    {\n      \"description\": \"The algorithm iterates over all existing dp states for each array element (loop starting at line 102). In the worst case the number of states grows to O(n), making the overall complexity O(n^2), which will time out for n up to 5\u00b710^5.\",\n      \"line\": 102,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n500000\\n\" + \"0 \" * 500000\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 2843,
+          "output_tokens": 331,
+          "cost_usd": 0.000959,
+          "latency_ms": 9046
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Incorrect transition when adding an element equal to the current MEX (v == m) while the flag indicates that m+1 is already present. The code always moves to state (m+1, 0) regardless of the flag, but if m+1 is present the new MEX becomes at least m+2, violating the condition |v - new_MEX| \u2264 1. This overcounts invalid subsequences.",
+              "line": 71,
+              "severity": "critical",
+              "triggering_input": "1\n2\n1 0\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Incorrect transition when adding an element equal to the current MEX (v == m) while the flag indicates that m+1 is already present. The code always moves to state (m+1, 0) regardless of the flag, but if m+1 is present the new MEX becomes at least m+2, violating the condition |v - new_MEX| \u2264 1. This overcounts invalid subsequences.\",\n      \"line\": 71,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n2\\n1 0\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Incorrect transition when adding an element equal to the current MEX (v == m) while the flag indicates that m+1 is already present. The code always moves to state (m+1, 0) regardless of the flag, but if m+1 is present the new MEX becomes at least m+2, violating the condition |v - new_MEX| \u2264 1. This overcounts invalid subsequences.",
+                "line": 71,
+                "severity": "critical",
+                "triggering_input": "1\n2\n1 0\n"
+              }
+            ]
+          },
+          "input_tokens": 2850,
+          "output_tokens": 140,
+          "cost_usd": 0.0008175,
+          "latency_ms": 5351
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    MOD = 998244353\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[m][f]: subsequences with MEX=m, f=whether m+1 is in set\n    dp = [[0, 0] for _ in range(n + 2)]\n    \n    for v in a:\n        # Use a copy to avoid using updated values in same round\n        # New singleton [v]\n        if v == 0:\n            dp[1][0] = (dp[1][0] + 1) % MOD\n        elif v == 1:\n            dp[0][1] = (dp[0][1] + 1) % MOD\n        else:\n            dp[0][0] = (dp[0][0] + 1) % MOD\n        \n        m = v + 1  # v == m-1: MEX stays, flag unchanged\n        if m <= n + 1:\n            dp[m][0] = (dp[m][0] + dp[m][0]) % MOD  # wrong, need old values\n        \n    print(sum(dp[m][f] for m in range(n+2) for f in range(2)) % MOD)\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    dp = [[0, 0] for _ in range(n + 2)]\n    for v in a:\n        old = [row[:] for row in dp]\n        if v == 0:\n            dp[1][0] = (dp[1][0] + 1) % MOD\n        elif v == 1:\n            dp[0][1] = (dp[0][1] + 1) % MOD\n        else:\n            dp[0][0] = (dp[0][0] + 1) % MOD\n        m = v + 1\n        if m <= n + 1:\n            dp[m][0] = (dp[m][0] + old[m][0]) % MOD\n            dp[m][1] = (dp[m][1] + old[m][1]) % MOD\n        m = v\n        if m <= n:\n            dp[v+1][0] = (dp[v+1][0] + old[v][0]) % MOD\n        m = v - 1\n        if m >= 0:\n            dp[m][1] = (dp[m][1] + old[m][0]) % MOD\n            dp[m][1] = (dp[m][1] + old[m][1]) % MOD\n    print(sum(dp[m][f] for m in range(n+2) for f in range(2)) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 3426,
+          "output_tokens": 1527,
+          "cost_usd": 0.033183,
+          "latency_ms": 22691
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    MOD = 998244353\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[m][f]: subsequences with MEX=m, f=whether m+1 is in set\n    dp = [[0, 0] for _ in range(n + 2)]\n    \n    for v in a:\n        # Use a copy to avoid using updated values in same round\n        # New singleton [v]\n        if v == 0:\n            dp[1][0] = (dp[1][0] + 1) % MOD\n        elif v == 1:\n            dp[0][1] = (dp[0][1] + 1) % MOD\n        else:\n            dp[0][0] = (dp[0][0] + 1) % MOD\n        \n        m = v + 1  # v == m-1: MEX stays, flag unchanged\n        if m <= n + 1:\n            dp[m][0] = (dp[m][0] + dp[m][0]) % MOD  # wrong, need old values\n        \n    print(sum(dp[m][f] for m in range(n+2) for f in range(2)) % MOD)\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    dp = [[0, 0] for _ in range(n + 2)]\n    for v in a:\n        old = [row[:] for row in dp]\n        if v == 0:\n            dp[1][0] = (dp[1][0] + 1) % MOD\n        elif v == 1:\n            dp[0][1] = (dp[0][1] + 1) % MOD\n        else:\n            dp[0][0] = (dp[0][0] + 1) % MOD\n        m = v + 1\n        if m <= n + 1:\n            dp[m][0] = (dp[m][0] + old[m][0]) % MOD\n            dp[m][1] = (dp[m][1] + old[m][1]) % MOD\n        m = v\n        if m <= n:\n            dp[v+1][0] = (dp[v+1][0] + old[v][0]) % MOD\n        m = v - 1\n        if m >= 0:\n            dp[m][1] = (dp[m][1] + old[m][0]) % MOD\n            dp[m][1] = (dp[m][1] + old[m][1]) % MOD\n    print(sum(dp[m][f] for m in range(n+2) for f in range(2)) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "4\n2\n31\n7",
+            "actual": "6\n2\n31\n9",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n30\n0 0 0 2 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "998244352",
+            "actual": "58720279",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "587202561",
+            "actual": "587202584",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n31\n7",
+            "actual": "7\n2\n31\n9",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "558104577",
+            "actual": "559153175",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "293731905",
+            "actual": "294256215",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "620756993",
+            "actual": "654311450",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "67371007",
+            "actual": "68419605",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "146923066",
+            "actual": "147185232",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "385875969",
+            "actual": "419430426",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "532807680",
+            "actual": "533331990",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "73494088",
+            "actual": "73756254",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "192938105",
+            "actual": "209715354",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "40402504",
+            "actual": "40533598",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127680738",
+            "actual": "138150154",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "20208581",
+            "actual": "20274163",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "132120576",
+            "actual": "146800664",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "11878341",
+            "actual": "11911155",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66060288",
+            "actual": "73400344",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "23742391",
+            "actual": "23807973",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "28872527",
+            "actual": "28921726",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n30\n0 0 0 6 0 0 0 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66062336",
+            "actual": "73424919",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "17870799",
+            "actual": "17944578",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "65903306",
+            "actual": "72303399",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "13077871",
+            "actual": "13151650",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 1 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "8564447",
+            "actual": "8665891",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "49396366",
+            "actual": "54196967",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 2\n",
+            "expected": "24741132",
+            "actual": "27148310",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "12627129",
+            "actual": "13855714",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "16744355",
+            "actual": "18372033",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 1 3\n",
+            "expected": "4\n2\n31\n10",
+            "actual": "6\n2\n31\n11",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2 2 2 2 2 2\n",
+            "expected": "293715969",
+            "actual": "293715992",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 1 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n19\n7",
+            "actual": "7\n2\n19\n9",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 1 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "315883523",
+            "actual": "316669978",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 4 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "161488449",
+            "actual": "161750615",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "357564417",
+            "actual": "377487386",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 1 2 2 2 2\n",
+            "expected": "532811761",
+            "actual": "533336151",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 3 2\n",
+            "expected": "75353882",
+            "actual": "75484976",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4 2\n",
+            "expected": "255852515",
+            "actual": "276824058",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "266403840",
+            "actual": "266666006",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 0 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "69842504",
+            "actual": "70235741",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127865058",
+            "actual": "138346762",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 4 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "20210248",
+            "actual": "20341342",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 3 4 2 2 2 2 2 1\n",
+            "expected": "10154465",
+            "actual": "10187279",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 0 2\n",
+            "expected": "132120578",
+            "actual": "146800709",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 8 2 2 2 2 2 1\n",
+            "expected": "10072236",
+            "actual": "10105050",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 0 2 2 2 1\n",
+            "expected": "20137135",
+            "actual": "20202872",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 3 2 4 2 2 2 2 2 1\n",
+            "expected": "14478187",
+            "actual": "14502810",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 4 2 2 2\n",
+            "expected": "50665534",
+            "actual": "55579839",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 0 2 2 2 1\n",
+            "expected": "10680439",
+            "actual": "10754360",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 3,
+          "bugs": [
+            {
+              "description": "The DP transition assumes that when adding an element equal to the current MEX the new MEX becomes exactly MEX+1. This is incorrect because higher numbers may already be present, causing the MEX to jump by more than one. As a result, many valid subsequences are missed or counted incorrectly, leading to wrong answers (e.g., the sample test 0 2 1 yields 7 instead of 4).",
+              "line": 25,
+              "severity": "critical",
+              "triggering_input": "1\n3\n0 2 1\n"
+            },
+            {
+              "description": "Variable 'ways' is declared but never used, indicating leftover dead code.",
+              "line": 12,
+              "severity": "minor",
+              "triggering_input": ""
+            },
+            {
+              "description": "Variable 'ans' is declared but never used, indicating dead code.",
+              "line": 10,
+              "severity": "minor",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The DP transition assumes that when adding an element equal to the current MEX the new MEX becomes exactly MEX+1. This is incorrect because higher numbers may already be present, causing the MEX to jump by more than one. As a result, many valid subsequences are missed or counted incorrectly, leading to wrong answers (e.g., the sample test 0 2 1 yields 7 instead of 4).\",\n      \"line\": 25,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1\\n3\\n0 2 1\\n\"\n    },\n    {\n      \"description\": \"Variable 'ways' is declared but never used, indicating leftover dead code.\",\n      \"line\": 12,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"Variable 'ans' is declared but never used, indicating dead code.\",\n      \"line\": 10,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The DP transition assumes that when adding an element equal to the current MEX the new MEX becomes exactly MEX+1. This is incorrect because higher numbers may already be present, causing the MEX to jump by more than one. As a result, many valid subsequences are missed or counted incorrectly, leading to wrong answers (e.g., the sample test 0 2 1 yields 7 instead of 4).",
+                "line": 25,
+                "severity": "critical",
+                "triggering_input": "1\n3\n0 2 1\n"
+              },
+              {
+                "description": "Variable 'ways' is declared but never used, indicating leftover dead code.",
+                "line": 12,
+                "severity": "minor",
+                "triggering_input": ""
+              },
+              {
+                "description": "Variable 'ans' is declared but never used, indicating dead code.",
+                "line": 10,
+                "severity": "minor",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 1903,
+          "output_tokens": 228,
+          "cost_usd": 0.00064675,
+          "latency_ms": 5949
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Incorrect DP transition logic: the state dp[MEX] does not correctly capture the necessary information about which numbers > MEX are present, leading to overcounting and wrong results (e.g., for input \\\"3\\\\n0 2 1\\\" the program outputs 7 instead of 4).\",\n      \"line\": 54,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"3\\n0 2 1\\n\"\n    },\n    {\n      \"description\": \"Time complexity issue: a new dictionary new_dp is created by copying the entire dp dictionary on every array element (line 52). In the worst case dp size grows to O(n), resulting in O(n^2) total work, which will TLE for n up to 5e5.\",\n      \"line\": 52,\n      \"severity\": \"major\",\n      \"triggering_input\": \"500000\\n\" + \"0 \" * 500000 + \"\\n\"\n    },\n    {\n      \"description\": \"Unused variable 'ans' is declared (line 41) but never used, indicating leftover code and potential confusion.\",\n      \"line\": 41,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"1\\n0\\n\"\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 1925,
+          "output_tokens": 277,
+          "cost_usd": 0.000689,
+          "latency_ms": 4585
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    dp = {}\n    \n    for v in a:\n        new_dp = dict(dp)\n        \n        # extend MEX=v: add v -> new MEX = v+1\n        cnt_v = dp.get(v, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v) % MOD\n        \n        # extend MEX=v+1: add v (duplicate, v = (v+1)-1) -> MEX stays v+1\n        cnt_v1 = dp.get(v+1, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v1) % MOD\n        \n        # start new subsequence [v]\n        if v == 0:\n            new_dp[1] = (new_dp.get(1, 0) + 1) % MOD\n        else:\n            new_dp[0] = (new_dp.get(0, 0) + 1) % MOD\n        \n        dp = new_dp\n    \n    print(sum(dp.values()) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 2379,
+          "output_tokens": 1328,
+          "cost_usd": 0.027057,
+          "latency_ms": 23189
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    dp = {}\n    \n    for v in a:\n        new_dp = dict(dp)\n        \n        # extend MEX=v: add v -> new MEX = v+1\n        cnt_v = dp.get(v, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v) % MOD\n        \n        # extend MEX=v+1: add v (duplicate, v = (v+1)-1) -> MEX stays v+1\n        cnt_v1 = dp.get(v+1, 0)\n        new_dp[v+1] = (new_dp.get(v+1, 0) + cnt_v1) % MOD\n        \n        # start new subsequence [v]\n        if v == 0:\n            new_dp[1] = (new_dp.get(1, 0) + 1) % MOD\n        else:\n            new_dp[0] = (new_dp.get(0, 0) + 1) % MOD\n        \n        dp = new_dp\n    \n    print(sum(dp.values()) % MOD)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "4\n2\n31\n7",
+            "actual": "4\n3\n31\n7",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n30\n0 0 0 2 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "998244352",
+            "actual": "94",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "587202561",
+            "actual": "58720350",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n31\n7",
+            "actual": "5\n3\n31\n7",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "558104577",
+            "actual": "29360297",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "293731905",
+            "actual": "14680233",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "620756993",
+            "actual": "134217788",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "67371007",
+            "actual": "281",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "146923066",
+            "actual": "7397531",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "385875969",
+            "actual": "134217788",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "532807680",
+            "actual": "281",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "73494088",
+            "actual": "3698843",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "192938105",
+            "actual": "67109036",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "40402504",
+            "actual": "1849499",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127680738",
+            "actual": "33554716",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "20208581",
+            "actual": "932148",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "132120576",
+            "actual": "94",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "11878341",
+            "actual": "466228",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66060288",
+            "actual": "94",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "23742391",
+            "actual": "917826",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "28872527",
+            "actual": "2982287",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n30\n0 0 0 6 0 0 0 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66062336",
+            "actual": "175",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "17870799",
+            "actual": "1491646",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "65903306",
+            "actual": "18940689",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "13077871",
+            "actual": "1491646",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 1 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "8564447",
+            "actual": "2311228",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "49396366",
+            "actual": "18940417",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 2\n",
+            "expected": "24741132",
+            "actual": "9520058",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "12627129",
+            "actual": "5040552",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "16744355",
+            "actual": "5030964",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 1 3\n",
+            "expected": "4\n2\n31\n10",
+            "actual": "4\n3\n31\n7",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2 2 2 2 2 2\n",
+            "expected": "293715969",
+            "actual": "29474903",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 1 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n19\n7",
+            "actual": "5\n3\n22\n7",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 1 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "315883523",
+            "actual": "55050409",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 4 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "161488449",
+            "actual": "7340201",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "357564417",
+            "actual": "67108924",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 1 2 2 2 2\n",
+            "expected": "532811761",
+            "actual": "4425",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 3 2\n",
+            "expected": "75353882",
+            "actual": "5591181",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4 2\n",
+            "expected": "255852515",
+            "actual": "67108924",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "266403840",
+            "actual": "281",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 0 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "69842504",
+            "actual": "1849650",
+            "stderr": "",
+            "runtime_ms": 30,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127865058",
+            "actual": "33554716",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 4 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "20210248",
+            "actual": "924827",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 3 4 2 2 2 2 2 1\n",
+            "expected": "10154465",
+            "actual": "516376",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 0 2\n",
+            "expected": "132120578",
+            "actual": "186",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 8 2 2 2 2 2 1\n",
+            "expected": "10072236",
+            "actual": "462651",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 0 2 2 2 1\n",
+            "expected": "20137135",
+            "actual": "459403",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 3 2 4 2 2 2 2 2 1\n",
+            "expected": "14478187",
+            "actual": "1537767",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 4 2 2 2\n",
+            "expected": "50665534",
+            "actual": "11142585",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 0 2 2 2 1\n",
+            "expected": "10680439",
+            "actual": "746805",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 2042,
+          "output_tokens": 0,
+          "cost_usd": 0.0005105,
+          "latency_ms": 4890
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Incorrect handling of new single-element subsequences: for v>0 the code adds (0,False) twice and also adds (0,True) for v==1 while still adding (0,False). This double-counts and sets wrong flag values, leading to incorrect counts.",
+              "line": 20,
+              "severity": "critical",
+              "triggering_input": "1\n3\n2 5 7\n"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Incorrect handling of new single-element subsequences: for v>0 the code adds (0,False) twice and also adds (0,True) for v==1 while still adding (0,False). This double-counts and sets wrong flag values, leading to incorrect counts.\", \"line\": 20, \"severity\": \"critical\", \"triggering_input\": \"1\\n3\\n2 5 7\\n\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Incorrect handling of new single-element subsequences: for v>0 the code adds (0,False) twice and also adds (0,True) for v==1 while still adding (0,False). This double-counts and sets wrong flag values, leading to incorrect counts.",
+                "line": 20,
+                "severity": "critical",
+                "triggering_input": "1\n3\n2 5 7\n"
+              }
+            ]
+          },
+          "input_tokens": 2020,
+          "output_tokens": 97,
+          "cost_usd": 0.00057775,
+          "latency_ms": 5364
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\ninput = sys.stdin.readline\nfrom collections import defaultdict\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[(mex, flag)] = count of subsequences with that state\n    dp = defaultdict(int)\n    \n    for v in a:\n        new_dp = defaultdict(int)\n        \n        # New single-element subsequence [v]\n        if v == 0:\n            new_dp[(1, False)] = (new_dp[(1, False)] + 1) % MOD\n        elif v == 1:\n            new_dp[(0, True)] = (new_dp[(0, True)] + 1) % MOD\n        else:\n            new_dp[(0, False)] = (new_dp[(0, False)] + 1) % MOD\n        \n        # Extend existing subsequences\n        for (mex, flag), cnt in dp.items():\n            if cnt == 0:\n                continue\n            \n            if v == mex:\n                # adding mex\n                if flag:\n                    new_dp[(mex + 2, False)] = (new_dp[(mex + 2, False)] + cnt) % MOD\n                else:\n                    new_dp[(mex + 1, False)] = (new_dp[(mex + 1, False)] + cnt) % MOD\n            elif v == mex - 1:\n                # adding duplicate (mex-1 already in set)\n                new_dp[(mex, flag)] = (new_dp[(mex, flag)] + cnt) % MOD\n            elif v == mex + 1:\n                # adding mex+1, mex unchanged, flag becomes True\n                new_dp[(mex, True)] = (new_dp[(mex, True)] + cnt) % MOD\n            # else: v not in {mex-1, mex, mex+1}, cannot extend\n        \n        for key, val in new_dp.items():\n            dp[key] = (dp[key] + val) % MOD\n    \n    ans = 0\n    for val in dp.values():\n        ans = (ans + val) % MOD\n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+          "input_tokens": 2484,
+          "output_tokens": 1028,
+          "cost_usd": 0.022872,
+          "latency_ms": 14339
+        }
+      ],
+      "final_code": "import sys\ninput = sys.stdin.readline\nfrom collections import defaultdict\n\nMOD = 998244353\n\ndef solve():\n    n = int(input())\n    a = list(map(int, input().split()))\n    \n    # dp[(mex, flag)] = count of subsequences with that state\n    dp = defaultdict(int)\n    \n    for v in a:\n        new_dp = defaultdict(int)\n        \n        # New single-element subsequence [v]\n        if v == 0:\n            new_dp[(1, False)] = (new_dp[(1, False)] + 1) % MOD\n        elif v == 1:\n            new_dp[(0, True)] = (new_dp[(0, True)] + 1) % MOD\n        else:\n            new_dp[(0, False)] = (new_dp[(0, False)] + 1) % MOD\n        \n        # Extend existing subsequences\n        for (mex, flag), cnt in dp.items():\n            if cnt == 0:\n                continue\n            \n            if v == mex:\n                # adding mex\n                if flag:\n                    new_dp[(mex + 2, False)] = (new_dp[(mex + 2, False)] + cnt) % MOD\n                else:\n                    new_dp[(mex + 1, False)] = (new_dp[(mex + 1, False)] + cnt) % MOD\n            elif v == mex - 1:\n                # adding duplicate (mex-1 already in set)\n                new_dp[(mex, flag)] = (new_dp[(mex, flag)] + cnt) % MOD\n            elif v == mex + 1:\n                # adding mex+1, mex unchanged, flag becomes True\n                new_dp[(mex, True)] = (new_dp[(mex, True)] + cnt) % MOD\n            # else: v not in {mex-1, mex, mex+1}, cannot extend\n        \n        for key, val in new_dp.items():\n            dp[key] = (dp[key] + val) % MOD\n    \n    ans = 0\n    for val in dp.values():\n        ans = (ans + val) % MOD\n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 50,
+        "errors": 0,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "4\n2\n31\n7",
+            "actual": "7\n3\n31\n9",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "1\n30\n0 0 0 2 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "998244352",
+            "actual": "58720279",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "587202561",
+            "actual": "612368408",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 3,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n31\n7",
+            "actual": "7\n3\n31\n9",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "558104577",
+            "actual": "571998231",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "293731905",
+            "actual": "307101015",
+            "stderr": "",
+            "runtime_ms": 77,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "620756993",
+            "actual": "788529178",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "67371007",
+            "actual": "68419605",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "146923066",
+            "actual": "153632698",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "385875969",
+            "actual": "436207642",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "532807680",
+            "actual": "533331990",
+            "stderr": "",
+            "runtime_ms": 76,
+            "status": "fail"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "73494088",
+            "actual": "77046350",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "192938105",
+            "actual": "218104320",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "40402504",
+            "actual": "43829870",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127680738",
+            "actual": "146506420",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "20208581",
+            "actual": "38533103",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "132120576",
+            "actual": "146800664",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+            "expected": "11878341",
+            "actual": "21845435",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66060288",
+            "actual": "73400344",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "23742391",
+            "actual": "43608418",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "28872527",
+            "actual": "56572335",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n30\n0 0 0 6 0 0 0 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "66062336",
+            "actual": "73424919",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+            "expected": "17870799",
+            "actual": "36098162",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "65903306",
+            "actual": "73414527",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "13077871",
+            "actual": "26406550",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 1 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+            "expected": "8564447",
+            "actual": "27720955",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+            "expected": "49396366",
+            "actual": "64774463",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 2\n",
+            "expected": "24741132",
+            "actual": "41903730",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "12627129",
+            "actual": "26387786",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n30\n0 0 0 4 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+            "expected": "16744355",
+            "actual": "37869565",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 1 3\n",
+            "expected": "4\n2\n31\n10",
+            "actual": "7\n3\n31\n11",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2 2 2 2 2 2\n",
+            "expected": "293715969",
+            "actual": "306348136",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 1 0 0\n4\n0 1 2 3\n",
+            "expected": "5\n2\n19\n7",
+            "actual": "7\n3\n21\n9",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 1 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "315883523",
+            "actual": "424935450",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 4 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+            "expected": "161488449",
+            "actual": "174562647",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "1\n30\n0 0 0 2 0 1 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "357564417",
+            "actual": "509607962",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 1 2 2 2 2\n",
+            "expected": "532811761",
+            "actual": "68419622",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 3 2\n",
+            "expected": "75353882",
+            "actual": "82174391",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4 2\n",
+            "expected": "255852515",
+            "actual": "293601270",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+            "expected": "266403840",
+            "actual": "266666006",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 0 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "69842504",
+            "actual": "71946734",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2\n",
+            "expected": "127865058",
+            "actual": "146727640",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 4 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+            "expected": "20210248",
+            "actual": "22051378",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 3 4 2 2 2 2 2 1\n",
+            "expected": "10154465",
+            "actual": "19391689",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 0 2\n",
+            "expected": "132120578",
+            "actual": "146800709",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 8 2 2 2 2 2 1\n",
+            "expected": "10072236",
+            "actual": "19221526",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 0 2 2 2 1\n",
+            "expected": "20137135",
+            "actual": "38401839",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 3 2 4 2 2 2 2 2 1\n",
+            "expected": "14478187",
+            "actual": "28598391",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 4 2 2 2\n",
+            "expected": "50665534",
+            "actual": "57797461",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 0 2 2 2 1\n",
+            "expected": "10680439",
+            "actual": "21559725",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 1,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 50,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+        "expected": "4\n2\n31\n7",
+        "actual": "4\n3\n31\n7",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n30\n0 0 0 2 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "998244352",
+        "actual": "94",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "587202561",
+        "actual": "58720350",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 2 3\n",
+        "expected": "5\n2\n31\n7",
+        "actual": "5\n3\n31\n7",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "558104577",
+        "actual": "29360297",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+        "expected": "293731905",
+        "actual": "14680233",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n30\n0 0 0 2 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "620756993",
+        "actual": "134217788",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "67371007",
+        "actual": "281",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+        "expected": "146923066",
+        "actual": "7397531",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "385875969",
+        "actual": "134217788",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+        "expected": "532807680",
+        "actual": "281",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+        "expected": "73494088",
+        "actual": "3698843",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "192938105",
+        "actual": "67109036",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+        "expected": "40402504",
+        "actual": "1849499",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "127680738",
+        "actual": "33554716",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+        "expected": "20208581",
+        "actual": "932148",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "132120576",
+        "actual": "94",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 4 2 2 2 2 2 1\n",
+        "expected": "11878341",
+        "actual": "466228",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 3 2 2 2 2\n",
+        "expected": "66060288",
+        "actual": "94",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+        "expected": "23742391",
+        "actual": "917826",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+        "expected": "28872527",
+        "actual": "2982287",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n30\n0 0 0 6 0 0 0 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+        "expected": "66062336",
+        "actual": "175",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 4 2 2 2 2 2 1\n",
+        "expected": "17870799",
+        "actual": "1491646",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+        "expected": "65903306",
+        "actual": "18940689",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+        "expected": "13077871",
+        "actual": "1491646",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 1 4 2 2 4 2 2 2 2 2 7 2 2 2 2 2 1\n",
+        "expected": "8564447",
+        "actual": "2311228",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 2 2 2 2\n",
+        "expected": "49396366",
+        "actual": "18940417",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 2\n",
+        "expected": "24741132",
+        "actual": "9520058",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n30\n0 0 0 4 0 0 1 2 1 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+        "expected": "12627129",
+        "actual": "5040552",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n30\n0 0 0 4 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 1 2 2 2 2 3 2 2 2 1\n",
+        "expected": "16744355",
+        "actual": "5030964",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n3\n0 2 1\n2\n1 0\n5\n0 0 0 0 0\n4\n0 1 1 3\n",
+        "expected": "4\n2\n31\n10",
+        "actual": "4\n3\n31\n7",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2 2 2 2 2 2\n",
+        "expected": "293715969",
+        "actual": "29474903",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n3\n0 2 0\n2\n1 0\n5\n0 0 1 0 0\n4\n0 1 2 3\n",
+        "expected": "5\n2\n19\n7",
+        "actual": "5\n3\n22\n7",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 1 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "315883523",
+        "actual": "55050409",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 4 2 2 2 2 2 2 4 2 2 2 2 2 2\n",
+        "expected": "161488449",
+        "actual": "7340201",
+        "stderr": "",
+        "runtime_ms": 42,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n30\n0 0 0 2 0 1 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "357564417",
+        "actual": "67108924",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 2 2 2 2 2 1 2 2 2 2\n",
+        "expected": "532811761",
+        "actual": "4425",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n30\n0 0 0 1 0 0 0 2 2 2 2 0 2 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 3 2\n",
+        "expected": "75353882",
+        "actual": "5591181",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 4 2\n",
+        "expected": "255852515",
+        "actual": "67108924",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n30\n0 0 0 0 0 0 0 2 2 2 2 0 2 2 4 2 2 2 2 2 2 2 2 2 2 2 3 2 2 2\n",
+        "expected": "266403840",
+        "actual": "281",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 0 2 2 2 2 2 2 2 3 2 2 4 2 2 2 2 2 2\n",
+        "expected": "69842504",
+        "actual": "1849650",
+        "stderr": "",
+        "runtime_ms": 30,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n30\n0 0 0 3 0 1 0 2 2 2 3 2 2 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2\n",
+        "expected": "127865058",
+        "actual": "33554716",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 4 2 2 0 2 2 2 2 2 4 2 2 3 2 2 4 2 2 2 2 2 2\n",
+        "expected": "20210248",
+        "actual": "924827",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 2 2 2 4 2 2 3 2 3 4 2 2 2 2 2 1\n",
+        "expected": "10154465",
+        "actual": "516376",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n30\n0 0 0 3 0 0 0 2 2 2 3 2 2 2 2 4 2 2 2 2 2 2 2 2 2 2 2 2 0 2\n",
+        "expected": "132120578",
+        "actual": "186",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 3 2 2 8 2 2 2 2 2 1\n",
+        "expected": "10072236",
+        "actual": "462651",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 2 2 0 2 2 4 2 2 4 2 2 2 2 2 4 2 0 2 2 2 1\n",
+        "expected": "20137135",
+        "actual": "459403",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 2 2 4 2 2 4 2 2 2 3 2 4 2 2 2 2 2 1\n",
+        "expected": "14478187",
+        "actual": "1537767",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n30\n0 0 0 6 0 0 1 2 2 2 3 2 2 2 2 4 2 0 2 2 2 2 2 2 2 3 4 2 2 2\n",
+        "expected": "50665534",
+        "actual": "11142585",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n30\n0 0 0 1 0 0 0 3 2 1 2 0 0 2 4 2 2 4 2 2 2 2 2 7 2 0 2 2 2 1\n",
+        "expected": "10680439",
+        "actual": "746805",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.1950275,
+  "total_latency_ms": 194871,
+  "iterations_used": null,
+  "early_stopped": null
+}

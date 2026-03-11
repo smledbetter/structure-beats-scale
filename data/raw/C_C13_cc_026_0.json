@@ -1,0 +1,2336 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_026",
+  "replica": 0,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    return int(input())\n\n# At y=1, dist(x,1) = (y1-1) + max(x1-x, 0, x-x2)\n# Find minimum distance at y=1 (which equals y1-1)\n# Binary search for x1: leftmost x where dist = min_dist\n# Binary search for x2: rightmost x where dist = min_dist\n\n# First find the minimum by binary search (ternary search)\nlo, hi = 1, 10**9\nwhile hi - lo > 2:\n    m1 = lo + (hi - lo) // 3\n    m2 = hi - (hi - lo) // 3\n    if query(m1, 1) <= query(m2, 1):\n        hi = m2\n    else:\n        lo = m1\nmin_dist_y1 = min(query(lo, 1), query(hi, 1))\n# min_dist_y1 = y1 - 1\n\n# Binary search for x1\nlo2, hi2 = 1, (lo + hi) // 2\nwhile lo2 < hi2:\n    mid = (lo2 + hi2) // 2\n    if query(mid, 1) == min_dist_y1:\n        hi2 = mid\n    else:\n        lo2 = mid + 1\nx1 = lo2\n# ... continue",
+      "input_tokens": 815,
+      "output_tokens": 8192,
+      "cost_usd": 0.125325,
+      "latency_ms": 115011
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "If I query at (a, b) far from the rectangle, distance = dx + dy. If I fix b and vary a along a row that's \"above\" the rectangle (b < y1), then distance = (y1 - b) + dx. As I move a toward x1, dx decreases.\n\nBetter approach: Binary search for each boundary.\n\nTo find x1: Query points along some horizontal line. If I pick y = 1 (edge), but we can't use edges... Let me pick a safe y far from the rectangle.\n\nActually, let me use a cleaner approach:\n- Query at corners of the grid (but not edges). Query at (2, 2), (2, 10^9-1), (10^9-1, 2), (10^9-1, 10^9-1) to get initial distance info.\n- Then binary search for each boundary.\n\nFor binary search on x1: Fix y such that we're above the rectangle. Then distance = (y1 - y) + max(x1 - x, 0, x - x2). To isolate x1, pick y very small (y=1 is edge, use y=2). Then binary search: find the x where distance changes slope from -1 to 0 (that's x1) and from 0 to +1 (that's x2).\n\nActually, let me binary search for x1 directly: from a point above the rectangle (y=2), query at x. If x < x1, dist = (y1-2) + (x1-x). If x1 \u2264 x \u2264 x2, dist = y1-2. If x > x2, dist = (y1-2) + (x-x2).\n\nSo I can binary search: find leftmost x where dist = y1-2 (that's x1), and rightmost x where dist = y1-2 (that's x2). But I don't know y1-2.\n\nLet me use a different approach: binary search for the boundary by looking for where the distance function changes.\n\nI'll find x1 by binary search: the leftmost x where querying at (x, 2) gives the same distance as (x+1, 2) (distance stops decreasing). But I need to be careful not to query inside the rectangle.\n\nLet me implement: find x1 via binary search on x with y=2 (which is above the rectangle since y1 \u2265 2... but y1 could be 2). Use y=1... no that's edge.\n\nI'll query at y=2: if y1=2 and x1\u2264x\u2264x2, I'd be inside. So I need to be careful.\n\nAlternative: First determine y1 using queries at x=500000000 varying y, then find x1,x2,y2 with binary searches, being careful to stay outside.\n\nLet me implement a careful binary search approach using ~8-10 queries per boundary = 40 total.\n\n```python\nimport sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    return int(input())\n\ndef solve():\n    N = 10**9\n    mid = N // 2\n    \n    # Find y1: binary search with x = mid, varying y from 2 upward\n    # At x=mid, query y=2: dist = dy + dx where dx = max(0, x1-mid, mid-x2)\n    # Let's first get distance at center\n    d = query(mid, mid)\n    # Binary search for x1, x2, y1, y2\n    \n    # Find y1: fix x=mid, binary search y in [2, mid]\n    # dist(mid, y) for y < y1: = (y1 - y) + dx_mid\n    # dist(mid, y) for y1 <= y <= y2 (if mid in [x1,x2]): = 0 -> inside!\n    \n    # Safe approach: find y1 by querying at x=2 (left edge area)\n    # At x=2, y=2: dist = (x1-2) + (y1-2) assuming 2 < x1, 2 < y1\n    \n    # Let me try a robust approach\n    # Query at (2,2): d22 = (x1-2)+(y1-2)\n    # Query at (2, N-1): d2N = (x1-2)+(N-1-y2)\n    # Query at (N-1, 2): dN2 = (N-1-x2)+(y1-2)\n    # Query at (N-1,N-1): dNN = (N-1-x2)+(N-1-y2)\n    # From these: (x1-2)+(y1-2), (x1-2)+(N-1-y2), (N-1-x2)+(y1-2), (N-1-x2)+(N-1-y2)\n    # d22+dNN = (x1+y1+N-1-x2+N-1-y2-4) ... let me compute\n    # d22 = x1+y1-4\n    # d2N = x1-2+N-1-y2 = x1+N-3-y2\n    # dN2 = N-1-x2+y1-2 = N-3-x2+y1\n    # dNN = N-1-x2+N-1-y2 = 2N-2-x2-y2\n    # d22+dNN = x1+y1-4+2N-2-x2-y2\n    # d2N+dN2 = x1+N-3-y2+N-3-x2+y1 = x1+y1-x2-y2+2N-6\n    # Hmm, d22-d2N = y1-4-(N-3-y2) = y1+y2-N-1 => y1+y2 = d22-d2N+N+1\n    # d22-dN2 = x1-4-(N-3-x2) = x1+x2-N-1 => x1+x2 = d22-dN2+N+1\n    # Also d22+dNN-d2N-dN2 = (x1+y1-4)+(2N-2-x2-y2)-(x1+N-3-y2)-(N-3-x2+y1)\n    #                      = x1+y1-4+2N-2-x2-y2-x1-N+3+y2-N+3+x2-y1\n    #                      = 0. So these 4 are not independent.\n    # \n    # We have:\n    # A = x1-2, B = y1-2, C = N-1-x2, D = N-1-y2\n    # d22=A+B, d2N=A+D, dN2=C+B, dNN=C+D\n    # A-C = d22-dN2 = d2N-dNN\n    # B-D = d22-d2N = dN2-dNN\n    # But we can't get A,B,C,D individually from just these 4 (only differences).\n    # Need more queries.\n    \n    # Binary search approach for each boundary:\n    # Find x1: query along y=2 (assuming y1 > 2, or handle edge case)\n    # Actually let's binary search more carefully.\n    \n    # Step 1: Find y1 using binary search\n    # Query at (2, y) for various y. \n    # For y < y1: dist(2,y) = (x1-2) + (y1-y)  [assuming x1 > 2]\n    # For y = y1: dist(2,y1) = x1-2\n    # For y > y1 and y <= y2: dist(2,y) = x1-2\n    # For y > y2: dist(2,y) = x1-2 + y-y2\n    # So dist is decreasing until y1, flat from y1 to y2, increasing after y2.\n    # Binary search for y1: find smallest y where dist(2,y) = dist(2,y+1) [flat region starts]\n    # But x1 might be 2! Then dist(2,y) = 0 for y in [y1,y2] -> inside!\n    \n    # Need to be safe. Let's first check if x1 > 2 by querying (2, mid).\n    # If dist = 0 -> inside (x1=2 and y1<=mid<=y2). Bad.\n    \n    # Safer: query at (1,1)... no that's edge.\n    # \n    # The problem says the base doesn't contain squares on the edge (x or y = 1 or 10^9).\n    # So x1 >= 2, y1 >= 2, x2 <= N-1, y2 <= N-1.\n    # But x1 could equal 2.\n    \n    # If I query at (2, 2), I might be inside if x1=2 and y1=2.\n    # \n    # Safe starting point: query at corners like (2,2) only if we know we're outside.\n    # \n    # Alternative: query at (1, mid) - but that's on the edge (x=1).\n    # The problem says we can query anywhere 1<=i,j<=10^9, but if inside base -> -1 and we lose.\n    # Edges are safe since base doesn't include edges.\n    # \n    # So query at x=1 is safe! The base doesn't contain x=1 squares.\n    \n    # Query at (1, y): dist = (x1-1) + max(0, y1-y, y-y2)\n    # This is always safe since x=1 is on the edge and base doesn't include it.\n    \n    # Similarly y=1, x=N, y=N are all safe.\n    \n    # Find y1: binary search y in [2, N-1] using queries at x=1.\n    # dist(1, y) = (x1-1) + max(0, y1-y, y-y2)\n    # Let base_dist = x1-1 (constant part)\n    # For y < y1: dist = base_dist + y1 - y  (decreasing)\n    # For y1 <= y <= y2: dist = base_dist\n    # For y > y2: dist = base_dist + y - y2  (increasing)\n    # \n    # Binary search for y1: find leftmost y where dist(1,y) == dist(1,y-1)-1 stops, \n    # i.e., dist(1,y) == dist(1,y+1) (we've entered flat region)\n    # Actually: dist(1,y1-1) = base_dist+1, dist(1,y1) = base_dist\n    # So y1 is where dist decreases by 1 from y-1 to y... \n    # Binary search: find smallest y such that dist(1,y) <= dist(1,1) - (y-1)\n    # Hmm, dist(1,1) = base_dist + y1 - 1\n    # dist(1,y) for y<=y1: = base_dist + y1 - y = dist(1,1) - (y-1)\n    # dist(1,y) for y>=y1: <= dist(1,1) - (y-1) [since flat or increasing but starts flat]\n    # Wait for y in [y1,y2]: dist = base_dist = dist(1,1)-(y1-1)\n    # For y > y2: dist = base_dist + y - y2\n    # \n    # The function dist(1,y) + y is:\n    # For y <= y1: base_dist + y1 - y + y = base_dist + y1 (constant!)\n    # For y1 <= y <= y2: base_dist + y\n    # For y >= y2: base_dist + y - y2 + y = base_dist + 2y - y2\n    # \n    # So dist(1,y) + y is constant (= base_dist+y1) for y <= y1, then increases.\n    # Binary search: find largest y where dist(1,y)+y == dist(1,2)+2\n    # (assuming y=2 < y1, which... might not hold)\n    # \n    # Actually let me just do:\n    # Query (1,1): d = base_dist + y1 - 1. So base_dist + y1 = d + 1.\n    # For y <= y1: dist(1,y) + y = base_dist + y1 = d+1.\n    # For y > y1: dist(1,y) + y > d+1 (since it's base_dist+y for y in [y1,y2], \n    #   which equals base_dist+y > base_dist+y1 = d+1 when y>y1... wait base_dist+y vs base_dist+y1: yes > when y>y1)\n    # \n    # So y1 = largest y such that dist(1,y)+y == d+1? No wait:\n    # At y=y1: dist(1,y1)+y1 = base_dist + y1 = d+1. \u2713\n    # At y=y1+1: dist(1,y1+1)+y1+1 = base_dist + y1+1 = d+2 > d+1. \u2713\n    # \n    # So binary search: find largest y where dist(1,y)+y == d+1.\n    # Equivalently: dist(1,y)+y - (d+1) == 0 for y <= y1, > 0 for y > y1.\n    # Binary search for y1!\n    # \n    # Similarly find y2: dist(1,y) - y is constant for y >= y2.\n    # At y=y2: dist(1,y2)-y2 = base_dist - y2.\n    # At y=y2-1 (in flat): dist(1,y2-1)-y2+1 = base_dist - y2 + 1 > base_dist-y2.\n    # At y>y2: dist(1,y)-y = base_dist+y-y2-y = base_dist-y2 (constant).\n    # So y2 is smallest y where dist(1,y)-y == base_dist-y2.\n    # \n    # Query (1, N): d_N = base_dist + N - y2. So base_dist - y2 = d_N - N.\n    # For y >= y2: dist(1,y)-y = base_dist-y2 = d_N-N.\n    # For y < y2: dist(1,y)-y > d_N-N.\n    # Binary search: find smallest y where dist(1,y)-y == d_N-N.\n    \n    # This gives y1 and y2 using binary search on x=1 (safe).\n    # Each binary search: log2(10^9) \u2248 30 queries. Too many!\n    # But we can do both simultaneously? Or use fewer queries.\n    \n    # Total budget: 40 queries.\n    # 4 boundaries \u00d7 binary search. Need ~10 queries each = 40. Tight!\n    # log2(10^9) = 30. Too many per boundary.\n    \n    # Better: use the formula approach.\n    # dist(1,y)+y = base_dist+y1 for y<=y1 (constant C1 = base_dist+y1)\n    # dist(1,y)-y = base_dist-y2 for y>=y2 (constant C2 = base_dist-y2)\n    # \n    # Query at y=1: get C1 - 1 + 1 = C1. Wait: dist(1,1)+1 = base_dist+y1-1+1 = base_dist+y1 = C1. \u2713\n    # Query at y=N: dist(1,N)-N = base_dist+N-y2-N = base_dist-y2 = C2. \u2713\n    # \n    # Now binary search for y1: find largest y with dist(1,y)+y = C1.\n    # This takes log2(10^9) \u2248 30 steps. Too many.\n    # \n    # Hmm. Let me think of a smarter approach.\n    \n    # Alternative: Use 4 corner queries to get relationships, then binary search smarter.\n    \n    # From x=1 queries:\n    # dist(1,1) = base_dist + y1 - 1  =>  base_dist + y1 = dist(1,1) + 1\n    # dist(1,N) = base_dist + N - y2  =>  base_dist - y2 = dist(1,N) - N\n    # Adding: 2*base_dist + y1 - y2 = dist(1,1) + dist(1,N) - N + 1\n    # \n    # From y=1 queries:\n    # dist(1,1) = (x1-1) + (y1-1)  [using x=1, y=1... wait that's the same point]\n    # \n    # Let me use queries at (1,1), (1,N), (N,1), (N,N) -- all on edges, all safe.\n    # d11 = (x1-1) + (y1-1)\n    # d1N = (x1-1) + (N-y2)\n    # dN1 = (N-x2) + (y1-1)\n    # dNN = (N-x2) + (N-y2)\n    # \n    # Let A=x1-1, B=y1-1, C=N-x2, D=N-y2.\n    # d11=A+B, d1N=A+D, dN1=C+B, dNN=C+D.\n    # A+B+C+D = d11+dNN = d1N+dN1 (consistent).\n    # A-C = d11-dN1 = d1N-dNN.\n    # B-D = d11-d1N = dN1-dNN.\n    # Can't get A,B,C,D individually. Need more.\n    \n    # Query at (1, mid) where mid = (y1+y2)/2 approximately... but we don't know y1,y2.\n    # \n    # Query at (1, (N+1)//2):\n    # dist = A + max(0, B+1 - (N+1)//2, (N+1)//2 - (N-D))\n    # This is getting complex.\n    \n    # Let me think differently. \n    # \n    # Key insight: We can find x1 with binary search using ~10 queries if we're clever.\n    # \n    # Actually log2(10^9) \u2248 30. With 4 boundaries that's 120. Way too many.\n    # \n    # We need a smarter method. Let's use the 4 corner queries to get A-C and B-D,\n    # and then use 2 more queries to get A+C and B+D, giving us all 4 values.\n    # \n    # How to get A+C = (x1-1)+(N-x2) = N+1-x1-... wait A+C = x1-1+N-x2.\n    # Hmm. From d11+dNN = A+B+C+D. We know A-C and B-D. \n    # If we also know A+C, then A=(A+C+A-C)/2, C=(A+C-(A-C))/2.\n    # \n    # To find A+C: query at (mid_x, 1) where mid_x is between x1 and x2.\n    # dist(mid_x, 1) = B (if x1 <= mid_x <= x2).\n    # But we don't know if mid_x is between x1 and x2.\n    # \n    # Alternative: query at (mid_x, 1) for mid_x = N//2.\n    # If x1 <= N//2 <= x2: dist = B = y1-1.\n    # If N//2 < x1: dist = (x1-N//2) + B.\n    # If N//2 > x2: dist = (N//2-x2) + B.\n    # \n    # We don't know which case. \n    # \n    # Let me try: query at (N//2, 1) and (N//2, N).\n    # dist(N//2, 1) = max(0, x1-N//2, N//2-x2) + B\n    # dist(N//2, N) = max(0, x1-N//2, N//2-x2) + D\n    # Difference = B - D = d11 - d1N (already known).\n    # Sum = 2*max(0, x1-N//2, N//2-x2) + B + D.\n    # We know B+D = d11+dNN - (A+C). Hmm still circular.\n    \n    # OK let me look at this more carefully.\n    # \n    # From 4 corner queries:\n    # d11 = A+B\n    # d1N = A+D  \n    # dN1 = C+B\n    # dNN = C+D\n    # \n    # A+C = (d11+dN1-B-B+B... no.\n    # d11+dNN = A+B+C+D\n    # d1N+dN1 = A+D+C+B = same.\n    # \n    # A = (d11+d1N-dN1-dNN)/2 + (d11+dNN)/2... let me just solve:\n    # A+B = d11\n    # A+D = d1N\n    # C+B = dN1\n    # C+D = dNN\n    # => B-D = d11-d1N, A-C = d11-dN1\n    # => A+C = (d11+dNN-(B-D)... no.\n    # A+C+B+D = d11+dNN\n    # (A-C) = d11-dN1\n    # (B-D) = d11-d1N\n    # 4 unknowns, 3 equations (d11+dNN = d1N+dN1 is redundant). Need 1 more equation.\n    \n    # 5th query: e.g., (N//2, 1).\n    # Let h = N//2.\n    # dist(h, 1) = max(0, x1-h, h-x2) + B\n    # Case 1: x1 <= h <= x2: dist = B. Then B = dist(h,1), and A = d11-B, C = dN1-B, D = d1N-A.\n    # Case 2: h < x1: dist = x1-h+B = A+1-h+B... wait x1=A+1, so dist = A+1-h+B = d11-h+1.\n    #   Then dist(h,1) = d11 - h + 1. We can check: if dist(h,1) == d11 - h + 1, then h < x1.\n    #   But we don't know d11 yet... \n    # \n    # Wait, I should just query d11 first, then use it.\n    # \n    # Let me think about a cleaner algorithm:\n    \n    # Algorithm:\n    # 1. Query (1,1), (1,N), (N,1), (N,N) -> 4 queries. Get A,B,C,D relationships.\n    # 2. Query (N//2, 1) -> 1 query. \n    #    - If dist = d11 - (N//2) + 1... hmm this is getting complicated.\n    \n    # Let me think about this problem differently.\n    # \n    # The Manhattan distance from (a,b) to rectangle [x1,x2]\u00d7[y1,y2] is:\n    # f(a,b) = max(0, x1-a, a-x2) + max(0, y1-b, b-y2)\n    # \n    # Key property: if I query along the line y=1 (safe), I get:\n    # g(a) = f(a,1) = max(0, x1-a, a-x2) + (y1-1)\n    # \n    # g(a) is a piecewise linear function of a:\n    # - Decreasing with slope -1 for a < x1\n    # - Constant for x1 <= a <= x2\n    # - Increasing with slope +1 for a > x2\n    # \n    # The minimum value of g is y1-1.\n    # \n    # Similarly, querying along a=1 (safe):\n    # h(b) = f(1,b) = (x1-1) + max(0, y1-b, b-y2)\n    # \n    # Minimum of h is x1-1.\n    \n    # So:\n    # - Minimum of g(a) = y1-1 => y1 = min_g + 1\n    # - Minimum of h(b) = x1-1 => x1 = min_h + 1\n    # - g(1) = (x1-1) + (y1-1) = min_h + min_g\n    # - g achieves minimum for a in [x1,x2]\n    # - h achieves minimum for b in [y1,y2]\n    \n    # To find x1, x2: binary search on g(a) along y=1.\n    # To find y1, y2: binary search on h(b) along x=1.\n    \n    # For x1: find leftmost a where g(a) = min_g.\n    # For x2: find rightmost a where g(a) = min_g.\n    # \n    # But min_g = y1-1 is unknown. However:\n    # g(1) = (x1-1) + (y1-1)\n    # g(N) = (N-x2) + (y1-1)\n    # g(1) - g(N) = x1-1-(N-x2) = x1+x2-N-1\n    # \n    # For binary search to find x1:\n    # g(a) + a is constant = x1 + (y1-1) for a <= x1.\n    # g(a) + a = (x1-a) + (y1-1) + a = x1 + y1 - 1 for a <= x1.\n    # For a >= x1 (in flat or right): g(a)+a >= x1+y1-1 (with equality only at a=x1 if flat starts).\n    # Wait: for x1 <= a <= x2: g(a)+a = (y1-1)+a >= (y1-1)+x1 = x1+y1-1. So g(a)+a >= x1+y1-1 for all a, with equality for a<=x1.\n    # So x1 = max{a : g(a)+a = g(1)+1} = max{a : g(a)+a = C} where C = g(1)+1.\n    # \n    # Wait: g(1)+1 = (x1-1)+(y1-1)+1 = x1+y1-1. Yes! C = x1+y1-1.\n    # For a <= x1: g(a)+a = C. \n    # For a > x1: g(a)+a > C.\n    # So x1 = largest a with g(a)+a = C.\n    # \n    # Binary search: lo=1, hi=N. Find largest a with g(a)+a <= C.\n    # (It equals C for a<=x1, and > C for a>x1.)\n    # \n    # Similarly, x2 = smallest a with g(a)-a = g(N)-N+... \n    # g(N)-N: for a>=x2: g(a)-a = (a-x2)+(y1-1)-a = y1-1-x2. Constant.\n    # For a<x2: g(a)-a > y1-1-x2.\n    # g(N)-N = (N-x2)+(y1-1)-N = y1-1-x2. So C2 = g(N)-N.\n    # x2 = smallest a with g(a)-a = C2.\n    # Binary search: find smallest a with g(a)-a <= C2.\n    \n    # Similarly for y1, y2 using h(b) along x=1.\n    \n    # Total queries:\n    # g(1), g(N): 2 queries (corners, safe)\n    # Binary search for x1: log2(N) \u2248 30 queries. Too many!\n    \n    # Hmm. But wait, we have 40 total. log2(10^9) = 30. So 2 binary searches = 60. Too many.\n    \n    # We need a smarter approach. Let me think...\n    \n    # Observation: We can find x1+y1 from g(1)+1 (using 1 query).\n    # We can find N-x2+y1-1 = g(N) (using 1 query).\n    # We can find x1-1+y2... using h queries.\n    # \n    # Actually, from 4 corner queries:\n    # g(1) = A+B where A=x1-1, B=y1-1\n    # g(N) = C+B where C=N-x2 (note: N-1-x2+1... wait N here is 10^9)\n    # h(1) = A+B (same as g(1)!)  -- wait no.\n    # h(b) = f(1,b) = A + max(0, y1-b, b-y2)\n    # h(1) = A + B (same point as g(1)=f(1,1))\n    # h(N) = A + D where D=N-y2\n    # \n    # So 4 distinct corner queries: (1,1),(1,N),(N,1),(N,N) give A+B, A+D, C+B, C+D.\n    # 4 equations, 4 unknowns, but rank 3. Need 1 more.\n    \n    # 5th query: e.g., (N//2, 1).\n    # Let m = N//2.\n    # f(m,1) = max(0, x1-m, m-x2) + B\n    # \n    # Case 1: x1 <= m <= x2: f(m,1) = B. Then B is known, and A,C,D follow.\n    # Case 2: m < x1 (i.e., m < A+1, i.e., m <= A): f(m,1) = A+1-m+B = A+B-m+1 = g(1)-m+1.\n    # Case 3: m > x2 (i.e., m > N-C",
+      "input_tokens": 815,
+      "output_tokens": 8192,
+      "cost_usd": 0.125325,
+      "latency_ms": 124402
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    return int(input())\n\n# Find x1, x2 using y=1 (safe, base never includes y=1)\n# dist(a, 1) = (y1-1) + max(x1-a, 0, a-x2)\n# Find x1: binary search leftmost position where dist stops decreasing\nlo, hi = 1, 10**9\n# find x1: largest a where dist(a,1) > dist(a+1,1) ... actually find where slope changes\n# Binary search for x1\nlo, hi = 1, 10**9\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid+1, 1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\nx1 = lo\n\nlo, hi = 1, 10**9\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid+1, 1)\n    if d1 < d2:\n        hi = mid\n    else:\n        lo = mid + 1\nx2 = lo - 1\n\nlo, hi = 1, 10**9\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid+1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\ny1 = lo\n\nlo, hi = 1, 10**9\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid+1)\n    if d1 < d2:\n        hi = mid\n    else:\n        lo = mid + 1\ny2 = lo - 1\n\nprint(f\"! {x1} {y1} {x2} {y2}\")\nsys.stdout.flush()",
+      "input_tokens": 815,
+      "output_tokens": 8192,
+      "cost_usd": 0.125325,
+      "latency_ms": 120644
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 6,
+          "bugs": [
+            {
+              "description": "The algorithm does not handle the case when the device query returns -1 (inside the base or outside the grid). According to the problem statement, the program must exit immediately on -1, otherwise it will receive a wrong answer verdict.",
+              "line": 6,
+              "severity": "critical",
+              "triggering_input": "Any query that lands inside the rectangle, e.g., when the rectangle includes the queried coordinates."
+            },
+            {
+              "description": "The ternary search implementation assumes the distance function is strictly convex and will converge to the exact minimum region, but the piecewise linear distance function can have a flat region. This may cause the search to miss the true minimum, leading to incorrect min_dist_y1.",
+              "line": 15,
+              "severity": "major",
+              "triggering_input": "A rectangle where the minimum distance occurs over a range of x values, e.g., x1=100, x2=200."
+            },
+            {
+              "description": "The binary search for x1 uses hi2 = (lo + hi) // 2, where lo and hi are the final bounds from the ternary search. These bounds do not necessarily cover the entire x-range of the rectangle, so the binary search may not find the true leftmost x (x1).",
+              "line": 26,
+              "severity": "major",
+              "triggering_input": "Any rectangle where the ternary search converges to a point inside the rectangle but not at its left edge."
+            },
+            {
+              "description": "The solution is incomplete: it never determines y1, y2, x2, nor does it output the final answer in the required format. The code ends with a comment \"# ... continue\" and will not produce any output.",
+              "line": 34,
+              "severity": "critical",
+              "triggering_input": "All inputs \u2013 the program will terminate without printing the answer."
+            },
+            {
+              "description": "The number of queries performed can exceed the allowed limit of 40. The ternary search loop performs two queries per iteration and may run ~50 iterations for the full range, already exceeding the limit, not counting later binary searches.",
+              "line": 15,
+              "severity": "major",
+              "triggering_input": "Any input where the rectangle is far from the initial search bounds, causing many iterations."
+            },
+            {
+              "description": "The code uses input() directly after printing a query, which can block or raise an exception if the input stream is closed (e.g., after receiving -1). This can cause a runtime error.",
+              "line": 6,
+              "severity": "minor",
+              "triggering_input": "When the judge closes the stream after an invalid query."
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm does not handle the case when the device query returns -1 (inside the base or outside the grid). According to the problem statement, the program must exit immediately on -1, otherwise it will receive a wrong answer verdict.\",\n      \"line\": 6,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any query that lands inside the rectangle, e.g., when the rectangle includes the queried coordinates.\"\n    },\n    {\n      \"description\": \"The ternary search implementation assumes the distance function is strictly convex and will converge to the exact minimum region, but the piecewise linear distance function can have a flat region. This may cause the search to miss the true minimum, leading to incorrect min_dist_y1.\",\n      \"line\": 15,\n      \"severity\": \"major\",\n      \"triggering_input\": \"A rectangle where the minimum distance occurs over a range of x values, e.g., x1=100, x2=200.\"\n    },\n    {\n      \"description\": \"The binary search for x1 uses hi2 = (lo + hi) // 2, where lo and hi are the final bounds from the ternary search. These bounds do not necessarily cover the entire x-range of the rectangle, so the binary search may not find the true leftmost x (x1).\",\n      \"line\": 26,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Any rectangle where the ternary search converges to a point inside the rectangle but not at its left edge.\"\n    },\n    {\n      \"description\": \"The solution is incomplete: it never determines y1, y2, x2, nor does it output the final answer in the required format. The code ends with a comment \\\"# ... continue\\\" and will not produce any output.\",\n      \"line\": 34,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"All inputs \u2013 the program will terminate without printing the answer.\"\n    },\n    {\n      \"description\": \"The number of queries performed can exceed the allowed limit of 40. The ternary search loop performs two queries per iteration and may run ~50 iterations for the full range, already exceeding the limit, not counting later binary searches.\",\n      \"line\": 15,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Any input where the rectangle is far from the initial search bounds, causing many iterations.\"\n    },\n    {\n      \"description\": \"The code uses input() directly after printing a query, which can block or raise an exception if the input stream is closed (e.g., after receiving -1). This can cause a runtime error.\",\n      \"line\": 6,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"When the judge closes the stream after an invalid query.\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm does not handle the case when the device query returns -1 (inside the base or outside the grid). According to the problem statement, the program must exit immediately on -1, otherwise it will receive a wrong answer verdict.",
+                "line": 6,
+                "severity": "critical",
+                "triggering_input": "Any query that lands inside the rectangle, e.g., when the rectangle includes the queried coordinates."
+              },
+              {
+                "description": "The ternary search implementation assumes the distance function is strictly convex and will converge to the exact minimum region, but the piecewise linear distance function can have a flat region. This may cause the search to miss the true minimum, leading to incorrect min_dist_y1.",
+                "line": 15,
+                "severity": "major",
+                "triggering_input": "A rectangle where the minimum distance occurs over a range of x values, e.g., x1=100, x2=200."
+              },
+              {
+                "description": "The binary search for x1 uses hi2 = (lo + hi) // 2, where lo and hi are the final bounds from the ternary search. These bounds do not necessarily cover the entire x-range of the rectangle, so the binary search may not find the true leftmost x (x1).",
+                "line": 26,
+                "severity": "major",
+                "triggering_input": "Any rectangle where the ternary search converges to a point inside the rectangle but not at its left edge."
+              },
+              {
+                "description": "The solution is incomplete: it never determines y1, y2, x2, nor does it output the final answer in the required format. The code ends with a comment \"# ... continue\" and will not produce any output.",
+                "line": 34,
+                "severity": "critical",
+                "triggering_input": "All inputs \u2013 the program will terminate without printing the answer."
+              },
+              {
+                "description": "The number of queries performed can exceed the allowed limit of 40. The ternary search loop performs two queries per iteration and may run ~50 iterations for the full range, already exceeding the limit, not counting later binary searches.",
+                "line": 15,
+                "severity": "major",
+                "triggering_input": "Any input where the rectangle is far from the initial search bounds, causing many iterations."
+              },
+              {
+                "description": "The code uses input() directly after printing a query, which can block or raise an exception if the input stream is closed (e.g., after receiving -1). This can cause a runtime error.",
+                "line": 6,
+                "severity": "minor",
+                "triggering_input": "When the judge closes the stream after an invalid query."
+              }
+            ]
+          },
+          "input_tokens": 1098,
+          "output_tokens": 589,
+          "cost_usd": 0.00071625,
+          "latency_ms": 3815
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 5,
+          "bugs": [
+            {
+              "description": "Using ternary search to locate the minimum distance is incorrect because the distance function is flat across the whole interval [x1, x2]; ternary search may converge to a point outside this interval and will waste queries.",
+              "line": 15,
+              "severity": "critical",
+              "triggering_input": "Any rectangle with width > 1"
+            },
+            {
+              "description": "Binary search for x1 limits the upper bound to (lo + hi)//2 instead of the full possible range (1 to 10^9), causing it to miss the true leftmost x when it lies beyond that midpoint.",
+              "line": 26,
+              "severity": "major",
+              "triggering_input": "Rectangle where x1 > (lo+hi)//2"
+            },
+            {
+              "description": "The algorithm never determines y1, y2, or x2 and does not output the final answer, leaving the solution incomplete.",
+              "line": 34,
+              "severity": "critical",
+              "triggering_input": "Any input (the program will terminate without printing an answer)"
+            },
+            {
+              "description": "The total number of queries can easily exceed the allowed 40 (ternary search ~20 queries plus two binary searches ~60), leading to a TLE or WA due to query limit.",
+              "line": 15,
+              "severity": "major",
+              "triggering_input": "Any rectangle (query count > 40)"
+            },
+            {
+              "description": "The code does not handle the case where the rectangle width is 1 (x1 == x2); the binary search may loop indefinitely or return the wrong x1.",
+              "line": 27,
+              "severity": "minor",
+              "triggering_input": "Rectangle with x1 == x2"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Using ternary search to locate the minimum distance is incorrect because the distance function is flat across the whole interval [x1, x2]; ternary search may converge to a point outside this interval and will waste queries.\",\n      \"line\": 15,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any rectangle with width > 1\"\n    },\n    {\n      \"description\": \"Binary search for x1 limits the upper bound to (lo + hi)//2 instead of the full possible range (1 to 10^9), causing it to miss the true leftmost x when it lies beyond that midpoint.\",\n      \"line\": 26,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Rectangle where x1 > (lo+hi)//2\"\n    },\n    {\n      \"description\": \"The algorithm never determines y1, y2, or x2 and does not output the final answer, leaving the solution incomplete.\",\n      \"line\": 34,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any input (the program will terminate without printing an answer)\"\n    },\n    {\n      \"description\": \"The total number of queries can easily exceed the allowed 40 (ternary search ~20 queries plus two binary searches ~60), leading to a TLE or WA due to query limit.\",\n      \"line\": 15,\n      \"severity\": \"major\",\n      \"triggering_input\": \"Any rectangle (query count > 40)\"\n    },\n    {\n      \"description\": \"The code does not handle the case where the rectangle width is 1 (x1 == x2); the binary search may loop indefinitely or return the wrong x1.\",\n      \"line\": 27,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"Rectangle with x1 == x2\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Using ternary search to locate the minimum distance is incorrect because the distance function is flat across the whole interval [x1, x2]; ternary search may converge to a point outside this interval and will waste queries.",
+                "line": 15,
+                "severity": "critical",
+                "triggering_input": "Any rectangle with width > 1"
+              },
+              {
+                "description": "Binary search for x1 limits the upper bound to (lo + hi)//2 instead of the full possible range (1 to 10^9), causing it to miss the true leftmost x when it lies beyond that midpoint.",
+                "line": 26,
+                "severity": "major",
+                "triggering_input": "Rectangle where x1 > (lo+hi)//2"
+              },
+              {
+                "description": "The algorithm never determines y1, y2, or x2 and does not output the final answer, leaving the solution incomplete.",
+                "line": 34,
+                "severity": "critical",
+                "triggering_input": "Any input (the program will terminate without printing an answer)"
+              },
+              {
+                "description": "The total number of queries can easily exceed the allowed 40 (ternary search ~20 queries plus two binary searches ~60), leading to a TLE or WA due to query limit.",
+                "line": 15,
+                "severity": "major",
+                "triggering_input": "Any rectangle (query count > 40)"
+              },
+              {
+                "description": "The code does not handle the case where the rectangle width is 1 (x1 == x2); the binary search may loop indefinitely or return the wrong x1.",
+                "line": 27,
+                "severity": "minor",
+                "triggering_input": "Rectangle with x1 == x2"
+              }
+            ]
+          },
+          "input_tokens": 1098,
+          "output_tokens": 395,
+          "cost_usd": 0.00057075,
+          "latency_ms": 3402
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\nN = 10**9\n\nd_tl = query(1, 1)       # (x1-1)+(y1-1)\nd_tr = query(N, 1)       # (N-x2)+(y1-1)\nd_bl = query(1, N)       # (x1-1)+(N-y2)\nd_br = query(N, N)       # (N-x2)+(N-y2)\n\n# y1-1 = (d_tl + d_tr - (N-1 - (x2-x1))) / 2... use pairs\n# (d_tl - d_tr) = (x1-1) - (N-x2) => x1+x2 = N+1 + d_tr - d_tl ... \n# d_tl + d_tr = (x1-1)+(N-x2) + 2*(y1-1)\n# d_bl + d_br = (x1-1)+(N-x2) + 2*(N-y2)\n\nsum_x = (d_tl + d_tr - d_bl - d_br) # = 2*(y1-1) - 2*(N-y2) ... not clean\n\n# Binary search for x1: at y=1, dist decreases as x increases toward x1\ndef bin_search_x1(y_fixed, base_dist):\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if query(mid, y_fixed) == base_dist:\n            hi = mid\n        else:\n            lo = mid + 1\n    return lo\n\ndef bin_search_x2(y_fixed, base_dist):\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        if query(mid, y_fixed) == base_dist:\n            lo = mid\n        else:\n            hi = mid - 1\n    return lo\n\ny1 = (d_tl + d_tr - (N-1)) // 2 + 1  # y1-1 = (d_tl+d_tr-(N-1))/2 when x1=1,x2=N... wrong\n\n# Use corner differences\n# d_tl - d_tr = (x1-1) - (N-x2) = x1+x2-N-1... hmm\n# Just binary search all 4 boundaries\n\n# Find y1: binary search on column x=1... dist(1,j) for j<y1 = (x1-1)+(y1-j)\n# At j=1: d_tl = (x1-1)+(y1-1). Binary search: find smallest j where dist(1,j) < d_tl-(j-1)... \n# dist(1,j) = (x1-1) + (y1-j) for j<=y1, so decreases by 1 each step\n# Find y1 by: query(1, j) = d_tl - (j-1) while j <= y1\n\nlo, hi = 1, N\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    expected = d_tl - (mid - 1)\n    actual = query(1, mid)\n    if actual == expected:\n        lo = mid\n    else:\n        hi = mid - 1\ny1 = lo + (d_tl - query(1, lo)) # recalc\n\n# This approach is getting complicated. Let me just do 4 binary searches properly.\n\nimport sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\nN = 10**9\n\n# Binary search for y1: use x = N//2, vary y\n# dist(mid_x, y) for y < y1 includes y1-y component\n# Find y1 by binary searching where dist changes slope\n\nmid_x = N // 2\nmid_y = N // 2\n\n# dist(mid_x, 1) = (y1-1) + max(0, x1-mid_x, mid_x-x2)\n# If mid_x is between x1 and x2: dist = y1-1\n# We don't know if mid_x is in range...\n\n# Safest: binary search y1 using x=1\n# dist(1, y) = (x1-1) + max(0, y1-y, y-y2) for y outside [y1,y2]\n# For y < y1: dist(1,y) = (x1-1) + (y1-y)  -- decreasing as y increases\n# For y > y2: dist(1,y) = (x1-1) + (y-y2)  -- increasing\n\n# Binary search: find y1 = smallest y where dist(1,y) - dist(1,y-1) changes\n# Or: dist(1,1) = (x1-1)+(y1-1). As y increases by 1 (y<y1), dist decreases by 1.\n# Binary search for y1: largest y where dist(1,y) = dist(1,1) - (y-1)\n\nd11 = query(1, 1)\n# Find y1: binary search largest y s.t. dist(1,y) = d11-(y-1)\nlo, hi = 1, N\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    if query(1, mid) == d11 - (mid - 1):\n        lo = mid\n    else:\n        hi = mid - 1\ny1 = lo + 1  # y1 is one past where it's still decreasing... wait\n\n# At y=y1: dist(1,y1) = x1-1 (the rectangle edge)\n# At y=y1-1: dist(1,y1-1) = x1-1+1 = x1\n# So dist(1,y) = d11-(y-1) holds for y <= y1\n# lo = y1, so y1 = lo\n\ny1 = lo\n\n# Find y2: dist(1,N) = (x1-1)+(N-y2). As y decreases from N, dist decreases.\n# dist(1,y) = (x1-1)+(y-y2) for y >= y2\n# dist(1,N) = d1N. Binary search largest y s.t. dist(1,y) = d1N-(N-y)\nd1N = query(1, N)\nlo2, hi2 = 1, N\nwhile lo2 < hi2:\n    mid = (lo2 + hi2 + 1) // 2\n    if query(1, mid) == d1N - (N - mid):\n        lo2 = mid\n    else:\n        hi2 = mid - 1\ny2 = lo2  # Hmm, need to think again\n\n# dist(1,y) = (x1-1)+(y-y2) for y>=y2, so dist(1,N)=d1N=(x1-1)+(N-y2)\n# dist(1,y) = d1N-(N-y) = d1N-N+y for y>=y2\n# Binary search: find smallest y where dist(1,y) = d1N-(N-y)\nlo2, hi2 = 1, N\nwhile lo2 < hi2:\n    mid = (lo2 + hi2) // 2\n    if query(1, mid) == d1N - (N - mid):\n        hi2 = mid\n    else:\n        lo2 = mid + 1\ny2 = lo2\n\n# Find x1: dist(1,y1) = x1-1, so x1 = dist(1,y1)+1\nx1 = query(1, y1) + 1\n\n# Find x2: dist(N,y1) = N-x2, so x2 = N - dist(N,y1)  \nx2 = N - query(N, y1)\n\nprint(f\"! {x1} {y1} {x2} {y2}\")\nsys.stdout.flush()",
+          "input_tokens": 1722,
+          "output_tokens": 4096,
+          "cost_usd": 0.066606,
+          "latency_ms": 56227
+        }
+      ],
+      "final_code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\nN = 10**9\n\nd_tl = query(1, 1)       # (x1-1)+(y1-1)\nd_tr = query(N, 1)       # (N-x2)+(y1-1)\nd_bl = query(1, N)       # (x1-1)+(N-y2)\nd_br = query(N, N)       # (N-x2)+(N-y2)\n\n# y1-1 = (d_tl + d_tr - (N-1 - (x2-x1))) / 2... use pairs\n# (d_tl - d_tr) = (x1-1) - (N-x2) => x1+x2 = N+1 + d_tr - d_tl ... \n# d_tl + d_tr = (x1-1)+(N-x2) + 2*(y1-1)\n# d_bl + d_br = (x1-1)+(N-x2) + 2*(N-y2)\n\nsum_x = (d_tl + d_tr - d_bl - d_br) # = 2*(y1-1) - 2*(N-y2) ... not clean\n\n# Binary search for x1: at y=1, dist decreases as x increases toward x1\ndef bin_search_x1(y_fixed, base_dist):\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        if query(mid, y_fixed) == base_dist:\n            hi = mid\n        else:\n            lo = mid + 1\n    return lo\n\ndef bin_search_x2(y_fixed, base_dist):\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        if query(mid, y_fixed) == base_dist:\n            lo = mid\n        else:\n            hi = mid - 1\n    return lo\n\ny1 = (d_tl + d_tr - (N-1)) // 2 + 1  # y1-1 = (d_tl+d_tr-(N-1))/2 when x1=1,x2=N... wrong\n\n# Use corner differences\n# d_tl - d_tr = (x1-1) - (N-x2) = x1+x2-N-1... hmm\n# Just binary search all 4 boundaries\n\n# Find y1: binary search on column x=1... dist(1,j) for j<y1 = (x1-1)+(y1-j)\n# At j=1: d_tl = (x1-1)+(y1-1). Binary search: find smallest j where dist(1,j) < d_tl-(j-1)... \n# dist(1,j) = (x1-1) + (y1-j) for j<=y1, so decreases by 1 each step\n# Find y1 by: query(1, j) = d_tl - (j-1) while j <= y1\n\nlo, hi = 1, N\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    expected = d_tl - (mid - 1)\n    actual = query(1, mid)\n    if actual == expected:\n        lo = mid\n    else:\n        hi = mid - 1\ny1 = lo + (d_tl - query(1, lo)) # recalc\n\n# This approach is getting complicated. Let me just do 4 binary searches properly.\n\nimport sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\nN = 10**9\n\n# Binary search for y1: use x = N//2, vary y\n# dist(mid_x, y) for y < y1 includes y1-y component\n# Find y1 by binary searching where dist changes slope\n\nmid_x = N // 2\nmid_y = N // 2\n\n# dist(mid_x, 1) = (y1-1) + max(0, x1-mid_x, mid_x-x2)\n# If mid_x is between x1 and x2: dist = y1-1\n# We don't know if mid_x is in range...\n\n# Safest: binary search y1 using x=1\n# dist(1, y) = (x1-1) + max(0, y1-y, y-y2) for y outside [y1,y2]\n# For y < y1: dist(1,y) = (x1-1) + (y1-y)  -- decreasing as y increases\n# For y > y2: dist(1,y) = (x1-1) + (y-y2)  -- increasing\n\n# Binary search: find y1 = smallest y where dist(1,y) - dist(1,y-1) changes\n# Or: dist(1,1) = (x1-1)+(y1-1). As y increases by 1 (y<y1), dist decreases by 1.\n# Binary search for y1: largest y where dist(1,y) = dist(1,1) - (y-1)\n\nd11 = query(1, 1)\n# Find y1: binary search largest y s.t. dist(1,y) = d11-(y-1)\nlo, hi = 1, N\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    if query(1, mid) == d11 - (mid - 1):\n        lo = mid\n    else:\n        hi = mid - 1\ny1 = lo + 1  # y1 is one past where it's still decreasing... wait\n\n# At y=y1: dist(1,y1) = x1-1 (the rectangle edge)\n# At y=y1-1: dist(1,y1-1) = x1-1+1 = x1\n# So dist(1,y) = d11-(y-1) holds for y <= y1\n# lo = y1, so y1 = lo\n\ny1 = lo\n\n# Find y2: dist(1,N) = (x1-1)+(N-y2). As y decreases from N, dist decreases.\n# dist(1,y) = (x1-1)+(y-y2) for y >= y2\n# dist(1,N) = d1N. Binary search largest y s.t. dist(1,y) = d1N-(N-y)\nd1N = query(1, N)\nlo2, hi2 = 1, N\nwhile lo2 < hi2:\n    mid = (lo2 + hi2 + 1) // 2\n    if query(1, mid) == d1N - (N - mid):\n        lo2 = mid\n    else:\n        hi2 = mid - 1\ny2 = lo2  # Hmm, need to think again\n\n# dist(1,y) = (x1-1)+(y-y2) for y>=y2, so dist(1,N)=d1N=(x1-1)+(N-y2)\n# dist(1,y) = d1N-(N-y) = d1N-N+y for y>=y2\n# Binary search: find smallest y where dist(1,y) = d1N-(N-y)\nlo2, hi2 = 1, N\nwhile lo2 < hi2:\n    mid = (lo2 + hi2) // 2\n    if query(1, mid) == d1N - (N - mid):\n        hi2 = mid\n    else:\n        lo2 = mid + 1\ny2 = lo2\n\n# Find x1: dist(1,y1) = x1-1, so x1 = dist(1,y1)+1\nx1 = query(1, y1) + 1\n\n# Find x2: dist(N,y1) = N-x2, so x2 = N - dist(N,y1)  \nx2 = N - query(N, y1)\n\nprint(f\"! {x1} {y1} {x2} {y2}\")\nsys.stdout.flush()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n1\n2\n1\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 3 1000000001 999999999",
+            "actual": "? 1 1\n? 1000000000 1\n? 1 1000000000\n? 1000000000 1000000000\n? 1 500000001",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 61, in <module>\n    actual = query(1, mid)\n             ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, ",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "500000000 500000000 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "123 123 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "2 2 456 456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -453 457 1000000454 999999544",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "444 8898 445 888888\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499995773 1\n? 499995773 1000000000\n! 0 446 999991547 999111112",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "100 100 1000 1000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -899 1001 1000000900 999999000",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "456 456 456456 456456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -455999 456457 1000456000 999543544",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "2 3 4 5\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -1 5 1000000001 999999995",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3 6 6\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -2 7 1000000003 999999994",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "999999998 2 999999999 3\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 47,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "888 4444 666666 4445\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499998222 1\n? 499998222 1000000000\n! -665777 666667 1000662222 999995555",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 44,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "2 6 8 9\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499999998 1\n? 499999998 1000000000\n! -5 9 1000000002 999999991",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 42,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "999999998 999999998 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "789 789 4564 1000000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -3774 4565 1000003775 999000000",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 39,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "2 999999998 3 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "2 2 3 3\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 4 1000000001 999999997",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "441040781 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "123 123 999999999 11715423\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "2 2 456 440\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "444 8898 445 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "101 100 1000 1000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "456 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "2 3 4 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "5 3 6 6\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "2 2 907305179 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "999999998 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "888 4444 666666 4744\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "2 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1580447263 999999998 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "789 789 7441 1000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n1\n1\n1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1\n? 1000000000 1\n? 1 1000000000\n? 1000000000 1000000000\n? 1 500000001",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 61, in <module>\n    actual = query(1, mid)\n             ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, ",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "238355375 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "2 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "691 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "2 3 4 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "422550712 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "888 4444 666666 595\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "0 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "789 789 7441 0000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "0 952998199 3 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "101 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "2 3 4 0\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "422550712 2 30668272 2\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "888 4444 666666 477\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "0 6 9 10\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "0 2 0 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "10 540 793 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "001 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 13, in <module>\n    d_tl = query(1, 1)       # (x1-1)+(y1-1)\n           ^^^^^^^^^^^\n  File \"/home/sandbox/work/solution",
+            "runtime_ms": 28,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The code contains non-Python text (plain English sentences) at the start of the file, causing a syntax error. The first line 'If I query at (a, b) far from the rectangle...' is not a comment or code, so the script cannot be parsed or executed.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The code contains non-Python text (plain English sentences) at the start of the file, causing a syntax error. The first line 'If I query at (a, b) far from the rectangle...' is not a comment or code, so the script cannot be parsed or executed.\", \"line\": 1, \"severity\": \"critical\", \"triggering_input\": \"\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The code contains non-Python text (plain English sentences) at the start of the file, causing a syntax error. The first line 'If I query at (a, b) far from the rectangle...' is not a comment or code, so the script cannot be parsed or executed.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 7572,
+          "output_tokens": 92,
+          "cost_usd": 0.001962,
+          "latency_ms": 2325
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 8,
+          "bugs": [
+            {
+              "description": "The file starts with a non\u2011comment line \"If I query at (a, b) far from the rectangle...\" which is invalid Python syntax, causing a SyntaxError.",
+              "line": 1,
+              "severity": "critical",
+              "triggering_input": ""
+            },
+            {
+              "description": "The code never calls the solve() function, so nothing is executed and no answer is printed.",
+              "line": 144,
+              "severity": "critical",
+              "triggering_input": ""
+            },
+            {
+              "description": "The interactive protocol is not implemented correctly: the code uses input() to read a single integer after each query, but the problem expects the judge to provide the distance or -1. No handling for -1 (inside rectangle) is present, and the code would continue reading after a closed stream.",
+              "line": 13,
+              "severity": "critical",
+              "triggering_input": ""
+            },
+            {
+              "description": "The algorithm described in comments is incomplete and contradictory; it mixes several unfinished strategies and never computes the rectangle boundaries.",
+              "line": 30,
+              "severity": "major",
+              "triggering_input": ""
+            },
+            {
+              "description": "The code attempts to use binary search on a range of size 10^9 with ~30 queries per boundary, exceeding the 40\u2011query limit.",
+              "line": 78,
+              "severity": "major",
+              "triggering_input": ""
+            },
+            {
+              "description": "Variables such as N, mid, d are defined but never used to determine the final answer; the code never prints the required \"! x y p q\" line.",
+              "line": 22,
+              "severity": "critical",
+              "triggering_input": ""
+            },
+            {
+              "description": "The function query(i, j) prints a query and immediately calls input() without handling possible EOF or -1 responses, which would cause a runtime error.",
+              "line": 9,
+              "severity": "major",
+              "triggering_input": ""
+            },
+            {
+              "description": "Multiple undefined variables and references appear (e.g., \"mid = N // 2\" but later \"mid\" is not used; \"d = query(mid, mid)\" is stored but never used).",
+              "line": 21,
+              "severity": "minor",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The file starts with a non\u2011comment line \\\"If I query at (a, b) far from the rectangle...\\\" which is invalid Python syntax, causing a SyntaxError.\",\n      \"line\": 1,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"The code never calls the solve() function, so nothing is executed and no answer is printed.\",\n      \"line\": 144,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"The interactive protocol is not implemented correctly: the code uses input() to read a single integer after each query, but the problem expects the judge to provide the distance or -1. No handling for -1 (inside rectangle) is present, and the code would continue reading after a closed stream.\",\n      \"line\": 13,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"The algorithm described in comments is incomplete and contradictory; it mixes several unfinished strategies and never computes the rectangle boundaries.\",\n      \"line\": 30,\n      \"severity\": \"major\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"The code attempts to use binary search on a range of size 10^9 with ~30 queries per boundary, exceeding the 40\u2011query limit.\",\n      \"line\": 78,\n      \"severity\": \"major\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"Variables such as N, mid, d are defined but never used to determine the final answer; the code never prints the required \\\"! x y p q\\\" line.\",\n      \"line\": 22,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"The function query(i, j) prints a query and immediately calls input() without handling possible EOF or -1 responses, which would cause a runtime error.\",\n      \"line\": 9,\n      \"severity\": \"major\",\n      \"triggering_input\": \"\"\n    },\n    {\n      \"description\": \"Multiple undefined variables and references appear (e.g., \\\"mid = N // 2\\\" but later \\\"mid\\\" is not used; \\\"d = query(mid, mid)\\\" is stored but never used).\",\n      \"line\": 21,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The file starts with a non\u2011comment line \"If I query at (a, b) far from the rectangle...\" which is invalid Python syntax, causing a SyntaxError.",
+                "line": 1,
+                "severity": "critical",
+                "triggering_input": ""
+              },
+              {
+                "description": "The code never calls the solve() function, so nothing is executed and no answer is printed.",
+                "line": 144,
+                "severity": "critical",
+                "triggering_input": ""
+              },
+              {
+                "description": "The interactive protocol is not implemented correctly: the code uses input() to read a single integer after each query, but the problem expects the judge to provide the distance or -1. No handling for -1 (inside rectangle) is present, and the code would continue reading after a closed stream.",
+                "line": 13,
+                "severity": "critical",
+                "triggering_input": ""
+              },
+              {
+                "description": "The algorithm described in comments is incomplete and contradictory; it mixes several unfinished strategies and never computes the rectangle boundaries.",
+                "line": 30,
+                "severity": "major",
+                "triggering_input": ""
+              },
+              {
+                "description": "The code attempts to use binary search on a range of size 10^9 with ~30 queries per boundary, exceeding the 40\u2011query limit.",
+                "line": 78,
+                "severity": "major",
+                "triggering_input": ""
+              },
+              {
+                "description": "Variables such as N, mid, d are defined but never used to determine the final answer; the code never prints the required \"! x y p q\" line.",
+                "line": 22,
+                "severity": "critical",
+                "triggering_input": ""
+              },
+              {
+                "description": "The function query(i, j) prints a query and immediately calls input() without handling possible EOF or -1 responses, which would cause a runtime error.",
+                "line": 9,
+                "severity": "major",
+                "triggering_input": ""
+              },
+              {
+                "description": "Multiple undefined variables and references appear (e.g., \"mid = N // 2\" but later \"mid\" is not used; \"d = query(mid, mid)\" is stored but never used).",
+                "line": 21,
+                "severity": "minor",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 7572,
+          "output_tokens": 532,
+          "cost_usd": 0.002292,
+          "latency_ms": 6509
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    res = int(input())\n    if res == -1:\n        sys.exit(0)\n    return res\n\ndef solve():\n    N = 10**9\n    \n    # Query along y=1 (safe): g(a) = max(0,x1-a,a-x2) + (y1-1)\n    # Query along x=1 (safe): h(b) = (x1-1) + max(0,y1-b,b-y2)\n    \n    g1 = query(1, 1)   # = (x1-1) + (y1-1)\n    gN = query(N, 1)   # = (N-x2) + (y1-1)\n    \n    # C1 = x1 + y1 - 1 = g1 + 1\n    C1 = g1 + 1\n    # C2 = y1 - 1 - x2 = gN - N\n    C2 = gN - N\n    \n    # Find x1: largest a where g(a)+a == C1\n    # For a <= x1: g(a)+a = (x1-a)+(y1-1)+a = x1+y1-1 = C1\n    # For a > x1: g(a)+a > C1\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        val = query(mid, 1) + mid\n        if val == C1:\n            lo = mid\n        else:\n            hi = mid - 1\n    x1 = lo\n    \n    # Find x2: smallest a where g(a)-a == C2\n    # For a >= x2: g(a)-a = (a-x2)+(y1-1)-a = y1-1-x2 = C2\n    # For a < x2: g(a)-a > C2\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        val = query(mid, 1) - mid\n        if val == C2:\n            hi = mid\n        else:\n            lo = mid + 1\n    x2 = lo\n    \n    # Now find y1, y2 using queries along x=1\n    h1 = query(1, 1)   # same as g1, reuse: = (x1-1)+(y1-1)\n    hN = query(1, N)   # = (x1-1) + (N-y2)\n    \n    # D1 = x1 + y1 - 1 = h1 + 1\n    D1 = h1 + 1\n    # D2 = x1 - 1 - y2 = hN - N\n    D2 = hN - N\n    \n    # Find y1: largest b where h(b)+b == D1\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        val = query(1, mid) + mid\n        if val == D1:\n            lo = mid\n        else:\n            hi = mid - 1\n    y1 = lo\n    \n    # Find y2: smallest b where h(b)-b == D2\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        val = query(1, mid) - mid\n        if val == D2:\n            hi = mid\n        else:\n            lo = mid + 1\n    y2 = lo\n    \n    print(f\"! {x1} {y1} {x2} {y2}\")\n    sys.stdout.flush()\n\nsolve()",
+          "input_tokens": 9364,
+          "output_tokens": 1251,
+          "cost_usd": 0.046857,
+          "latency_ms": 15347
+        }
+      ],
+      "final_code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    res = int(input())\n    if res == -1:\n        sys.exit(0)\n    return res\n\ndef solve():\n    N = 10**9\n    \n    # Query along y=1 (safe): g(a) = max(0,x1-a,a-x2) + (y1-1)\n    # Query along x=1 (safe): h(b) = (x1-1) + max(0,y1-b,b-y2)\n    \n    g1 = query(1, 1)   # = (x1-1) + (y1-1)\n    gN = query(N, 1)   # = (N-x2) + (y1-1)\n    \n    # C1 = x1 + y1 - 1 = g1 + 1\n    C1 = g1 + 1\n    # C2 = y1 - 1 - x2 = gN - N\n    C2 = gN - N\n    \n    # Find x1: largest a where g(a)+a == C1\n    # For a <= x1: g(a)+a = (x1-a)+(y1-1)+a = x1+y1-1 = C1\n    # For a > x1: g(a)+a > C1\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        val = query(mid, 1) + mid\n        if val == C1:\n            lo = mid\n        else:\n            hi = mid - 1\n    x1 = lo\n    \n    # Find x2: smallest a where g(a)-a == C2\n    # For a >= x2: g(a)-a = (a-x2)+(y1-1)-a = y1-1-x2 = C2\n    # For a < x2: g(a)-a > C2\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        val = query(mid, 1) - mid\n        if val == C2:\n            hi = mid\n        else:\n            lo = mid + 1\n    x2 = lo\n    \n    # Now find y1, y2 using queries along x=1\n    h1 = query(1, 1)   # same as g1, reuse: = (x1-1)+(y1-1)\n    hN = query(1, N)   # = (x1-1) + (N-y2)\n    \n    # D1 = x1 + y1 - 1 = h1 + 1\n    D1 = h1 + 1\n    # D2 = x1 - 1 - y2 = hN - N\n    D2 = hN - N\n    \n    # Find y1: largest b where h(b)+b == D1\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi + 1) // 2\n        val = query(1, mid) + mid\n        if val == D1:\n            lo = mid\n        else:\n            hi = mid - 1\n    y1 = lo\n    \n    # Find y2: smallest b where h(b)-b == D2\n    lo, hi = 1, N\n    while lo < hi:\n        mid = (lo + hi) // 2\n        val = query(1, mid) - mid\n        if val == D2:\n            hi = mid\n        else:\n            lo = mid + 1\n    y2 = lo\n    \n    print(f\"! {x1} {y1} {x2} {y2}\")\n    sys.stdout.flush()\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n1\n2\n1\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 3 1000000001 999999999",
+            "actual": "? 1 1\n? 1000000000 1\n? 500000001 1\n? 250000001 1\n? 125000001 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 31, in solve\n    val = query(mid, 1) + mid\n  ",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "500000000 500000000 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "123 123 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "2 2 456 456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -453 457 1000000454 999999544",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 41,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "444 8898 445 888888\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499995773 1\n? 499995773 1000000000\n! 0 446 999991547 999111112",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "100 100 1000 1000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -899 1001 1000000900 999999000",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "456 456 456456 456456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -455999 456457 1000456000 999543544",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "2 3 4 5\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -1 5 1000000001 999999995",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3 6 6\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -2 7 1000000003 999999994",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "999999998 2 999999999 3\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "888 4444 666666 4445\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499998222 1\n? 499998222 1000000000\n! -665777 666667 1000662222 999995555",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "2 6 8 9\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499999998 1\n? 499999998 1000000000\n! -5 9 1000000002 999999991",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "999999998 999999998 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 40,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "789 789 4564 1000000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -3774 4565 1000003775 999000000",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "2 999999998 3 999999999\n",
+            "expected": "4",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "2 2 3 3\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 4 1000000001 999999997",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "441040781 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "123 123 999999999 11715423\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "2 2 456 440\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "444 8898 445 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "101 100 1000 1000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "456 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "2 3 4 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "5 3 6 6\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "2 2 907305179 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "999999998 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "888 4444 666666 4744\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "2 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1580447263 999999998 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 26,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "789 789 7441 1000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n1\n1\n1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1\n? 1000000000 1\n? 500000001 1\n? 250000001 1\n? 125000001 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 31, in solve\n    val = query(mid, 1) + mid\n  ",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "238355375 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "2 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "691 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "2 3 4 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "422550712 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "888 4444 666666 595\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "0 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "789 789 7441 0000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "0 952998199 3 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "101 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "2 3 4 0\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "422550712 2 30668272 2\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "888 4444 666666 477\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "0 6 9 10\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "0 2 0 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "10 540 793 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "001 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 1 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 85, in <module>\n    solve()\n  File \"/home/sandbox/work/solution.py\", line 17, in solve\n    g1 = query(1, 1)   # = (x1-1",
+            "runtime_ms": 35,
+            "status": "error"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 3,
+          "bugs": [
+            {
+              "description": "Off\u2011by\u2011one error: x2 is set to lo\u20111 after binary search, resulting in x2 being one less than the true rightmost column of the rectangle.",
+              "line": 35,
+              "severity": "major",
+              "triggering_input": "any rectangle with width \u2265 1"
+            },
+            {
+              "description": "Off\u2011by\u2011one error: y2 is set to lo\u20111 after binary search, resulting in y2 being one less than the true topmost row of the rectangle.",
+              "line": 57,
+              "severity": "major",
+              "triggering_input": "any rectangle with height \u2265 1"
+            },
+            {
+              "description": "The algorithm performs four binary searches over the range [1, 10^9], each requiring about 30 queries, totaling roughly 120 queries, which exceeds the allowed limit of 40 queries.",
+              "line": 16,
+              "severity": "critical",
+              "triggering_input": "any input (the query limit is always exceeded)"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Off\u2011by\u2011one error: x2 is set to lo\u20111 after binary search, resulting in x2 being one less than the true rightmost column of the rectangle.\",\n      \"line\": 35,\n      \"severity\": \"major\",\n      \"triggering_input\": \"any rectangle with width \u2265 1\"\n    },\n    {\n      \"description\": \"Off\u2011by\u2011one error: y2 is set to lo\u20111 after binary search, resulting in y2 being one less than the true topmost row of the rectangle.\",\n      \"line\": 57,\n      \"severity\": \"major\",\n      \"triggering_input\": \"any rectangle with height \u2265 1\"\n    },\n    {\n      \"description\": \"The algorithm performs four binary searches over the range [1, 10^9], each requiring about 30 queries, totaling roughly 120 queries, which exceeds the allowed limit of 40 queries.\",\n      \"line\": 16,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"any input (the query limit is always exceeded)\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Off\u2011by\u2011one error: x2 is set to lo\u20111 after binary search, resulting in x2 being one less than the true rightmost column of the rectangle.",
+                "line": 35,
+                "severity": "major",
+                "triggering_input": "any rectangle with width \u2265 1"
+              },
+              {
+                "description": "Off\u2011by\u2011one error: y2 is set to lo\u20111 after binary search, resulting in y2 being one less than the true topmost row of the rectangle.",
+                "line": 57,
+                "severity": "major",
+                "triggering_input": "any rectangle with height \u2265 1"
+              },
+              {
+                "description": "The algorithm performs four binary searches over the range [1, 10^9], each requiring about 30 queries, totaling roughly 120 queries, which exceeds the allowed limit of 40 queries.",
+                "line": 16,
+                "severity": "critical",
+                "triggering_input": "any input (the query limit is always exceeded)"
+              }
+            ]
+          },
+          "input_tokens": 1228,
+          "output_tokens": 234,
+          "cost_usd": 0.0004825,
+          "latency_ms": 4842
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The algorithm uses four binary searches, each requiring up to ~30 queries, totaling around 120 queries, which exceeds the allowed limit of 40 queries.",
+              "line": 15,
+              "severity": "critical",
+              "triggering_input": "Any valid input; the solution will exceed the query budget."
+            },
+            {
+              "description": "The code does not check for a -1 response from the device, which indicates an invalid query (inside the base or outside the grid). If such a response occurs, the program will treat it as a distance and continue, leading to incorrect results.",
+              "line": 17,
+              "severity": "major",
+              "triggering_input": "A query that accidentally lands inside the rectangle (e.g., if the rectangle touches the line y=1 or x=1, which is prohibited but not enforced by the code)."
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm uses four binary searches, each requiring up to ~30 queries, totaling around 120 queries, which exceeds the allowed limit of 40 queries.\",\n      \"line\": 15,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"Any valid input; the solution will exceed the query budget.\"\n    },\n    {\n      \"description\": \"The code does not check for a -1 response from the device, which indicates an invalid query (inside the base or outside the grid). If such a response occurs, the program will treat it as a distance and continue, leading to incorrect results.\",\n      \"line\": 17,\n      \"severity\": \"major\",\n      \"triggering_input\": \"A query that accidentally lands inside the rectangle (e.g., if the rectangle touches the line y=1 or x=1, which is prohibited but not enforced by the code).\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm uses four binary searches, each requiring up to ~30 queries, totaling around 120 queries, which exceeds the allowed limit of 40 queries.",
+                "line": 15,
+                "severity": "critical",
+                "triggering_input": "Any valid input; the solution will exceed the query budget."
+              },
+              {
+                "description": "The code does not check for a -1 response from the device, which indicates an invalid query (inside the base or outside the grid). If such a response occurs, the program will treat it as a distance and continue, leading to incorrect results.",
+                "line": 17,
+                "severity": "major",
+                "triggering_input": "A query that accidentally lands inside the rectangle (e.g., if the rectangle touches the line y=1 or x=1, which is prohibited but not enforced by the code)."
+              }
+            ]
+          },
+          "input_tokens": 1255,
+          "output_tokens": 202,
+          "cost_usd": 0.00046525,
+          "latency_ms": 5923
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\n# Along y=1: dist(a,1) = (y1-1) + max(0, x1-a, a-x2)\n# Find x1: binary search, d(mid,1) vs d(mid+1,1)\n# If d(mid) > d(mid+1): mid < x1, so lo = mid+1\n# If d(mid) <= d(mid+1): mid >= x1 (could be in flat or right slope), hi = mid\n\nlo, hi = 1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid + 1, 1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\nx1 = lo\n\nlo, hi = x1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid + 1, 1)\n    if d1 < d2:\n        hi = mid - 1\n    else:\n        lo = mid\nx2 = lo\n\n# Along x=1: dist(1,b) = (x1-1) + max(0, y1-b, b-y2)\nlo, hi = 1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid + 1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\ny1 = lo\n\nlo, hi = y1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid + 1)\n    if d1 < d2:\n        hi = mid - 1\n    else:\n        lo = mid\ny2 = lo\n\nprint(f\"! {x1} {y1} {x2} {y2}\")\nsys.stdout.flush()",
+          "input_tokens": 1679,
+          "output_tokens": 1114,
+          "cost_usd": 0.021747,
+          "latency_ms": 17245
+        }
+      ],
+      "final_code": "import sys\n\ndef query(i, j):\n    print(f\"? {i} {j}\")\n    sys.stdout.flush()\n    r = int(input())\n    if r == -1:\n        sys.exit()\n    return r\n\n# Along y=1: dist(a,1) = (y1-1) + max(0, x1-a, a-x2)\n# Find x1: binary search, d(mid,1) vs d(mid+1,1)\n# If d(mid) > d(mid+1): mid < x1, so lo = mid+1\n# If d(mid) <= d(mid+1): mid >= x1 (could be in flat or right slope), hi = mid\n\nlo, hi = 1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid + 1, 1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\nx1 = lo\n\nlo, hi = x1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    d1 = query(mid, 1)\n    d2 = query(mid + 1, 1)\n    if d1 < d2:\n        hi = mid - 1\n    else:\n        lo = mid\nx2 = lo\n\n# Along x=1: dist(1,b) = (x1-1) + max(0, y1-b, b-y2)\nlo, hi = 1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid + 1)\n    if d1 > d2:\n        lo = mid + 1\n    else:\n        hi = mid\ny1 = lo\n\nlo, hi = y1, 10**9 - 1\nwhile lo < hi:\n    mid = (lo + hi + 1) // 2\n    d1 = query(1, mid)\n    d2 = query(1, mid + 1)\n    if d1 < d2:\n        hi = mid - 1\n    else:\n        lo = mid\ny2 = lo\n\nprint(f\"! {x1} {y1} {x2} {y2}\")\nsys.stdout.flush()",
+      "test_results": {
+        "total": 50,
+        "passed": 0,
+        "failed": 0,
+        "errors": 50,
+        "pass_rate": 0.0,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "1\n1\n2\n1\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 3 1000000001 999999999",
+            "actual": "? 500000000 1\n? 500000001 1\n? 250000000 1\n? 250000001 1\n? 375000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 1,
+            "input": "500000000 500000000 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 2,
+            "input": "123 123 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 3,
+            "input": "2 2 456 456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -453 457 1000000454 999999544",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 4,
+            "input": "444 8898 445 888888\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499995773 1\n? 499995773 1000000000\n! 0 446 999991547 999111112",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 5,
+            "input": "100 100 1000 1000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -899 1001 1000000900 999999000",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 6,
+            "input": "456 456 456456 456456\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -455999 456457 1000456000 999543544",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 7,
+            "input": "2 3 4 5\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -1 5 1000000001 999999995",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3 6 6\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -2 7 1000000003 999999994",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 9,
+            "input": "2 2 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 10,
+            "input": "999999998 2 999999999 3\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 11,
+            "input": "888 4444 666666 4445\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499998222 1\n? 499998222 1000000000\n! -665777 666667 1000662222 999995555",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 12,
+            "input": "2 6 8 9\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 499999998 1\n? 499999998 1000000000\n! -5 9 1000000002 999999991",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 13,
+            "input": "999999998 999999998 999999999 999999999\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 14,
+            "input": "789 789 4564 1000000\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -3774 4565 1000003775 999000000",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 28,
+            "status": "error"
+          },
+          {
+            "test_index": 15,
+            "input": "2 999999998 3 999999999\n",
+            "expected": "4",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 16,
+            "input": "2 2 3 3\n",
+            "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 4 1000000001 999999997",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 17,
+            "input": "441040781 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 18,
+            "input": "123 123 999999999 11715423\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 29,
+            "status": "error"
+          },
+          {
+            "test_index": 19,
+            "input": "2 2 456 440\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 20,
+            "input": "444 8898 445 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 21,
+            "input": "101 100 1000 1000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 22,
+            "input": "456 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 23,
+            "input": "2 3 4 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 24,
+            "input": "5 3 6 6\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 27,
+            "status": "error"
+          },
+          {
+            "test_index": 25,
+            "input": "2 2 907305179 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 26,
+            "input": "999999998 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 27,
+            "input": "888 4444 666666 4744\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 28,
+            "input": "2 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 29,
+            "input": "1580447263 999999998 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 30,
+            "input": "789 789 7441 1000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n1\n1\n1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1\n? 500000001 1\n? 250000000 1\n? 250000001 1\n? 125000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 32,
+            "input": "238355375 500000000 999999999 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 33,
+            "input": "2 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 34,
+            "input": "691 672 456456 456456\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 38,
+            "status": "error"
+          },
+          {
+            "test_index": 35,
+            "input": "2 3 4 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 36,
+            "input": "422550712 2 30668272 3\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 37,
+            "status": "error"
+          },
+          {
+            "test_index": 37,
+            "input": "888 4444 666666 595\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 38,
+            "input": "0 6 9 9\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 30,
+            "status": "error"
+          },
+          {
+            "test_index": 39,
+            "input": "789 789 7441 0000000\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 32,
+            "status": "error"
+          },
+          {
+            "test_index": 40,
+            "input": "0 952998199 3 999999999\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 31,
+            "status": "error"
+          },
+          {
+            "test_index": 41,
+            "input": "1 2 456 536\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 42,
+            "input": "101 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 43,
+            "input": "2 3 4 0\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 44,
+            "input": "422550712 2 30668272 2\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 36,
+            "status": "error"
+          },
+          {
+            "test_index": 45,
+            "input": "888 4444 666666 477\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 35,
+            "status": "error"
+          },
+          {
+            "test_index": 46,
+            "input": "0 6 9 10\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 34,
+            "status": "error"
+          },
+          {
+            "test_index": 47,
+            "input": "0 2 0 1\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 48,
+            "input": "10 540 793 811967\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 33,
+            "status": "error"
+          },
+          {
+            "test_index": 49,
+            "input": "001 100 0000 1010\n",
+            "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+            "actual": "? 500000000 1",
+            "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+            "runtime_ms": 37,
+            "status": "error"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 2,
+  "final_test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 0,
+    "errors": 50,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "1\n1\n2\n1\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 3 1000000001 999999999",
+        "actual": "? 500000000 1\n? 500000001 1\n? 250000000 1\n? 250000001 1\n? 375000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 1,
+        "input": "500000000 500000000 999999999 999999999\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 2,
+        "input": "123 123 999999999 999999999\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 3,
+        "input": "2 2 456 456\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -453 457 1000000454 999999544",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 4,
+        "input": "444 8898 445 888888\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 499995773 1\n? 499995773 1000000000\n! 0 446 999991547 999111112",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 5,
+        "input": "100 100 1000 1000\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -899 1001 1000000900 999999000",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 6,
+        "input": "456 456 456456 456456\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -455999 456457 1000456000 999543544",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 7,
+        "input": "2 3 4 5\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -1 5 1000000001 999999995",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 8,
+        "input": "3 3 6 6\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -2 7 1000000003 999999994",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 9,
+        "input": "2 2 999999999 999999999\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 10,
+        "input": "999999998 2 999999999 3\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 11,
+        "input": "888 4444 666666 4445\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 499998222 1\n? 499998222 1000000000\n! -665777 666667 1000662222 999995555",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 12,
+        "input": "2 6 8 9\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 499999998 1\n? 499999998 1000000000\n! -5 9 1000000002 999999991",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 13,
+        "input": "999999998 999999998 999999999 999999999\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 14,
+        "input": "789 789 4564 1000000\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! -3774 4565 1000003775 999000000",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 28,
+        "status": "error"
+      },
+      {
+        "test_index": 15,
+        "input": "2 999999998 3 999999999\n",
+        "expected": "4",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 16,
+        "input": "2 2 3 3\n",
+        "expected": "? 1 1\n? 1000000000 1\n? 500000000 1\n? 500000000 1000000000\n! 0 4 1000000001 999999997",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 17,
+        "input": "441040781 500000000 999999999 999999999\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 18,
+        "input": "123 123 999999999 11715423\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 29,
+        "status": "error"
+      },
+      {
+        "test_index": 19,
+        "input": "2 2 456 440\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 20,
+        "input": "444 8898 445 811967\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 21,
+        "input": "101 100 1000 1000\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 22,
+        "input": "456 672 456456 456456\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 23,
+        "input": "2 3 4 3\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 24,
+        "input": "5 3 6 6\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 27,
+        "status": "error"
+      },
+      {
+        "test_index": 25,
+        "input": "2 2 907305179 999999999\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 26,
+        "input": "999999998 2 30668272 3\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 27,
+        "input": "888 4444 666666 4744\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 28,
+        "input": "2 6 9 9\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 29,
+        "input": "1580447263 999999998 999999999 999999999\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 30,
+        "input": "789 789 7441 1000000\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n1\n1\n1\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1\n? 500000001 1\n? 250000000 1\n? 250000001 1\n? 125000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 32,
+        "input": "238355375 500000000 999999999 999999999\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 33,
+        "input": "2 2 456 536\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 34,
+        "input": "691 672 456456 456456\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 38,
+        "status": "error"
+      },
+      {
+        "test_index": 35,
+        "input": "2 3 4 1\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 36,
+        "input": "422550712 2 30668272 3\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 37,
+        "status": "error"
+      },
+      {
+        "test_index": 37,
+        "input": "888 4444 666666 595\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 38,
+        "input": "0 6 9 9\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 30,
+        "status": "error"
+      },
+      {
+        "test_index": 39,
+        "input": "789 789 7441 0000000\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 32,
+        "status": "error"
+      },
+      {
+        "test_index": 40,
+        "input": "0 952998199 3 999999999\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 31,
+        "status": "error"
+      },
+      {
+        "test_index": 41,
+        "input": "1 2 456 536\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 42,
+        "input": "101 100 0000 1010\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 43,
+        "input": "2 3 4 0\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 44,
+        "input": "422550712 2 30668272 2\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 36,
+        "status": "error"
+      },
+      {
+        "test_index": 45,
+        "input": "888 4444 666666 477\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 35,
+        "status": "error"
+      },
+      {
+        "test_index": 46,
+        "input": "0 6 9 10\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 34,
+        "status": "error"
+      },
+      {
+        "test_index": 47,
+        "input": "0 2 0 1\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 48,
+        "input": "10 540 793 811967\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 33,
+        "status": "error"
+      },
+      {
+        "test_index": 49,
+        "input": "001 100 0000 1010\n",
+        "expected": "? 1 1\n? 1 500000000\n? 1 250000000\n? 1 125000000\n? 1 62500000\n? 1 31250000\n? 1 15625000\n? 1 7812500\n? 1 3906250\n? 1 1953125\n? 1 976562\n? 1 488281\n? 1 244140\n? 1 122070\n? 1 61035\n? 1 30517\n? 1 15258\n? 1",
+        "actual": "? 500000000 1",
+        "stderr": "Traceback (most recent call last):\n  File \"/home/sandbox/work/solution.py\", line 19, in <module>\n    d1 = query(mid, 1)\n         ^^^^^^^^^^^^^\n  File \"/home/sandbox/work/solution.py\", line 6, in query",
+        "runtime_ms": 37,
+        "status": "error"
+      }
+    ]
+  },
+  "total_cost_usd": 0.5176737499999999,
+  "total_latency_ms": 475692,
+  "iterations_used": null,
+  "early_stopped": null
+}

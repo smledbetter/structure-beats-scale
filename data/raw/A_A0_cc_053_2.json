@@ -1,0 +1,479 @@
+{
+  "study": "A",
+  "condition": "A0",
+  "task_id": "cc_053",
+  "replica": 2,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\nfrom functools import lru_cache\n\ninput_data = sys.stdin.read().split()\nidx = 0\n\ndef rd():\n    global idx\n    idx += 1\n    return int(input_data[idx-1])\n\nt = rd()\nfor _ in range(t):\n    n, k = rd(), rd()\n    chords = []\n    for _ in range(k):\n        x, y = rd(), rd()\n        chords.append((x, y))\n    \n    used = set()\n    for x, y in chords:\n        used.add(x)\n        used.add(y)\n    \n    free = sorted(set(range(1, 2*n+1)) - used)\n    m = len(free)  # = 2*(n-k)\n    \n    def intersects(a, b, c, d):\n        # chord (a,b) and (c,d) intersect?\n        a,b = min(a,b), max(a,b)\n        c,d = min(c,d), max(c,d)\n        return (a < c < b < d) or (c < a < d < b)\n    \n    # Count existing-existing intersections\n    base = 0\n    for i in range(k):\n        for j in range(i+1, k):\n            if intersects(chords[i][0], chords[i][1], chords[j][0], chords[j][1]):\n                base += 1\n    \n    if m == 0:\n        print(base)\n        continue\n    \n    # free is sorted list of free points\n    # dp[i][j] = max intersections among chords formed by free[i..j]\n    # plus intersections of those chords with existing chords\n    \n    def existing_cross(a, b):\n        # how many existing chords does chord(free[a], free[b]) intersect?\n        cnt = 0\n        for cx, cy in chords:\n            if intersects(free[a], free[b], cx, cy):\n                cnt += 1\n        return cnt\n    \n    # Precompute existing_cross\n    ec = [[0]*m for _ in range(m)]\n    for i in range(m):\n        for j in range(m):\n            if i != j:\n                ec[i][j] = existing_cross(i, j)\n    \n    # dp with memoization\n    # dp[i][j] = max intersections for pairing free[i..j]\n    # i..j must have even length (j-i+1 even, so j-i odd)\n    \n    dp = [[-1]*m for _ in range(m)]\n    \n    def solve(i, j):\n        if i > j:\n            return 0\n        if dp[i][j] != -1:\n            return dp[i][j]\n        if (j - i + 1) % 2 != 0:\n            dp[i][j] = 0\n            return 0\n        best = 0\n        # pair free[i] with free[l], l in {i+1, i+3, ..., j}\n        for l in range(i+1, j+1, 2) if (j-i) % 2 == 1 else range(i+1, j+1, 2):\n            # Actually l must satisfy (l-i-1) even and (j-l) even\n            # l-i-1 even => l-i odd => l = i+1, i+3, ...\n            # j-l even => j-l even\n            # j-i odd, l-i odd => j-l = j-i-(l-i) = odd-odd = even. Good.\n            val = ec[i][l] + solve(i+1, l-1) + solve(l+1, j)\n            # Add crossings between chords in [i+1,l-1] and [l+1,j]\n            # These are chords that have one endpoint in each side => they cross chord(i,l)\n            # Actually we need to count pairwise crossings between the two groups\n            # But we don't know which chords are formed inside each group...\n            # Hmm, this approach doesn't directly work.\n            best = max(best, val)\n        dp[i][j] = best\n        return best\n    \n    # The issue: crossings between chords from [i+1,l-1] and [l+1,j] are not captured.\n    # Let me think differently.\n    # \n    # Actually, two chords from free points cross iff their endpoints alternate.\n    # For free[a]<free[b] and free[c]<free[d] (as integers), they cross iff a<c<b<d or c<a<d<b in index space\n    # (since free is sorted, index order = clockwise order)\n    # \n    # So we can think of free points as labeled 0..m-1 in clockwise order.\n    # Two chords (i,j) and (k,l) with i<j and k<l cross iff i<k<j<l or k<i<l<j.\n    # \n    # The interval DP approach: when we pair i with l, chords inside [i+1,l-1] \n    # and chords inside [l+1,j] never cross each other (one is entirely \"inside\" arc i..l,\n    # other is entirely \"outside\"). Wait, that's not right either.\n    # \n    # Actually chord from [i+1,l-1] has both endpoints between i and l.\n    # Chord from [l+1,j] has both endpoints between l and j (outside i..l arc going i->l).\n    # Do they cross? Chord (a,b) with i<a<b<l and chord (c,d) with l<c<d<j (or wrapping).\n    # In linear order: a<b<l<c<d, so no crossing. \n    # So chords from the two sub-intervals DON'T cross each other! Great.\n    # So the interval DP is correct after all.\n    \n    # Recompute properly\n    dp = {}\n    def solve(i, j):\n        if i > j:\n            return 0\n        if (i,j) in dp:\n            return dp[(i,j)]\n        best = 0\n        for l in range(i+1, j+1, 2) if (j-i) % 2 == 1 else []:\n            val = ec[i][l] + solve(i+1, l-1) + solve(l+1, j)\n            best = max(best, val)\n        # handle when j-i is odd\n        if (j - i) % 2 == 1:\n            pass\n        else:\n            dp[(i,j)] = 0\n            return 0\n        dp[(i,j)] = best\n        return best\n    \n    # Redo cleanly\n    from functools import lru_cache\n    \n    @lru_cache(maxsize=None)\n    def solve2(i, j):\n        if i > j:\n            return 0\n        if (j - i + 1) % 2 == 1:\n            return 0  # odd number of points, can't pair\n        best = 0\n        for l in range(i+1, j+1, 2):\n            val = ec[i][l] + solve2(i+1, l-1) + solve2(l+1, j)\n            best = max(best, val)\n        return best\n    \n    solve2.cache_clear()\n    ans = base + solve2(0, m-1)\n    print(ans)",
+    "input_tokens": 720,
+    "output_tokens": 4096,
+    "cost_usd": 0.0636,
+    "latency_ms": 55161
+  },
+  "reviews": [],
+  "aggregated_bugs": [],
+  "fix": null,
+  "test_results": {
+    "total": 50,
+    "passed": 0,
+    "failed": 50,
+    "errors": 0,
+    "pass_rate": 0.0,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n14",
+        "actual": "3\n0\n0\n8",
+        "stderr": "",
+        "runtime_ms": 440,
+        "status": "fail"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 614,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n19",
+        "actual": "3\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 574,
+        "status": "fail"
+      },
+      {
+        "test_index": 3,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 369,
+        "status": "fail"
+      },
+      {
+        "test_index": 4,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n19",
+        "actual": "3\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 733,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n19",
+        "actual": "2\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 423,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n19",
+        "actual": "6\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 362,
+        "status": "fail"
+      },
+      {
+        "test_index": 7,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n18",
+        "actual": "6\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 340,
+        "status": "fail"
+      },
+      {
+        "test_index": 8,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n17",
+        "actual": "3\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 364,
+        "status": "fail"
+      },
+      {
+        "test_index": 9,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "4\n0\n0\n21",
+        "actual": "3\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 266,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 4\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+        "expected": "16\n0\n0\n20",
+        "actual": "6\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 467,
+        "status": "fail"
+      },
+      {
+        "test_index": 11,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n22",
+        "actual": "3\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 758,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n43",
+        "actual": "3\n0\n0\n22",
+        "stderr": "",
+        "runtime_ms": 358,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n16",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 398,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n19",
+        "actual": "7\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 302,
+        "status": "fail"
+      },
+      {
+        "test_index": 15,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n18",
+        "actual": "2\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 301,
+        "status": "fail"
+      },
+      {
+        "test_index": 16,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n9 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n15",
+        "actual": "6\n0\n0\n9",
+        "stderr": "",
+        "runtime_ms": 609,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "4\n0\n0\n82",
+        "actual": "3\n0\n0\n27",
+        "stderr": "",
+        "runtime_ms": 378,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 2\n14 6\n3 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n37",
+        "actual": "3\n0\n0\n9",
+        "stderr": "",
+        "runtime_ms": 540,
+        "status": "fail"
+      },
+      {
+        "test_index": 19,
+        "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "2\n0\n0\n22",
+        "actual": "1\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 309,
+        "status": "fail"
+      },
+      {
+        "test_index": 20,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n14 6\n2 3\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n36",
+        "actual": "3\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 529,
+        "status": "fail"
+      },
+      {
+        "test_index": 21,
+        "input": "4\n4 2\n3 2\n1 5\n1 1\n2 1\n2 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "2\n0\n1\n16",
+        "actual": "1\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 373,
+        "status": "fail"
+      },
+      {
+        "test_index": 22,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n18",
+        "actual": "3\n0\n0\n12",
+        "stderr": "",
+        "runtime_ms": 511,
+        "status": "fail"
+      },
+      {
+        "test_index": 23,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 3\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n28",
+        "actual": "3\n0\n0\n7",
+        "stderr": "",
+        "runtime_ms": 602,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 7\n2 20\n5 10\n16 18\n15 12\n11 3\n",
+        "expected": "16\n0\n0\n22",
+        "actual": "6\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 508,
+        "status": "fail"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n14 1\n2 20\n5 10\n13 18\n4 12\n11 7\n",
+        "expected": "4\n0\n0\n24",
+        "actual": "3\n0\n0\n18",
+        "stderr": "",
+        "runtime_ms": 237,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n1 0\n10 6\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n16",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 350,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n9 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n16",
+        "actual": "6\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 620,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n17",
+        "actual": "6\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 394,
+        "status": "fail"
+      },
+      {
+        "test_index": 29,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 2\n3 20\n8 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n14",
+        "actual": "6\n0\n0\n8",
+        "stderr": "",
+        "runtime_ms": 460,
+        "status": "fail"
+      },
+      {
+        "test_index": 30,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n35",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 427,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "4\n4 2\n8 2\n1 7\n1 1\n2 1\n1 0\n10 6\n14 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "2\n0\n0\n20",
+        "actual": "1\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 560,
+        "status": "fail"
+      },
+      {
+        "test_index": 32,
+        "input": "4\n4 2\n8 2\n1 3\n1 1\n2 1\n0 0\n10 6\n14 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "2\n0\n0\n19",
+        "actual": "1\n0\n0\n13",
+        "stderr": "",
+        "runtime_ms": 279,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 1\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "4\n0\n0\n42",
+        "actual": "3\n0\n0\n6",
+        "stderr": "",
+        "runtime_ms": 361,
+        "status": "fail"
+      },
+      {
+        "test_index": 34,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 2\n19 4\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n31",
+        "actual": "6\n0\n0\n3",
+        "stderr": "",
+        "runtime_ms": 547,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "4\n5 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 6\n19 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "8\n0\n1\n17",
+        "actual": "5\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 437,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n38",
+        "actual": "3\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 395,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 5\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n21",
+        "actual": "7\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 288,
+        "status": "fail"
+      },
+      {
+        "test_index": 38,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n16",
+        "actual": "2\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 525,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "3\n0\n1\n35",
+        "actual": "2\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 622,
+        "status": "fail"
+      },
+      {
+        "test_index": 40,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 0\n19 3\n1 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n45",
+        "actual": "2\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 646,
+        "status": "fail"
+      },
+      {
+        "test_index": 41,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n13 6\n14 6\n2 20\n9 10\n13 18\n15 12\n1 7\n",
+        "expected": "3\n0\n1\n39",
+        "actual": "2\n0\n0\n18",
+        "stderr": "",
+        "runtime_ms": 759,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n2 0\n10 2\n14 6\n4 20\n9 10\n13 18\n29 18\n11 7\n",
+        "expected": "3\n0\n1\n38",
+        "actual": "2\n0\n0\n10",
+        "stderr": "",
+        "runtime_ms": 820,
+        "status": "fail"
+      },
+      {
+        "test_index": 43,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n2 0\n15 6\n14 6\n2 20\n9 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n1\n50",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 767,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 13\n",
+        "expected": "4\n0\n0\n17",
+        "actual": "3\n0\n0\n11",
+        "stderr": "",
+        "runtime_ms": 554,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "4\n4 2\n8 2\n1 4\n1 1\n2 1\n0 0\n10 6\n19 6\n2 17\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "3\n0\n0\n22",
+        "actual": "2\n0\n0\n16",
+        "stderr": "",
+        "runtime_ms": 233,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "4\n7 2\n8 2\n1 4\n1 1\n2 1\n0 0\n17 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "16\n0\n0\n76",
+        "actual": "6\n0\n0\n21",
+        "stderr": "",
+        "runtime_ms": 703,
+        "status": "fail"
+      },
+      {
+        "test_index": 47,
+        "input": "4\n4 2\n8 2\n1 5\n1 1\n2 1\n4 0\n10 6\n1 6\n2 20\n5 10\n13 18\n15 12\n11 7\n",
+        "expected": "4\n0\n6\n20",
+        "actual": "3\n0\n0\n14",
+        "stderr": "",
+        "runtime_ms": 246,
+        "status": "fail"
+      },
+      {
+        "test_index": 48,
+        "input": "4\n4 2\n6 2\n1 5\n1 1\n2 1\n0 0\n10 6\n19 6\n2 20\n5 10\n16 18\n1 12\n11 7\n",
+        "expected": "6\n0\n0\n21",
+        "actual": "5\n0\n0\n15",
+        "stderr": "",
+        "runtime_ms": 803,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "4\n6 2\n8 2\n1 5\n1 1\n2 1\n0 0\n13 6\n19 6\n2 20\n5 10\n16 18\n15 12\n11 7\n",
+        "expected": "13\n0\n0\n42",
+        "actual": "7\n0\n0\n21",
+        "stderr": "",
+        "runtime_ms": 280,
+        "status": "fail"
+      }
+    ]
+  },
+  "total_cost_usd": 0.0636,
+  "total_latency_ms": 55161
+}

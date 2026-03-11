@@ -1,0 +1,553 @@
+{
+  "study": "A",
+  "condition": "A3",
+  "task_id": "cc_021",
+  "replica": 0,
+  "generation": {
+    "model": "claude-sonnet-4-6",
+    "code": "import sys\ninput = sys.stdin.readline\n\ndef solve():\n    n, m = map(int, input().split())\n    grid = []\n    for _ in range(n):\n        line = input().strip()\n        grid.append([int(c) for c in line])\n    \n    # prefix sums\n    # col_prefix[i][j] = sum of grid[0..i-1][j]\n    col_psum = [[0]*(m) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            col_psum[i+1][j] = col_psum[i][j] + grid[i][j]\n    \n    # row prefix for each row\n    row_psum = [[0]*(m+1) for _ in range(n)]\n    for i in range(n):\n        for j in range(m):\n            row_psum[i][j+1] = row_psum[i][j] + grid[i][j]\n    \n    # 2d prefix sum\n    psum2d = [[0]*(m+1) for _ in range(n+1)]\n    for i in range(n):\n        for j in range(m):\n            psum2d[i+1][j+1] = psum2d[i][j+1] + psum2d[i+1][j] - psum2d[i][j] + grid[i][j]\n    \n    def col_sum(c, r1, r2): # rows r1..r2 inclusive, 0-indexed\n        return col_psum[r2+1][c] - col_psum[r1][c]\n    \n    def row_sum(r, c1, c2):\n        return row_psum[r][c2+1] - row_psum[r][c1]\n    \n    def rect_sum(r1, c1, r2, c2):\n        return psum2d[r2+1][c2+1] - psum2d[r1][c2+1] - psum2d[r2+1][c1] + psum2d[r1][c1]\n    \n    ans = float('inf')\n    \n    for r1 in range(n-4):\n        for r2 in range(r1+4, n):\n            # inner rows: r1+1..r2-1\n            # left col cost at c: zeros in inner rows = (r2-r1-1) - col_sum(c, r1+1, r2-1)\n            # right col cost same\n            # top row between c1+1..c2-1: zeros = (c2-c1-1) - row_sum(r1, c1+1, c2-1)\n            # bot row similarly\n            # interior ones: rect_sum(r1+1, c1+1, r2-1, c2-1)\n            \n            inner_rows = r2 - r1 - 1\n            \n            # precompute for columns\n            # left(c) = inner_rows - col_sum(c, r1+1, r2-1)\n            # int_col_prefix[c] = rect_sum(r1+1, 0, r2-1, c) -- ones in inner rows, cols 0..c\n            # top_prefix[c] = row_psum[r1][c+1] (zeros from col 0..c in top row = (c+1) - row_psum[r1][c+1])\n            # actually top row zeros in c1+1..c2-1 = (c2-c1-1) - (row_sum(r1, c1+1, c2-1))\n            \n            # Let me define:\n            # For col c (0-indexed):\n            # lc(c) = inner_rows - (col_psum[r2][c] - col_psum[r1+1][c])  # zeros in left col\n            # For top row, ones in 0..c: row_psum[r1][c+1]\n            # int ones in inner rows, cols 0..c: psum2d[r2][c+1] - psum2d[r1+1][c+1]\n            \n            # Cost for (c1, c2):\n            # lc(c1) + lc(c2) \n            # + (c2-c1-1) - (row_psum[r1][c2] - row_psum[r1][c1+1])  [top zeros]\n            # + (c2-c1-1) - (row_psum[r2][c2] - row_psum[r2][c1+1])  [bot zeros]\n            # + rect ones interior\n            \n            # rect ones = psum2d[r2][c2] - psum2d[r1+1][c2] - psum2d[r2][c1+1] + psum2d[r1+1][c1+1]\n            \n            # Rearranging, fix c2, minimize over c1 <= c2-3:\n            # terms depending on c1:\n            # lc(c1) - (c2-c1-1) [from -c1 in (c2-c1-1)*2] wait let me be careful\n            \n            # Total cost = lc(c1) + lc(c2)\n            #   + (c2-c1-1) - row_psum[r1][c2] + row_psum[r1][c1+1]\n            #   + (c2-c1-1) - row_psum[r2][c2] + row_psum[r2][c1+1]\n            #   + psum2d[r2][c2] - psum2d[r1+1][c2] - psum2d[r2][c1+1] + psum2d[r1+1][c1+1]\n            \n            # = lc(c2) - row_psum[r1][c2] - row_psum[r2][c2] + psum2d[r2][c2] - psum2d[r1+1][c2]\n            #   + 2*(c2-1)   [from 2*(c2-c1-1) = 2*c2 - 2*c1 - 2, c2 part]\n            #   + lc(c1) + 2*c1 [wait, -2*(c1) from -2*(c2-c1-1)... let me redo]\n            \n            # 2*(c2-c1-1) = 2*c2 - 2*c1 - 2\n            # So c1 part: lc(c1) - 2*c1 + row_psum[r1][c1+1] + row_psum[r2][c1+1] - psum2d[r2][c1+1] + psum2d[r1+1][c1+1]\n            # c2 part: lc(c2) + 2*c2 - 2 - row_psum[r1][c2] - row_psum[r2][c2] + psum2d[r2][c2] - psum2d[r1+1][c2]\n            \n            min_c1 = float('inf')\n            \n            for c2 in range(3, m):\n                # update min_c1 with c1 = c2-3\n                c1 = c2 - 3\n                # lc(c1)\n                lc1 = inner_rows - (col_psum[r2][c1] - col_psum[r1+1][c1])\n                val_c1 = lc1 - 2*c1 + row_psum[r1][c1+1] + row_psum[r2][c1+1] - psum2d[r2][c1+1] + psum2d[r1+1][c1+1]\n                if val_c1 < min_c1:\n                    min_c1 = val_c1\n                \n                lc2 = inner_rows - (col_psum[r2][c2] - col_psum[r1+1][c2])\n                val_c2 = lc2 + 2*c2 - 2 - row_psum[r1][c2] - row_psum[r2][c2] + psum2d[r2][c2] - psum2d[r1+1][c2]\n                \n                total = min_c1 + val_c2\n                if total < ans:\n                    ans = total\n    \n    print(ans)\n\nt = int(input())\nfor _ in range(t):\n    solve()",
+    "input_tokens": 691,
+    "output_tokens": 4096,
+    "cost_usd": 0.063513,
+    "latency_ms": 43925
+  },
+  "reviews": [
+    {
+      "role": "specialist_boundary",
+      "model": "mercury-2",
+      "verdict": "PASS",
+      "bugs_reported": 0,
+      "bugs": [],
+      "raw_response": "",
+      "parsed": null,
+      "input_tokens": 2435,
+      "output_tokens": 0,
+      "cost_usd": 0.00060875,
+      "latency_ms": 9012
+    },
+    {
+      "role": "specialist_complexity",
+      "model": "mercury-2",
+      "verdict": "PASS",
+      "bugs_reported": 0,
+      "bugs": [],
+      "raw_response": "{\"bugs\": []}",
+      "parsed": {
+        "bugs": []
+      },
+      "input_tokens": 2422,
+      "output_tokens": 7,
+      "cost_usd": 0.00061075,
+      "latency_ms": 3452
+    },
+    {
+      "role": "specialist_edge_case",
+      "model": "mercury-2",
+      "verdict": "PASS",
+      "bugs_reported": 0,
+      "bugs": [],
+      "raw_response": "{\n  \"bugs\": []\n}",
+      "parsed": {
+        "bugs": []
+      },
+      "input_tokens": 2474,
+      "output_tokens": 11,
+      "cost_usd": 0.00062675,
+      "latency_ms": 5206
+    },
+    {
+      "role": "specialist_logic",
+      "model": "mercury-2",
+      "verdict": "PASS",
+      "bugs_reported": 0,
+      "bugs": [],
+      "raw_response": "{\"bugs\": []}",
+      "parsed": {
+        "bugs": []
+      },
+      "input_tokens": 2486,
+      "output_tokens": 9,
+      "cost_usd": 0.00062825,
+      "latency_ms": 7846
+    },
+    {
+      "role": "specialist_state",
+      "model": "mercury-2",
+      "verdict": "PASS",
+      "bugs_reported": 0,
+      "bugs": [],
+      "raw_response": "{\n  \"bugs\": []\n}",
+      "parsed": {
+        "bugs": []
+      },
+      "input_tokens": 2500,
+      "output_tokens": 10,
+      "cost_usd": 0.0006325,
+      "latency_ms": 5795
+    }
+  ],
+  "aggregated_bugs": [],
+  "fix": null,
+  "test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n111100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 43,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "1\n5 4\n1000\n0000\n0110\n0000\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n5 4\n1000\n0000\n1110\n0001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n5 4\n1011\n0000\n1010\n0000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n000110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0001\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n5 4\n1011\n0000\n1010\n0001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n5 4\n1000\n0100\n0110\n0101\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n5 4\n1011\n0000\n1010\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n5 4\n0011\n0001\n0010\n1001\n1101\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "4",
+        "actual": "4",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n8 9\n101110001\n101110100\n000010001\n001000001\n001011001\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n5 4\n1000\n0000\n0110\n0001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n5 4\n1000\n0000\n1111\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n5 4\n1000\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n5 4\n1001\n0000\n1010\n0000\n1000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n5 4\n1000\n0000\n0110\n0101\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n5 4\n1000\n0010\n0110\n0001\n0000\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n5 4\n1000\n0000\n1110\n0000\n0010\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n5 4\n1000\n0000\n1111\n0010\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n5 4\n1000\n0010\n1010\n0000\n1000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "1\n5 4\n1001\n0000\n1010\n1000\n1000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n101010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "1\n5 4\n1100\n0010\n0110\n0001\n0001\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n5 4\n1000\n0110\n0110\n0001\n0000\n",
+        "expected": "13",
+        "actual": "13",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n100000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n5 4\n1100\n0010\n0110\n1001\n0001\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n5 4\n1000\n0000\n0110\n1101\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n5 4\n1000\n0010\n0110\n1001\n0000\n",
+        "expected": "11",
+        "actual": "11",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n5 4\n1011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100000\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n5 4\n1000\n0001\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "1\n5 4\n1000\n0010\n1110\n1001\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n9 9\n001010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n5 4\n1010\n0001\n0110\n1101\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n5 4\n1010\n0010\n1110\n1001\n0000\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1000\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n000000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n5 4\n1010\n0011\n0110\n1101\n0000\n",
+        "expected": "10",
+        "actual": "10",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0000\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n5 4\n0011\n0000\n0011\n1001\n1001\n",
+        "expected": "7",
+        "actual": "7",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n9 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n5 4\n1110\n0010\n1110\n1001\n0001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n5 4\n0011\n0000\n0010\n1001\n1001\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n8 9\n101010001\n101110100\n000010011\n001000001\n001010101\n110001111\n000001111\n110100010\n010110000\n",
+        "expected": "5",
+        "actual": "5",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n5 4\n1110\n0010\n0110\n1001\n0001\n",
+        "expected": "9",
+        "actual": "9",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.06662,
+  "total_latency_ms": 75236
+}

@@ -1,0 +1,1094 @@
+{
+  "study": "E",
+  "condition": "C9",
+  "task_id": "cc_035",
+  "replica": 0,
+  "strategy_family": "debate",
+  "generations": [
+    {
+      "model": "deepseek/deepseek-chat",
+      "code": "import sys\n\ndef main():\n    input = sys.stdin.read().split()\n    ptr = 0\n    n, m = map(int, input[ptr:ptr+2])\n    ptr +=2\n    \n    x = [0]*(n+1)\n    y = [0]*(n+1)\n    for i in range(1, n+1):\n        x[i], y[i] = map(int, input[ptr:ptr+2])\n        ptr +=2\n    \n    active = set()\n    # To handle the trains, we need to track for each active train its model and the day it was added\n    # But since we need to compute for each day whether the train is in maintenance or not\n    # For a train added on day 'start_day', model 'k', the maintenance periods are:\n    # [start_day + x_k, start_day + x_k + y_k -1], then next cycle, etc.\n    # On any day 't', the train is in maintenance if (t - start_day) mod (x_k + y_k) >= x_k and (t - start_day) mod (x_k + y_k) < x_k + y_k\n    \n    # But for large m (up to 2e5), and each query needing to check all active trains, O(m^2) is not feasible.\n    # So we need a way to track the number of trains in maintenance per day efficiently.\n    \n    # Let's think differently: for each train, when it's active, it contributes to certain intervals (mod x_k + y_k)\n    # We can represent these intervals as mod ranges.\n    # For a train added on day 's', model 'k', the mod is (t - s) mod (x_k + y_k) must be in [x_k, x_k + y_k -1]\n    # So for any day t, the condition is (t - s) mod T_k \u2208 [x_k, x_k + y_k -1], where T_k = x_k + y_k.\n    # Which is equivalent to t mod T_k \u2208 [ (x_k + s mod T_k) mod T_k, (x_k + y_k -1 + s mod T_k) mod T_k ]\n    # So for each active train, it contributes to a mod range in T_k.\n    # For a given day t, the number of trains in maintenance is the sum over all active trains where t mod T_k falls in their respective ranges.\n    \n    # To compute this efficiently, we can use a dictionary to count, for each possible mod value, how many trains cover it.\n    # But since T_k can be up to 2e9, we can't store all mod values. Instead, we can use a dictionary to map T_k to another dictionary that maps mod ranges to counts.\n    # But even that is not feasible for large n and m.\n    \n    # Another approach: for each query day t, the answer is the sum over all active trains k where (t - s_k) mod T_k >= x_k and (t - s_k) mod T_k < T_k.\n    # But since T_k can be large, we can't precompute anything.\n    \n    # So we need a way to, for each query day t, iterate through all active trains and check the condition.\n    # But with m=2e5 and up to m active trains, O(m^2) is not acceptable.\n    \n    # The key observation is that for trains with T_k > sqrt(m), their mod ranges are hit at most sqrt(m) times during m days. So there are O(sqrt(m)) such trains per query.\n    # For trains with T_k <= sqrt(m), we can precompute for each possible mod value and T_k, the count of trains that have that mod range.\n    \n    # So split the trains into heavy (T_k > sqrt(m)) and light (T_k <= sqrt(m)).\n    # For light trains, maintain a 2D array cnt[T][r], which is the number of active trains with T_k = T and mod condition r.\n    # For heavy trains, during each query, check each one individually.\n    \n    # Let's choose B = sqrt(m). For T_k <= B, use the light approach; else heavy.\n    \n    B = int(m**0.5) + 1\n    \n    # For light trains: T_k <= B\n    # We'll have a dictionary for each T (up to B), and for each possible remainder mod T, the count of trains that include this remainder in their maintenance interval.\n    light_counts = [ [0]*(B+2) for _ in range(B+2) ]  # light_counts[T][r] is count for mod T, remainder r\n    \n    # For heavy trains: T_k > B. We'll store them in a list and process them per query.\n    heavy_trains = []\n    \n    total_light = 0\n    total_heavy = 0\n    \n    res = []\n    # We also need to track for each active train its model, start day, and T_k, x_k, y_k.\n    trains_info = {}  # model -> (start_day, x_k, y_k, T_k)\n    \n    for day in range(1, m+1):\n        op, k = map(int, input[ptr:ptr+2])\n        ptr +=2\n        if op == 1:\n            # Add train of model k\n            start_day = day\n            x_k = x[k]\n            y_k = y[k]\n            T_k = x_k + y_k\n            trains_info[k] = (start_day, x_k, y_k, T_k)\n            if T_k <= B:\n                # Light train\n                s_mod = start_day % T_k\n                # The maintenance interval is [ (x_k + s_mod) % T_k, (x_k + y_k -1 + s_mod) % T_k ]\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k -1 + s_mod) % T_k\n                # For mod T_k, any t where t mod T_k is in [a, b] (wrapping around if a > b)\n                if a <= b:\n                    for r in range(a, b+1):\n                        light_counts[T_k][r] += 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] += 1\n                    for r in range(0, b+1):\n                        light_counts[T_k][r] += 1\n            else:\n                # Heavy train: add to list\n                heavy_trains.append(k)\n        else:\n            # Remove train of model k\n            start_day, x_k, y_k, T_k = trains_info[k]\n            del trains_info[k]\n            if T_k <= B:\n                # Light train: subtract from light_counts\n                s_mod = start_day % T_k\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k -1 + s_mod) % T_k\n                if a <= b:\n                    for r in range(a, b+1):\n                        light_counts[T_k][r] -= 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] -= 1\n                    for r in range(0, b+1):\n                        light_counts[T_k][r] -= 1\n            else:\n                # Heavy train: remove from list\n                heavy_trains.remove(k)\n        # Now compute the answer for current day\n        ans = 0\n        # Light part: sum over T <= B, light_counts[T][day mod T]\n        for T in range(1, B+1):\n            mod = day % T\n            ans += light_counts[T][mod]\n        # Heavy part: check each heavy train\n        for k in heavy_trains:\n            start_day, x_k, y_k, T_k = trains_info[k]\n            delta = day - start_day\n            mod = delta % T_k\n            if mod >= x_k and mod < x_k + y_k:\n                ans += 1\n        res.append(ans)\n    \n    print('\\n'.join(map(str, res)))\n\nif __name__ == '__main__':\n    main()",
+      "input_tokens": 638,
+      "output_tokens": 1779,
+      "cost_usd": 0.00212916,
+      "latency_ms": 51795
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "attacker",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm\u2019s time complexity can degrade to O(m\u00b2) because it iterates over all heavy trains on every day and also uses list.remove() which is O(#heavy). In the worst case where almost all trains are \u201cheavy\u201d (T_k > sqrt(m)), the inner loops become quadratic and will time\u2011out.\",\n      \"triggering_input\": \"200000 200000\\n1000000000 1000000000\\n1000000000 1000000000\\n... (repeat the above line 200000 times) ...\\n1 1\\n1 2\\n1 3\\n... (add a new train each day for the first 100000 days) ...\\n2 1\\n2 2\\n2 3\\n... (remove one train each day for the next 100000 days) ...\",\n      \"expected_output\": \"A line with 0 for each of the 200000 days (since x_i and y_i are far larger than the total number of days, no train ever enters maintenance).\",\n      \"actual_behavior\": \"The program runs far too long (quadratic time) and will exceed typical time limits, effectively hanging or being killed by the judge.\",\n      \"severity\": \"critical\"\n    },\n    {\n      \"description\": \"Removal of a heavy train is performed with `heavy_trains.remove(k)`, which scans the list to find the element. This makes each removal O(#heavy) and contributes to the quadratic blow\u2011up described above.\",\n      \"triggering_input\": \"5 10\\n1000000000 1000000000\\n1000000000 1000000000\\n1000000000 1000000000\\n1000000000 1000000000\\n1000000000 1000000000\\n1 1\\n1 2\\n1 3\\n1 4\\n1 5\\n2 1\\n2 2\\n2 3\\n2 4\\n2 5\",\n      \"expected_output\": \"0\\n0\\n0\\n0\\n0\\n0\\n0\\n0\\n0\\n0\",\n      \"actual",
+          "parsed": null,
+          "input_tokens": 2363,
+          "output_tokens": 435,
+          "cost_usd": 0.000917,
+          "latency_ms": 11053
+        },
+        {
+          "role": "defender",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"evaluations\": []\n}",
+          "parsed": {
+            "evaluations": []
+          },
+          "input_tokens": 2368,
+          "output_tokens": 11,
+          "cost_usd": 0.00060025,
+          "latency_ms": 510
+        },
+        {
+          "role": "judge",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"final_bugs\": []\n}",
+          "parsed": {
+            "final_bugs": []
+          },
+          "input_tokens": 2401,
+          "output_tokens": 9,
+          "cost_usd": 0.000607,
+          "latency_ms": 4191
+        },
+        {
+          "role": "attacker_rebuttal",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm is O(m * (B + H)) where H is the number of heavy trains (T_k > sqrt(m)). In the worst case all trains can be heavy (e.g., x_i + y_i > sqrt(m) for every model). Then each day the code iterates over all active heavy trains, leading to O(m * n) time (\u2248 4\u00b710^10 operations for n=m=2\u00b710^5). This exceeds the time limit and makes the solution infeasible.",
+              "triggering_input": "200000 200000\n1000000 1000000\n1000000 1000000\n... (200000 lines of the same x y)\n1 1\n1 2\n1 3\n... (add each model once, no removals)\n",
+              "expected_output": "A sequence of 200000 lines, each containing 0 (since no train has entered maintenance yet).",
+              "actual_behavior": "The program runs far too long (or exceeds the time limit) because for each of the 200000 days it iterates over all currently active heavy trains (up to 200000), resulting in roughly 4\u00b710^10 inner\u2011loop checks.",
+              "severity": "critical",
+              "rebuttal_to": "Defender claimed the code is correct and efficient; however, the heavy\u2011train handling is quadratic in the worst case and therefore invalid."
+            }
+          ],
+          "raw_response": "{\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm is O(m * (B + H)) where H is the number of heavy trains (T_k > sqrt(m)). In the worst case all trains can be heavy (e.g., x_i + y_i > sqrt(m) for every model). Then each day the code iterates over all active heavy trains, leading to O(m * n) time (\u2248 4\u00b710^10 operations for n=m=2\u00b710^5). This exceeds the time limit and makes the solution infeasible.\",\n      \"triggering_input\": \"200000 200000\\n1000000 1000000\\n1000000 1000000\\n... (200000 lines of the same x y)\\n1 1\\n1 2\\n1 3\\n... (add each model once, no removals)\\n\",\n      \"expected_output\": \"A sequence of 200000 lines, each containing 0 (since no train has entered maintenance yet).\",\n      \"actual_behavior\": \"The program runs far too long (or exceeds the time limit) because for each of the 200000 days it iterates over all currently active heavy trains (up to 200000), resulting in roughly 4\u00b710^10 inner\u2011loop checks.\",\n      \"severity\": \"critical\",\n      \"rebuttal_to\": \"Defender claimed the code is correct and efficient; however, the heavy\u2011train handling is quadratic in the worst case and therefore invalid.\"\n    }\n  ]\n}",
+          "parsed": {
+            "bugs": [
+              {
+                "description": "The algorithm is O(m * (B + H)) where H is the number of heavy trains (T_k > sqrt(m)). In the worst case all trains can be heavy (e.g., x_i + y_i > sqrt(m) for every model). Then each day the code iterates over all active heavy trains, leading to O(m * n) time (\u2248 4\u00b710^10 operations for n=m=2\u00b710^5). This exceeds the time limit and makes the solution infeasible.",
+                "triggering_input": "200000 200000\n1000000 1000000\n1000000 1000000\n... (200000 lines of the same x y)\n1 1\n1 2\n1 3\n... (add each model once, no removals)\n",
+                "expected_output": "A sequence of 200000 lines, each containing 0 (since no train has entered maintenance yet).",
+                "actual_behavior": "The program runs far too long (or exceeds the time limit) because for each of the 200000 days it iterates over all currently active heavy trains (up to 200000), resulting in roughly 4\u00b710^10 inner\u2011loop checks.",
+                "severity": "critical",
+                "rebuttal_to": "Defender claimed the code is correct and efficient; however, the heavy\u2011train handling is quadratic in the worst case and therefore invalid."
+              }
+            ]
+          },
+          "input_tokens": 2414,
+          "output_tokens": 311,
+          "cost_usd": 0.00083675,
+          "latency_ms": 5394
+        },
+        {
+          "role": "defender_rebuttal",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "bug_description": "The solution treats trains with period T = x_i + y_i > B (where B \u2248 sqrt(m)) as \"heavy\" and stores them in a list heavy_trains. For each day it iterates over the entire heavy_trains list to compute the answer and also uses list.remove on removal, which is O(|heavy_trains|). In the worst case all trains can be heavy, so on day t there may be O(t) active heavy trains, causing the per\u2011day work to be O(t) and the total runtime to be O(m\u00b2) (\u2248 4\u00b710\u00b9\u2070 operations for m = n = 2\u00b710\u2075). This exceeds the time limit and makes the algorithm infeasible.",
+              "verdict": "CONFIRMED",
+              "reasoning": "The heavy\u2011train handling does not use any amortized or sub\u2011linear data structure; it linearly scans all active heavy trains each day and also removes by value from a Python list, which is linear. When many trains have large periods, the number of heavy trains can be \u0398(m), leading to \u0398(m\u00b2) total work. This contradicts the required O(m log m) or similar bound, so the claim of correctness and efficiency is invalid."
+            }
+          ],
+          "raw_response": "{\n  \"evaluations\": [\n    {\n      \"bug_description\": \"The solution treats trains with period T = x_i + y_i > B (where B \u2248 sqrt(m)) as \\\"heavy\\\" and stores them in a list heavy_trains. For each day it iterates over the entire heavy_trains list to compute the answer and also uses list.remove on removal, which is O(|heavy_trains|). In the worst case all trains can be heavy, so on day t there may be O(t) active heavy trains, causing the per\u2011day work to be O(t) and the total runtime to be O(m\u00b2) (\u2248 4\u00b710\u00b9\u2070 operations for m = n = 2\u00b710\u2075). This exceeds the time limit and makes the algorithm infeasible.\",\n      \"verdict\": \"CONFIRMED\",\n      \"reasoning\": \"The heavy\u2011train handling does not use any amortized or sub\u2011linear data structure; it linearly scans all active heavy trains each day and also removes by value from a Python list, which is linear. When many trains have large periods, the number of heavy trains can be \u0398(m), leading to \u0398(m\u00b2) total work. This contradicts the required O(m log m) or similar bound, so the claim of correctness and efficiency is invalid.\"\n    }\n  ]\n}",
+          "parsed": {
+            "evaluations": [
+              {
+                "bug_description": "The solution treats trains with period T = x_i + y_i > B (where B \u2248 sqrt(m)) as \"heavy\" and stores them in a list heavy_trains. For each day it iterates over the entire heavy_trains list to compute the answer and also uses list.remove on removal, which is O(|heavy_trains|). In the worst case all trains can be heavy, so on day t there may be O(t) active heavy trains, causing the per\u2011day work to be O(t) and the total runtime to be O(m\u00b2) (\u2248 4\u00b710\u00b9\u2070 operations for m = n = 2\u00b710\u2075). This exceeds the time limit and makes the algorithm infeasible.",
+                "verdict": "CONFIRMED",
+                "reasoning": "The heavy\u2011train handling does not use any amortized or sub\u2011linear data structure; it linearly scans all active heavy trains each day and also removes by value from a Python list, which is linear. When many trains have large periods, the number of heavy trains can be \u0398(m), leading to \u0398(m\u00b2) total work. This contradicts the required O(m log m) or similar bound, so the claim of correctness and efficiency is invalid."
+              }
+            ]
+          },
+          "input_tokens": 2635,
+          "output_tokens": 268,
+          "cost_usd": 0.00085975,
+          "latency_ms": 1232
+        },
+        {
+          "role": "final_judge",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Heavy\u2011train handling is quadratic. The solution stores all trains with period T > B (B \u2248 \u221am) in a Python list `heavy_trains` and, for each day, iterates over the entire list to count those in maintenance. It also removes a train with `list.remove`, which is O(|heavy_trains|). In the worst case all n = m = 2\u00b710\u2075 trains are heavy, so the per\u2011day work becomes O(m) and total work O(m\u00b2) \u2248 4\u00b710\u00b9\u2070 operations, far exceeding the time limit.",
+              "triggering_input": "200000 200000\n1000000 1000000\n1000000 1000000\n... (200000 identical lines of x y)\n1 1\n1 2\n1 3\n... (add each model once, no removals)\n",
+              "fix": "Replace the linear scan of heavy trains with a sub\u2011linear structure. One common approach is to treat heavy trains individually by pre\u2011computing their maintenance intervals using a difference array: for each heavy train, add +1 to the answer for all days it is in maintenance (using range updates) when it is added, and subtract when it is removed. Since a heavy train\u2019s period T > \u221am, it contributes at most O(m / \u221am) = O(\u221am) intervals over the whole timeline, giving O(m\u00b7\u221am) total updates, which is fast enough. Alternatively, maintain a Fenwick/segment tree keyed by day and, on addition/removal of a heavy train, update the tree with O(log m) range adds for each full cycle within the remaining days. This eliminates the per\u2011day linear scan and the O(|heavy_trains|) removal cost.",
+              "confirmed": true,
+              "reasoning": "The current implementation indeed scans the entire `heavy_trains` list each day and uses `list.remove`, both linear in the number of heavy trains. When many trains are heavy, the total runtime becomes O(m\u00b2), which is not acceptable for the given constraints. The proposed fix changes the algorithm to use range updates on a difference array or a segment tree, reducing the per\u2011train contribution to O(\u221am) or O(log m) and bringing the overall complexity within the required limits."
+            }
+          ],
+          "raw_response": "{\n  \"final_bugs\": [\n    {\n      \"description\": \"Heavy\u2011train handling is quadratic. The solution stores all trains with period T > B (B \u2248 \u221am) in a Python list `heavy_trains` and, for each day, iterates over the entire list to count those in maintenance. It also removes a train with `list.remove`, which is O(|heavy_trains|). In the worst case all n = m = 2\u00b710\u2075 trains are heavy, so the per\u2011day work becomes O(m) and total work O(m\u00b2) \u2248 4\u00b710\u00b9\u2070 operations, far exceeding the time limit.\",\n      \"triggering_input\": \"200000 200000\\n1000000 1000000\\n1000000 1000000\\n... (200000 identical lines of x y)\\n1 1\\n1 2\\n1 3\\n... (add each model once, no removals)\\n\",\n      \"fix\": \"Replace the linear scan of heavy trains with a sub\u2011linear structure. One common approach is to treat heavy trains individually by pre\u2011computing their maintenance intervals using a difference array: for each heavy train, add +1 to the answer for all days it is in maintenance (using range updates) when it is added, and subtract when it is removed. Since a heavy train\u2019s period T > \u221am, it contributes at most O(m / \u221am) = O(\u221am) intervals over the whole timeline, giving O(m\u00b7\u221am) total updates, which is fast enough. Alternatively, maintain a Fenwick/segment tree keyed by day and, on addition/removal of a heavy train, update the tree with O(log m) range adds for each full cycle within the remaining days. This eliminates the per\u2011day linear scan and the O(|heavy_trains|) removal cost.\",\n      \"confirmed\": true,\n      \"reasoning\": \"The current implementation indeed scans the entire `heavy_trains` list each day and uses `list.remove`, both linear in the number of heavy trains. When many trains are heavy, the total runtime becomes O(m\u00b2), which is not acceptable for the given constraints. The proposed fix changes the algorithm to use range updates on a difference array or a segment tree, reducing the per\u2011train contribution to O(\u221am) or O(log m) and bringing the overall complexity within the required limits.\"\n    }\n  ]\n}",
+          "parsed": {
+            "final_bugs": [
+              {
+                "description": "Heavy\u2011train handling is quadratic. The solution stores all trains with period T > B (B \u2248 \u221am) in a Python list `heavy_trains` and, for each day, iterates over the entire list to count those in maintenance. It also removes a train with `list.remove`, which is O(|heavy_trains|). In the worst case all n = m = 2\u00b710\u2075 trains are heavy, so the per\u2011day work becomes O(m) and total work O(m\u00b2) \u2248 4\u00b710\u00b9\u2070 operations, far exceeding the time limit.",
+                "triggering_input": "200000 200000\n1000000 1000000\n1000000 1000000\n... (200000 identical lines of x y)\n1 1\n1 2\n1 3\n... (add each model once, no removals)\n",
+                "fix": "Replace the linear scan of heavy trains with a sub\u2011linear structure. One common approach is to treat heavy trains individually by pre\u2011computing their maintenance intervals using a difference array: for each heavy train, add +1 to the answer for all days it is in maintenance (using range updates) when it is added, and subtract when it is removed. Since a heavy train\u2019s period T > \u221am, it contributes at most O(m / \u221am) = O(\u221am) intervals over the whole timeline, giving O(m\u00b7\u221am) total updates, which is fast enough. Alternatively, maintain a Fenwick/segment tree keyed by day and, on addition/removal of a heavy train, update the tree with O(log m) range adds for each full cycle within the remaining days. This eliminates the per\u2011day linear scan and the O(|heavy_trains|) removal cost.",
+                "confirmed": true,
+                "reasoning": "The current implementation indeed scans the entire `heavy_trains` list each day and uses `list.remove`, both linear in the number of heavy trains. When many trains are heavy, the total runtime becomes O(m\u00b2), which is not acceptable for the given constraints. The proposed fix changes the algorithm to use range updates on a difference array or a segment tree, reducing the per\u2011train contribution to O(\u221am) or O(log m) and bringing the overall complexity within the required limits."
+              }
+            ]
+          },
+          "input_tokens": 2989,
+          "output_tokens": 487,
+          "cost_usd": 0.0011125,
+          "latency_ms": 1705
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom collections import defaultdict\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    ptr = 0\n    n, m = int(data[ptr]), int(data[ptr+1])\n    ptr += 2\n    \n    x = [0] * (n + 1)\n    y = [0] * (n + 1)\n    for i in range(1, n + 1):\n        x[i], y[i] = int(data[ptr]), int(data[ptr+1])\n        ptr += 2\n    \n    B = max(1, int(m ** 0.5))\n    \n    # Light trains: T_k <= B\n    # light_counts[T][r] = number of active light trains with period T where remainder r means maintenance\n    light_counts = [[0] * (B + 2) for _ in range(B + 2)]\n    \n    # Heavy trains: use difference array on days 1..m\n    diff = [0] * (m + 2)\n    \n    trains_info = {}  # model -> (start_day, x_k, y_k, T_k)\n    # For heavy trains, store the intervals we added so we can remove them\n    heavy_intervals = {}  # model -> list of (l, r) intervals added to diff\n    \n    def add_heavy(k, start_day, x_k, y_k, T_k):\n        intervals = []\n        # First maintenance starts at start_day + x_k (relative day x_k from start)\n        # Maintenance interval in absolute days: [start_day + x_k + c*T_k, start_day + x_k + y_k - 1 + c*T_k]\n        # for c = 0, 1, 2, ...\n        first_maint = start_day + x_k\n        c = 0\n        while True:\n            l = first_maint + c * T_k\n            if l > m:\n                break\n            r = min(m, l + y_k - 1)\n            intervals.append((l, r))\n            diff[l] += 1\n            if r + 1 <= m + 1:\n                diff[r + 1] -= 1\n            c += 1\n        heavy_intervals[k] = intervals\n    \n    def remove_heavy(k):\n        intervals = heavy_intervals.pop(k)\n        for (l, r) in intervals:\n            diff[l] -= 1\n            if r + 1 <= m + 1:\n                diff[r + 1] += 1\n    \n    # Precompute prefix sums of diff on the fly\n    # We process days 1..m in order, maintaining running sum of diff\n    \n    # Read all operations first\n    ops = []\n    for _ in range(m):\n        op, k = int(data[ptr]), int(data[ptr+1])\n        ptr += 2\n        ops.append((op, k))\n    \n    # Process operations and build diff array for heavy trains\n    trains_info_temp = {}\n    for day in range(1, m + 1):\n        op, k = ops[day - 1]\n        if op == 1:\n            x_k, y_k = x[k], y[k]\n            T_k = x_k + y_k\n            trains_info_temp[k] = (day, x_k, y_k, T_k)\n            if T_k > B:\n                add_heavy(k, day, x_k, y_k, T_k)\n        else:\n            start_day, x_k, y_k, T_k = trains_info_temp[k]\n            del trains_info_temp[k]\n            if T_k > B:\n                remove_heavy(k)\n    \n    # Now process again for light trains and combine with diff prefix sums\n    trains_info2 = {}\n    running_diff = 0\n    res = []\n    \n    for day in range(1, m + 1):\n        op, k = ops[day - 1]\n        if op == 1:\n            x_k, y_k = x[k], y[k]\n            T_k = x_k + y_k\n            trains_info2[k] = (day, x_k, y_k, T_k)\n            if T_k <= B:\n                s_mod = day % T_k\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k - 1 + s_mod) % T_k\n                if a <= b:\n                    for r in range(a, b + 1):\n                        light_counts[T_k][r] += 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] += 1\n                    for r in range(0, b + 1):\n                        light_counts[T_k][r] += 1\n        else:\n            start_day, x_k, y_k, T_k = trains_info2[k]\n            del trains_info2[k]\n            if T_k <= B:\n                s_mod = start_day % T_k\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k - 1 + s_mod) % T_k\n                if a <= b:\n                    for r in range(a, b + 1):\n                        light_counts[T_k][r] -= 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] -= 1\n                    for r in range(0, b + 1):\n                        light_counts[T_k][r] -= 1\n        \n        running_diff += diff[day]\n        ans = running_diff\n        for T in range(1, B + 1):\n            ans += light_counts[T][day % T]\n        res.append(ans)\n    \n    sys.stdout.write('\\n'.join(map(str, res)) + '\\n')\n\nif __name__ == '__main__':\n    main()",
+          "input_tokens": 3394,
+          "output_tokens": 1714,
+          "cost_usd": 0.035892,
+          "latency_ms": 20230
+        }
+      ],
+      "final_code": "import sys\nfrom collections import defaultdict\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    ptr = 0\n    n, m = int(data[ptr]), int(data[ptr+1])\n    ptr += 2\n    \n    x = [0] * (n + 1)\n    y = [0] * (n + 1)\n    for i in range(1, n + 1):\n        x[i], y[i] = int(data[ptr]), int(data[ptr+1])\n        ptr += 2\n    \n    B = max(1, int(m ** 0.5))\n    \n    # Light trains: T_k <= B\n    # light_counts[T][r] = number of active light trains with period T where remainder r means maintenance\n    light_counts = [[0] * (B + 2) for _ in range(B + 2)]\n    \n    # Heavy trains: use difference array on days 1..m\n    diff = [0] * (m + 2)\n    \n    trains_info = {}  # model -> (start_day, x_k, y_k, T_k)\n    # For heavy trains, store the intervals we added so we can remove them\n    heavy_intervals = {}  # model -> list of (l, r) intervals added to diff\n    \n    def add_heavy(k, start_day, x_k, y_k, T_k):\n        intervals = []\n        # First maintenance starts at start_day + x_k (relative day x_k from start)\n        # Maintenance interval in absolute days: [start_day + x_k + c*T_k, start_day + x_k + y_k - 1 + c*T_k]\n        # for c = 0, 1, 2, ...\n        first_maint = start_day + x_k\n        c = 0\n        while True:\n            l = first_maint + c * T_k\n            if l > m:\n                break\n            r = min(m, l + y_k - 1)\n            intervals.append((l, r))\n            diff[l] += 1\n            if r + 1 <= m + 1:\n                diff[r + 1] -= 1\n            c += 1\n        heavy_intervals[k] = intervals\n    \n    def remove_heavy(k):\n        intervals = heavy_intervals.pop(k)\n        for (l, r) in intervals:\n            diff[l] -= 1\n            if r + 1 <= m + 1:\n                diff[r + 1] += 1\n    \n    # Precompute prefix sums of diff on the fly\n    # We process days 1..m in order, maintaining running sum of diff\n    \n    # Read all operations first\n    ops = []\n    for _ in range(m):\n        op, k = int(data[ptr]), int(data[ptr+1])\n        ptr += 2\n        ops.append((op, k))\n    \n    # Process operations and build diff array for heavy trains\n    trains_info_temp = {}\n    for day in range(1, m + 1):\n        op, k = ops[day - 1]\n        if op == 1:\n            x_k, y_k = x[k], y[k]\n            T_k = x_k + y_k\n            trains_info_temp[k] = (day, x_k, y_k, T_k)\n            if T_k > B:\n                add_heavy(k, day, x_k, y_k, T_k)\n        else:\n            start_day, x_k, y_k, T_k = trains_info_temp[k]\n            del trains_info_temp[k]\n            if T_k > B:\n                remove_heavy(k)\n    \n    # Now process again for light trains and combine with diff prefix sums\n    trains_info2 = {}\n    running_diff = 0\n    res = []\n    \n    for day in range(1, m + 1):\n        op, k = ops[day - 1]\n        if op == 1:\n            x_k, y_k = x[k], y[k]\n            T_k = x_k + y_k\n            trains_info2[k] = (day, x_k, y_k, T_k)\n            if T_k <= B:\n                s_mod = day % T_k\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k - 1 + s_mod) % T_k\n                if a <= b:\n                    for r in range(a, b + 1):\n                        light_counts[T_k][r] += 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] += 1\n                    for r in range(0, b + 1):\n                        light_counts[T_k][r] += 1\n        else:\n            start_day, x_k, y_k, T_k = trains_info2[k]\n            del trains_info2[k]\n            if T_k <= B:\n                s_mod = start_day % T_k\n                a = (x_k + s_mod) % T_k\n                b = (x_k + y_k - 1 + s_mod) % T_k\n                if a <= b:\n                    for r in range(a, b + 1):\n                        light_counts[T_k][r] -= 1\n                else:\n                    for r in range(a, T_k):\n                        light_counts[T_k][r] -= 1\n                    for r in range(0, b + 1):\n                        light_counts[T_k][r] -= 1\n        \n        running_diff += diff[day]\n        ans = running_diff\n        for T in range(1, B + 1):\n            ans += light_counts[T][day % T]\n        res.append(ans)\n    \n    sys.stdout.write('\\n'.join(map(str, res)) + '\\n')\n\nif __name__ == '__main__':\n    main()",
+      "test_results": {
+        "total": 50,
+        "passed": 42,
+        "failed": 8,
+        "errors": 0,
+        "pass_rate": 0.84,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "3 4\n10 15\n12 10\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n0\n0",
+            "actual": "0\n1\n0\n0",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "5 4\n1 1\n10000000 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 4\n10 15\n12 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "fail"
+          },
+          {
+            "test_index": 5,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 8\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n3\n4\n5\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n3\n4\n5\n7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 4\n10 15\n12 10\n2 1\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n0\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "3 4\n23 15\n14 10\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n0\n0",
+            "actual": "0\n1\n0\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n2 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "5 1\n1 1\n10000001 100000000\n1632524008 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0",
+            "actual": "0",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n2 19\n7 19\n2 9\n26 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n5\n4\n3\n5\n7\n8",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n5\n4\n3\n5\n7\n8",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n21 15\n7 3\n19 7\n1 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n2\n2\n2\n1\n2\n3\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "actual": "0\n0\n0\n1\n2\n2\n2\n1\n2\n3\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 1\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n2 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n5\n4\n3\n5\n7\n8",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n5\n4\n3\n5\n7\n8",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "5 2\n1 1\n10000011 100000000\n998244353 0\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0",
+            "actual": "0\n0",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n1 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 8\n",
+            "expected": "0\n0\n0\n0\n0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "10 7\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 4\n3 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0",
+            "actual": "0\n0\n0\n0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n8 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n2 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n8",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n8",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n15 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n3 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 2\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n0",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "20 7\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1",
+            "actual": "0\n0\n0\n1\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n4 9\n5 10\n657453515 169535970\n3 10\n16 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n0\n0\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n3 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 4\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n0\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n0\n1\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 2\n9 15\n12 9\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1",
+            "actual": "0\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n2 9\n14 19\n7 19\n2 9\n21 15\n7 3\n19 7\n1 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+            "expected": "0\n0\n0\n1\n2\n2\n2\n1\n3\n4\n4\n4\n4\n5\n5\n4\n3\n4\n6\n8",
+            "actual": "0\n0\n0\n1\n2\n2\n2\n1\n3\n4\n4\n4\n4\n5\n5\n4\n3\n4\n6\n8",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "10 10\n3 10\n9 11\n430995384 733598623\n1 9\n2 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 2\n2 9\n1 3\n1 5\n1 8\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n0\n0\n0",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n15 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n3 9\n49 15\n7 6\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n6\n5\n6\n7\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n6\n5\n6\n7\n7",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n1 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n14 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n4\n3\n4\n7\n8",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n4\n3\n4\n7\n8",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "3 4\n16 15\n12 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3 4\n16 15\n15 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 4\n16 15\n10 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "fail"
+          },
+          {
+            "test_index": 35,
+            "input": "3 4\n10 15\n12 9\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "5 4\n1 1\n10000011 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 4\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "5 4\n1 1\n10000001 000000000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 4\n9 15\n12 9\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "5 4\n1 1\n10000001 000010000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3 4\n9 15\n12 1\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+            "expected": "0\n1\n1\n0",
+            "actual": "0\n0\n0\n0",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "5 4\n1 1\n11000001 100000000\n998244353 0\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "5 4\n1 1\n11000001 100000000\n998244353 -1\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n19 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+            "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+            "stderr": "",
+            "runtime_ms": 70,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+            "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "5 4\n1 1\n10000000 100000000\n733475792 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+            "expected": "0\n0\n0\n1",
+            "actual": "0\n0\n0\n1",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 42,
+    "failed": 8,
+    "errors": 0,
+    "pass_rate": 0.84,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "3 4\n10 15\n12 10\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n0\n0",
+        "actual": "0\n1\n0\n0",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "5 4\n1 1\n10000000 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "3 4\n10 15\n12 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "fail"
+      },
+      {
+        "test_index": 5,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 8\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n3\n4\n5\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n3\n4\n5\n7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "3 4\n10 15\n12 10\n2 1\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n0\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "fail"
+      },
+      {
+        "test_index": 10,
+        "input": "3 4\n23 15\n14 10\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n0\n0",
+        "actual": "0\n1\n0\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n2 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "5 1\n1 1\n10000001 100000000\n1632524008 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0",
+        "actual": "0",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n2 19\n7 19\n2 9\n26 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n5\n4\n3\n5\n7\n8",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n5\n4\n3\n5\n7\n8",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n21 15\n7 3\n19 7\n1 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n2\n2\n2\n1\n2\n3\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "actual": "0\n0\n0\n1\n2\n2\n2\n1\n2\n3\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 1\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n2 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n5\n4\n3\n5\n7\n8",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n5\n4\n3\n5\n7\n8",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "5 2\n1 1\n10000011 100000000\n998244353 0\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0",
+        "actual": "0\n0",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n1 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 8\n",
+        "expected": "0\n0\n0\n0\n0\n0\n1\n1\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n1\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "10 7\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 4\n3 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0",
+        "actual": "0\n0\n0\n0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n8 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n2 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n8",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n8",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n15 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n3 9\n49 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n5\n4\n5\n7\n7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 2\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n0",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "20 7\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1",
+        "actual": "0\n0\n0\n1\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n4 9\n5 10\n657453515 169535970\n3 10\n16 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n0\n0\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n3 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 4\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n0\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n0\n1\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "3 2\n9 15\n12 9\n1 1\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1",
+        "actual": "0\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n2 9\n14 19\n7 19\n2 9\n21 15\n7 3\n19 7\n1 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 5",
+        "expected": "0\n0\n0\n1\n2\n2\n2\n1\n3\n4\n4\n4\n4\n5\n5\n4\n3\n4\n6\n8",
+        "actual": "0\n0\n0\n1\n2\n2\n2\n1\n3\n4\n4\n4\n4\n5\n5\n4\n3\n4\n6\n8",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "10 10\n3 10\n9 11\n430995384 733598623\n1 9\n2 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 2\n2 9\n1 3\n1 5\n1 8\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n0\n0\n0",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "20 20\n1 4\n864803385 423778809\n12 4\n12 3\n15 2\n15 1\n6 17\n13 11\n188952235 273519822\n7 8\n17 12\n2 7\n5 9\n14 19\n7 19\n3 9\n49 15\n7 6\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n6\n5\n6\n7\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n4\n4\n5\n6\n6\n5\n6\n7\n7",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n1 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n14 9\n14 19\n7 19\n2 9\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n4\n3\n4\n7\n8",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n4\n3\n4\n7\n8",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "3 4\n16 15\n12 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "fail"
+      },
+      {
+        "test_index": 31,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3 4\n16 15\n15 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "fail"
+      },
+      {
+        "test_index": 33,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3 4\n16 15\n10 10\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "fail"
+      },
+      {
+        "test_index": 35,
+        "input": "3 4\n10 15\n12 9\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n433415385 169535970\n3 10\n8 6\n3 6\n7 8\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "5 4\n1 1\n10000011 100000000\n998244353 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 4\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "5 4\n1 1\n10000001 000000000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "20 20\n1 4\n864803385 423778809\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 13\n15 15\n7 3\n15 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3 4\n9 15\n12 9\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "fail"
+      },
+      {
+        "test_index": 42,
+        "input": "5 4\n1 1\n10000001 100000000\n998244353 0\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "5 4\n1 1\n10000001 000010000\n998244353 0\n3 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "3 4\n9 15\n12 1\n1 2\n1 3\n1 1\n2 1\n2 3\n",
+        "expected": "0\n1\n1\n0",
+        "actual": "0\n0\n0\n0",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "fail"
+      },
+      {
+        "test_index": 45,
+        "input": "5 4\n1 1\n11000001 100000000\n998244353 0\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "5 4\n1 1\n11000001 100000000\n998244353 -1\n2 1\n1 5\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "20 20\n1 4\n864803385 772221280\n17 4\n12 3\n8 2\n15 4\n6 17\n16 11\n188952235 273519822\n7 8\n17 12\n2 7\n15 9\n14 19\n7 19\n2 9\n15 15\n7 3\n19 7\n7 17\n1 11\n1 8\n1 1\n1 20\n1 9\n1 18\n1 13\n1 12\n1 6\n1 4\n1 19\n1 7\n1 14\n1 10\n1 ",
+        "expected": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "actual": "0\n0\n0\n1\n1\n1\n1\n0\n1\n2\n3\n3\n3\n4\n4\n3\n2\n4\n6\n7",
+        "stderr": "",
+        "runtime_ms": 70,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "10 10\n3 10\n9 6\n430995384 733598623\n2 9\n5 10\n657453515 169535970\n3 10\n8 6\n10 6\n7 5\n1 1\n2 1\n1 8\n2 8\n1 9\n1 4\n2 9\n1 3\n1 5\n1 6\n",
+        "expected": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "actual": "0\n0\n0\n0\n0\n0\n0\n1\n1\n1",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "5 4\n1 1\n10000000 100000000\n733475792 1\n2 1\n1 2\n1 5\n2 5\n1 5\n1 1\n",
+        "expected": "0\n0\n0\n1",
+        "actual": "0\n0\n0\n1",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.04295441,
+  "total_latency_ms": 96110,
+  "iterations_used": null,
+  "early_stopped": null
+}

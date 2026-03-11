@@ -1,0 +1,1233 @@
+{
+  "study": "C",
+  "condition": "C8",
+  "task_id": "cc_004",
+  "replica": 0,
+  "strategy_family": "review-heavy",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Better approach: maintain a mapping `val[v]` = current value of v. When we add x, we store x (its current mapped value at insertion time... wait no).\n\nActually: when we add x, the element's \"logical value\" at query time is what matters. We can store the original value added, and at the end, apply the chain of replacements.\n\nBut replacements happen over time. If we add x=1, then do 2 1 2, then add x=1 again, the first 1 becomes 2 but the second 1 also becomes 2 (until further replacements).\n\nKey insight: maintain a union-find or a mapping where `current[v]` = the current value that v maps to. When query \"2 x y\": set `current[x] = current[y]` (because any future lookup of x should give what y currently maps to, but wait - y might change later too).\n\nActually the standard trick: maintain `mapping[v]` where we want to find the \"current\" value of v. When we do \"2 x y\", we want x to become y. But future replacements of y should also affect x.\n\nSo we can use a pointer: `nxt[x] = y`. Then to find the current value of x, follow the chain. But chains can be long.\n\nBetter: `alias[x]` = the value x currently represents. When \"2 x y\": `alias[x] = alias[y]`. But if y changes later, x won't follow.\n\nWe need x to follow y's future changes. So store `alias[x] = y` (not alias[y]), and when looking up, follow the chain with path compression.\n\nWhen \"2 x y\": set `alias[x] = y`. \nTo find current value of x: follow alias chain until we find a fixed point (alias[v] = v).\nUse path compression.\n\nWhen \"1 x\": store x in the array (the original x).\nAt the end: for each stored x, find(x).\n\nBut wait: \"2 x y\" replaces x with y at that point in time. If later \"2 y z\", then x should also become z (since x\u2192y\u2192z). With the alias/find approach this works naturally with path compression.\n\nBut: when we do \"2 x y\", we set alias[x] = y. If x was previously pointed to by something else (say alias[w] = x), then w will now follow x\u2192y which is correct.\n\nLet me verify with example 1:\n- add 3, add 1\n- 2 1 2: alias[1]=2\n- add 2, add 1, add 2\n- 2 1 3: alias[1]=3... but alias[1] was 2, now alias[1]=3? No wait, \"2 1 3\" means replace 1 with 3. But 1 already maps to 2. Hmm.\n\nAfter \"2 1 2\": all 1s become 2. Array is [3,2].\nAfter \"2 1 3\": all 1s become 3. But there are no 1s currently... array has [3,2,2,1,2]. The 1 added after becomes 3.\n\nSo alias[1]=3 (overwrite). find(1)=3. The elements added as 1: first one maps to 3? But expected output shows it's 3 (the first element is 3 which was added as 3, second element added as 1 \u2192 should be 2 after first replacement, then... \n\nWait, \"2 1 3\" replaces current 1s with 3. The element added as 1 (index 1) was already replaced to 2 by \"2 1 2\". So it's now 2, not 3.\n\nThis means the alias approach doesn't work directly because we need to track what value an element had at the time of each replacement.\n\nThe correct approach: store the \"time\" of insertion for each element, and for each replacement query, record it with a timestamp. Then for each element, find the chain of replacements that apply after its insertion time.\n\nThis is more complex. Let me think of the approach with versioned mappings.\n\nFor each value v, maintain a list of (time, new_value) when v was replaced. For an element added at time t with value v, find the replacement of v that happened after t, then follow chains.\n\nimport sys\nfrom sys import stdin\n\ndef main():\n    input = stdin.readline\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx+=1\n    \n    # For each value, store list of (timestamp, replaced_by)\n    # When \"2 x y\" at time t: replacements[x].append((t, y))\n    # For element added at time t with value v:\n    #   find first replacement of v after time t -> get new value w at time t2\n    #   then find first replacement of w after time t2, etc.\n    \n    from collections import defaultdict\n    import bisect\n    \n    replacements = defaultdict(list)  # v -> sorted list of (time, new_val)\n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []  # (time, value)\n    \n    for t in range(q):\n        tp = data[idx]; idx+=1\n        if tp == b'1':\n            x = int(data[idx]); idx+=1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx+=1\n            y = int(data[idx]); idx+=1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    result = []\n    for (t, v) in elements:\n        cur_v = v\n        cur_t = t\n        while True:\n            times = repl_times[cur_v]\n            if not times:\n                break\n            pos = bisect.bisect_right(times, cur_t)\n            if pos == len(times):\n                break\n            new_t = times[pos]\n            new_v = repl_vals[cur_v][pos]\n            cur_t = new_t\n            cur_v = new_v\n        result.append(cur_v)\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+      "input_tokens": 701,
+      "output_tokens": 1614,
+      "cost_usd": 0.026313,
+      "latency_ms": 29647
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Algorithmic complexity is O(q^2) in worst case. For each added element the code follows a chain of replacements by binary searching the next replacement, which can be as long as O(q). With many replace operations this leads to time limit exceeded.",
+              "line": 40,
+              "severity": "major",
+              "triggering_input": "q=500000 with many type-2 queries on the same value after many type-1 insertions, e.g., alternating inserts of 1 and replace 1 with new values"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Algorithmic complexity is O(q^2) in worst case. For each added element the code follows a chain of replacements by binary searching the next replacement, which can be as long as O(q). With many replace operations this leads to time limit exceeded.\", \"line\": 40, \"severity\": \"major\", \"triggering_input\": \"q=500000 with many type-2 queries on the same value after many type-1 insertions, e.g., alternating inserts of 1 and replace 1 with new values\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Algorithmic complexity is O(q^2) in worst case. For each added element the code follows a chain of replacements by binary searching the next replacement, which can be as long as O(q). With many replace operations this leads to time limit exceeded.",
+                "line": 40,
+                "severity": "major",
+                "triggering_input": "q=500000 with many type-2 queries on the same value after many type-1 insertions, e.g., alternating inserts of 1 and replace 1 with new values"
+              }
+            ]
+          },
+          "input_tokens": 1973,
+          "output_tokens": 118,
+          "cost_usd": 0.00058175,
+          "latency_ms": 4808
+        },
+        {
+          "role": "generalist_1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm processes each element by iteratively following all future replacement events, leading to O(number_of_replacements) work per element. In worst-case scenarios (e.g., many adds followed by many replace operations), this results in O(q^2) time and will timeLE for q up to 5\u00b710^5.",
+              "line": 44,
+              "severity": "major",
+              "triggering_input": "250000\n1 1\n... (250000 times)\n2 1 2\n2 2 3\n... (250000 replace queries)\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm processes each element by iteratively following all future replacement events, leading to O(number_of_replacements) work per element. In worst-case scenarios (e.g., many adds followed by many replace operations), this results in O(q^2) time and will timeLE for q up to 5\u00b710^5.\",\n      \"line\": 44,\n      \"severity\": \"major\",\n      \"triggering_input\": \"250000\\n1 1\\n... (250000 times)\\n2 1 2\\n2 2 3\\n... (250000 replace queries)\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm processes each element by iteratively following all future replacement events, leading to O(number_of_replacements) work per element. In worst-case scenarios (e.g., many adds followed by many replace operations), this results in O(q^2) time and will timeLE for q up to 5\u00b710^5.",
+                "line": 44,
+                "severity": "major",
+                "triggering_input": "250000\n1 1\n... (250000 times)\n2 1 2\n2 2 3\n... (250000 replace queries)\n"
+              }
+            ]
+          },
+          "input_tokens": 1973,
+          "output_tokens": 144,
+          "cost_usd": 0.00060125,
+          "latency_ms": 4364
+        },
+        {
+          "role": "generalist_2",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm may traverse a long chain of replacements for each element, leading to O(q^2) worst\u2011case time complexity (e.g., many type\u20111 queries followed by a long sequence of type\u20112 replacements). This will cause TLE for q up to 5\u00b710^5.\",\n      \"line\": 44,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"5\\n1 1\\n1 1\\n1 1\\n1 1\\n2 1 2\\n2 2 3\\n2 3 4\\n2 4 5\\n2 5 6\\n2 6 7\\n2 7 8\\n2 8 9\\n2 9 10\\n2 10 11\\n2 11 12\\n2 12 13\\n2 13 14\\n2 14 15\\n2 15 16\\n2 16 17\\n2 17 18\\n2 18 19\\n2 19 20\\n2 20 21\\n2 21 22\\n2 22 23\\n2 23 24\\n2 24 25\\n2 25 26\\n2 26 27\\n2 27 28\\n2 28 29\\n2 29 30\\n2 30 31\\n2 31 32\\n2 32 33\\n2 33 34\\n2 34 35\\n2 35 36\\n2 36 37\\n2 37 38\\n2 38 39\\n2 39 40\\n2 40 41\\n2 41 42\\n2 42 43\\n2 43 44\\n2 44 45\\n2 45 46\\n2 46 47\\n2 47 48\\n2 48 49\\n2 49 50\\n2 50 51\\n2 51 52\\n2 52 53\\n2 53 54\\n2 54 55\\n2 55 56\\n2 56 57\\n2 57 58\\n2 58 59\\n2 59 60\\n2 60 61\\n2 61 62\\n2 62 63\\n2 63 64\\n2 64 65\\n2 65 66\\n2 66 67\\n2 67 68\\n2 68 69\\n2 69 70\\n2 70 71\\n2 71 72\\n2 72 73\\n2 73 74\\n2 74 75\\n2 75 76\\n2 76 77\\n2 77 78\\n2 78 79\\n2 79 80\\n2 80 81\\n2 81 82\\n2 82 83\\n2 83 84\\n2 84 85\\n2 85 86\\n2 86 87\\n2 87 88\\n2 88 89\\n2 89 90\\n2 90 91\\n2 91 92\\n2 92 93\\n2 93 94\\n2 94 95\\n2 95 96\\n2 96 97\\n2 97 98\\n2 98 99\\n2 99 100\\n2 100 101\\n2 101 102\\n2 102 103\\n2 103 104\\n2 104 105\\n2 105 106\\n2 106 107\\n2 107 108\\n2 108 109\\n2 109 110\\n2 110 111\\n2 111 112\\n2 112 113\\n2 113 114\\n2 114 115\\n2 115 116\\n2 116 117\\n2 117 118\\n2 118 119\\n2 119 120\\n2 120 121\\n2 121 122\\n2 122 123\\n2 123 124\\n2 124 125\\n2 125 126\\n2 126 127\\n2 127 128\\n2 128 129\\n2 129 130\\n2 130 131\\n2 131 132\\n2 132 133\\n2 133 134\\n2 134 135\\n2 135 136\\n2 136 137\\n2 137 138\\n2 138 139\\n2 139 140\\n2 140 141\\n2 141 142\\n2 142 143\\n2 143 144\\n2 144 145\\n2 145 146\\n2 146 147\\n2 147 148\\n2 148 149\\n2 149 150\\n2 150 151\\n2 151 152\\n2 152 153\\n2 153 154\\n2 154 155\\n2 155 156\\n2 156 157\\n2 157 158\\n2 158 159\\n2 159 160\\n2 160 161\\n2 161 162\\n2 162 163\\n2 163 164\\n2 164 165\\n2 165 166\\n2 166 167\\n2 167 168\\n2 168 169\\n2 169 170\\n2 170 171\\n2 171 172\\n2 172 173\\n2 173 174\\n2 174 175\\n2 175 176\\n2 176 177\\n2 177 178\\n2 178 179\\n2 179 180\\n2 180 181\\n2 181 182\\n2 182 183\\n2 183 184\\n2 184 185\\n2 185 186\\n2 186 187\\n2 187 188\\n2 188 189\\n2 189 190\\n2 190 191\\n2 191 192\\n2 192 193\\n2 193 194\\n2 194 195\\n2 195 196\\n2 196 197\\n2 197 198\\n2 198 199\\n2 199 200\\n2 200 201\\n2 201 202\\n2 202 203\\n2 203 204\\n2 204 205\\n2 205 206\\n2 206 207\\n2 207 208\\n2 208 209\\n2 209 210\\n2 210 211\\n2 211 212\\n2 212 213\\n2 213 214\\n2 214 215\\n2 215 216\\n2 216 217\\n2 217 218\\n2 218 219\\n2 219 220\\n2 220 221\\n2 221 222\\n2 222 223\\n2 223 224\\n2 224 225\\n2 225 226\\n2 226 227\\n2 227 228\\n2 228 229\\n2 229 230\\n2 230 231\\n2 231 232\\n2 232 233\\n2 233 234\\n2 234 235\\n2 235 236\\n2 236 237\\n2 237 238\\n2 238 239\\n2 239 240\\n2 240 241\\n2 241 242\\n2 242 243\\n2 243 244\\n2 244 245\\n2 245 246\\n2 246 247\\n2 247 248\\n2 248 249\\n2 249 250\\n2 250 251\\n2 251 252\\n2 252 253\\n2 253 254\\n2 254 255\\n2 255 256\\n2 256 257\\n2 257 258\\n2 258 259\\n2 259 260\\n2 260 261\\n2 261 262\\n2 262 263\\n2 263 264\\n2 264 265\\n2 265 266\\n2 266 267\\n2 267 268\\n2 268 269\\n2 269 270\\n2 270 271\\n2 271 272\\n2 272 273\\n2 273 274\\n2 274 275\\n2 275 276\\n2 276 277\\n2 277 278\\n2 278 279\\n2 279 280\\n2 280 281\\n2 281 282\\n2 282 283\\n2 283 284\\n2 284 285\\n2 285 286\\n2 286 287\\n2 287 288\\n2 288 289\\n2 289 290\\n2 290 291\\n2 291 292\\n2 292 293\\n2 293 294\\n2 294 295\\n2 295 296\\n2 296 297\\n2 297 298\\n2 298 299\\n2 299 300\\n2 300 301\\n2 301 302\\n2 302 303\\n2 303 304\\n2 304 305\\n2 305 306\\n2 306 307\\n2 307 308\\n2 308 309\\n2 309 310\\n2 310 311\\n2 311 312\\n2 312 313\\n2 313 314\\n2 314 315\\n2 315 316\\n2 316 317\\n2 317 318\\n2 318 319\\n2 319 320\\n2 320 321\\n2 321 322\\n2 322 323\\n2 323 324\\n2 324 325\\n2 325 326\\n2 326 327\\n2 327 328\\n2 328 329\\n2 329 330\\n2 330 331\\n2 331 332\\n2 332 333\\n2 333 334\\n2 334 335\\n2 335 336\\n2 336 337\\n2 337 338\\n2 338 339\\n2 339 340\\n2 340 341\\n2 341 342\\n2 342 343\\n2 343 344\\n2 344 345\\n2 345 346\\n2 346 347\\n2 347 348\\n2 348 349\\n2 349 350\\n2 350 351\\n2 351 352\\n2 352 353\\n2 353 354\\n2 354 355\\n2 355 356\\n2 356 357\\n2 357 358\\n2 358 359\\n2 359 360\\n2 360 361\\n2 361 362\\n2 362 363\\n2 363 364\\n2 364 365\\n2 365 366\\n2 366 367\\n2 367 368\\n2 368 369\\n2 369 370\\n2 370 371\\n2 371 372\\n2 372 373\\n2 373 374\\n2 374 375\\n2 375 376\\n2 376 377\\n2 377 378\\n2 378 379\\n2 379 380\\n2 380 381\\n2 381 382\\n2 382 383\\n2 383 384\\n2 384 385\\n2 385 386\\n2 386 387\\n2 387 388\\n2 388 389\\n2 389 390\\n2 390 391\\n2 391 392\\n2 392 393\\n2 393 394\\n2 394 395\\n2 395 396\\n2 396 397\\n2 397 398\\n2 398 399\\n2 399 400\\n2 400 ",
+          "parsed": null,
+          "input_tokens": 1973,
+          "output_tokens": 2435,
+          "cost_usd": 0.0023195,
+          "latency_ms": 7106
+        },
+        {
+          "role": "generalist_3",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The algorithm can be O(q^2) in the worst case: for each inserted element it follows a chain of replacements, which can be linear in the number of replacement queries. With q up to 5e5 this leads to time limit exceeded.",
+              "line": 30,
+              "severity": "critical",
+              "triggering_input": "5\n1 1\n2 1 2\n2 2 3\n2 3 4\n2 4 5\n2 5 6\n"
+            },
+            {
+              "description": "Variable `replacements` is defined but never used, indicating leftover code and potential confusion.",
+              "line": 15,
+              "severity": "minor",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm can be O(q^2) in the worst case: for each inserted element it follows a chain of replacements, which can be linear in the number of replacement queries. With q up to 5e5 this leads to time limit exceeded.\",\n      \"line\": 30,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"5\\n1 1\\n2 1 2\\n2 2 3\\n2 3 4\\n2 4 5\\n2 5 6\\n\"\n    },\n    {\n      \"description\": \"Variable `replacements` is defined but never used, indicating leftover code and potential confusion.\",\n      \"line\": 15,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm can be O(q^2) in the worst case: for each inserted element it follows a chain of replacements, which can be linear in the number of replacement queries. With q up to 5e5 this leads to time limit exceeded.",
+                "line": 30,
+                "severity": "critical",
+                "triggering_input": "5\n1 1\n2 1 2\n2 2 3\n2 3 4\n2 4 5\n2 5 6\n"
+              },
+              {
+                "description": "Variable `replacements` is defined but never used, indicating leftover code and potential confusion.",
+                "line": 15,
+                "severity": "minor",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 1973,
+          "output_tokens": 177,
+          "cost_usd": 0.000626,
+          "latency_ms": 4850
+        },
+        {
+          "role": "generalist_4",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 2,
+          "bugs": [
+            {
+              "description": "The algorithm processes each element by traversing the chain of replacements forward in time, which in the worst case can be O(q) per element, leading to O(q^2) total time and TLE for q up to 5\u00b710^5 (e.g., many replacements forming a long chain and many early insertions).",
+              "line": 84,
+              "severity": "critical",
+              "triggering_input": "5\n1 1\n2 1 2\n2 2 3\n2 3 4\n2 4 5\n"
+            },
+            {
+              "description": "Unused variable `replacements` defined at line 62, which is unnecessary and may cause confusion.",
+              "line": 62,
+              "severity": "minor",
+              "triggering_input": ""
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm processes each element by traversing the chain of replacements forward in time, which in the worst case can be O(q) per element, leading to O(q^2) total time and TLE for q up to 5\u00b710^5 (e.g., many replacements forming a long chain and many early insertions).\",\n      \"line\": 84,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"5\\n1 1\\n2 1 2\\n2 2 3\\n2 3 4\\n2 4 5\\n\"\n    },\n    {\n      \"description\": \"Unused variable `replacements` defined at line 62, which is unnecessary and may cause confusion.\",\n      \"line\": 62,\n      \"severity\": \"minor\",\n      \"triggering_input\": \"\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm processes each element by traversing the chain of replacements forward in time, which in the worst case can be O(q) per element, leading to O(q^2) total time and TLE for q up to 5\u00b710^5 (e.g., many replacements forming a long chain and many early insertions).",
+                "line": 84,
+                "severity": "critical",
+                "triggering_input": "5\n1 1\n2 1 2\n2 2 3\n2 3 4\n2 4 5\n"
+              },
+              {
+                "description": "Unused variable `replacements` defined at line 62, which is unnecessary and may cause confusion.",
+                "line": 62,
+                "severity": "minor",
+                "triggering_input": ""
+              }
+            ]
+          },
+          "input_tokens": 1983,
+          "output_tokens": 191,
+          "cost_usd": 0.000639,
+          "latency_ms": 7666
+        },
+        {
+          "role": "generalist_5",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm processes each element by walking the replacement chain using a while loop with binary search. In worst-case scenarios where many replacements form a long chain (e.g., a sequence of replacements 1\u21922, 2\u21923, 3\u21924, ...), each element may traverse O(q) steps, leading to O(q^2) time complexity and causing TLE for q up to 5\u00b710^5.",
+              "line": 40,
+              "severity": "critical",
+              "triggering_input": "1000\n1 1\n1 1\n... (500 times) ...\n2 1 2\n2 2 3\n2 3 4\n... (500 replacements) ..."
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm processes each element by walking the replacement chain using a while loop with binary search. In worst-case scenarios where many replacements form a long chain (e.g., a sequence of replacements 1\u21922, 2\u21923, 3\u21924, ...), each element may traverse O(q) steps, leading to O(q^2) time complexity and causing TLE for q up to 5\u00b710^5.\",\n      \"line\": 40,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"1000\\n1 1\\n1 1\\n... (500 times) ...\\n2 1 2\\n2 2 3\\n2 3 4\\n... (500 replacements) ...\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm processes each element by walking the replacement chain using a while loop with binary search. In worst-case scenarios where many replacements form a long chain (e.g., a sequence of replacements 1\u21922, 2\u21923, 3\u21924, ...), each element may traverse O(q) steps, leading to O(q^2) time complexity and causing TLE for q up to 5\u00b710^5.",
+                "line": 40,
+                "severity": "critical",
+                "triggering_input": "1000\n1 1\n1 1\n... (500 times) ...\n2 1 2\n2 2 3\n2 3 4\n... (500 replacements) ..."
+              }
+            ]
+          },
+          "input_tokens": 1983,
+          "output_tokens": 172,
+          "cost_usd": 0.00062475,
+          "latency_ms": 7448
+        },
+        {
+          "role": "generalist_6",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Algorithmic inefficiency: each element may traverse a long chain of replacements using a while loop and binary search, leading to O(q^2) worst\u2011case time and TLE for large inputs.",
+              "line": 40,
+              "severity": "critical",
+              "triggering_input": "A test with many replacement queries forming a long chain (e.g., 2 1 2, 2 2 3, ..., 2 N-1 N) followed by many type\u20111 queries inserting the initial value."
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"Algorithmic inefficiency: each element may traverse a long chain of replacements using a while loop and binary search, leading to O(q^2) worst\u2011case time and TLE for large inputs.\", \"line\": 40, \"severity\": \"critical\", \"triggering_input\": \"A test with many replacement queries forming a long chain (e.g., 2 1 2, 2 2 3, ..., 2 N-1 N) followed by many type\u20111 queries inserting the initial value.\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Algorithmic inefficiency: each element may traverse a long chain of replacements using a while loop and binary search, leading to O(q^2) worst\u2011case time and TLE for large inputs.",
+                "line": 40,
+                "severity": "critical",
+                "triggering_input": "A test with many replacement queries forming a long chain (e.g., 2 1 2, 2 2 3, ..., 2 N-1 N) followed by many type\u20111 queries inserting the initial value."
+              }
+            ]
+          },
+          "input_tokens": 1973,
+          "output_tokens": 118,
+          "cost_usd": 0.00058175,
+          "latency_ms": 4947
+        },
+        {
+          "role": "generalist_7",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 1983,
+          "output_tokens": 0,
+          "cost_usd": 0.00049575,
+          "latency_ms": 9910
+        },
+        {
+          "role": "generalist_8",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm can be O(q^2) in worst case because for each inserted element it may traverse a long chain of replacements (up to O(q) per element). With up to 5e5 queries this leads to TLE.\",\n      \"line\": 30,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"500000\\n\" + \"\\n\".join([\"1 1\"] * 250000 + [\"2 1 2\", \"2 2 3\", \"2 3 4\"] * 125000)\n    }\n  ]\n}",
+          "parsed": null,
+          "input_tokens": 1973,
+          "output_tokens": 136,
+          "cost_usd": 0.00059525,
+          "latency_ms": 3806
+        },
+        {
+          "role": "generalist_9",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm can be O(q^2) in the worst case because for each inserted element it follows a chain of replacements one by one. With up to 5e5 queries and a long chain of replacements (e.g., 2 1 2, 2 2 3, 2 3 4, ...), each element may traverse O(q) steps, leading to time limit exceeded.",
+              "line": 81,
+              "severity": "critical",
+              "triggering_input": "500000\n1 1\n1 1\n... (250000 times)\n2 1 2\n2 2 3\n2 3 4\n... (250000 times)"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The algorithm can be O(q^2) in the worst case because for each inserted element it follows a chain of replacements one by one. With up to 5e5 queries and a long chain of replacements (e.g., 2 1 2, 2 2 3, 2 3 4, ...), each element may traverse O(q) steps, leading to time limit exceeded.\",\n      \"line\": 81,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"500000\\n1 1\\n1 1\\n... (250000 times)\\n2 1 2\\n2 2 3\\n2 3 4\\n... (250000 times)\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm can be O(q^2) in the worst case because for each inserted element it follows a chain of replacements one by one. With up to 5e5 queries and a long chain of replacements (e.g., 2 1 2, 2 2 3, 2 3 4, ...), each element may traverse O(q) steps, leading to time limit exceeded.",
+                "line": 81,
+                "severity": "critical",
+                "triggering_input": "500000\n1 1\n1 1\n... (250000 times)\n2 1 2\n2 2 3\n2 3 4\n... (250000 times)"
+              }
+            ]
+          },
+          "input_tokens": 1983,
+          "output_tokens": 169,
+          "cost_usd": 0.0006225,
+          "latency_ms": 6350
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom collections import defaultdict\nimport bisect\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx += 1\n    \n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []\n    \n    for t in range(q):\n        tp = data[idx]; idx += 1\n        if tp == b'1':\n            x = int(data[idx]); idx += 1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx += 1\n            y = int(data[idx]); idx += 1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    memo = {}\n    \n    def find(v, t):\n        if (v, t) in memo:\n            return memo[(v, t)]\n        times = repl_times[v]\n        if not times:\n            return v\n        pos = bisect.bisect_right(times, t)\n        if pos == len(times):\n            return v\n        new_t = times[pos]\n        new_v = repl_vals[v][pos]\n        result = find(new_v, new_t)\n        memo[(v, t)] = result\n        return result\n    \n    sys.setrecursionlimit(600000)\n    \n    result = []\n    for (t, v) in elements:\n        result.append(find(v, t))\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+          "input_tokens": 3151,
+          "output_tokens": 1030,
+          "cost_usd": 0.024903,
+          "latency_ms": 17599
+        }
+      ],
+      "final_code": "import sys\nfrom collections import defaultdict\nimport bisect\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx += 1\n    \n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []\n    \n    for t in range(q):\n        tp = data[idx]; idx += 1\n        if tp == b'1':\n            x = int(data[idx]); idx += 1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx += 1\n            y = int(data[idx]); idx += 1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    memo = {}\n    \n    def find(v, t):\n        if (v, t) in memo:\n            return memo[(v, t)]\n        times = repl_times[v]\n        if not times:\n            return v\n        pos = bisect.bisect_right(times, t)\n        if pos == len(times):\n            return v\n        new_t = times[pos]\n        new_v = repl_vals[v][pos]\n        result = find(new_v, new_t)\n        memo[(v, t)] = result\n        return result\n    \n    sys.setrecursionlimit(600000)\n    \n    result = []\n    for (t, v) in elements:\n        result.append(find(v, t))\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "8\n2 1 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 3 7",
+            "actual": "1 3 3 7",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n1 1\n1 2\n1 1\n2 2 2\n",
+            "expected": "1 2 1",
+            "actual": "1 2 1",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 2\n2 1 3\n",
+            "expected": "3 2 2 3 2",
+            "actual": "3 2 2 3 2",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1 50\n",
+            "expected": "50",
+            "actual": "50",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n1 114514\n",
+            "expected": "114514",
+            "actual": "114514",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n1 2002\n",
+            "expected": "2002",
+            "actual": "2002",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n1 500\n",
+            "expected": "500",
+            "actual": "500",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n1 28\n",
+            "expected": "28",
+            "actual": "28",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n1 2887\n",
+            "expected": "2887",
+            "actual": "2887",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n1 228\n",
+            "expected": "228",
+            "actual": "228",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n1 29\n",
+            "expected": "29",
+            "actual": "29",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n1 1270\n",
+            "expected": "1270",
+            "actual": "1270",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n1 182\n",
+            "expected": "182",
+            "actual": "182",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n1 2279\n",
+            "expected": "2279",
+            "actual": "2279",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n1 979\n",
+            "expected": "979",
+            "actual": "979",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n1 1719\n",
+            "expected": "1719",
+            "actual": "1719",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n1 1163\n",
+            "expected": "1163",
+            "actual": "1163",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n1 1134\n",
+            "expected": "1134",
+            "actual": "1134",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n1 2216\n",
+            "expected": "2216",
+            "actual": "2216",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n1 810\n",
+            "expected": "810",
+            "actual": "810",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n1 1162\n",
+            "expected": "1162",
+            "actual": "1162",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n1 8\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n1 176923\n",
+            "expected": "176923",
+            "actual": "176923",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n1 346\n",
+            "expected": "346",
+            "actual": "346",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 3 7",
+            "actual": "1 3 3 7",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n1 1\n1 2\n1 1\n2 3 2\n",
+            "expected": "1 2 1",
+            "actual": "1 2 1",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 1\n2 1 3\n",
+            "expected": "3 2 2 3 3",
+            "actual": "3 2 2 3 3",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n1 192\n",
+            "expected": "192",
+            "actual": "192",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n1 6\n",
+            "expected": "6",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n1 1566\n",
+            "expected": "1566",
+            "actual": "1566",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n1 1612\n",
+            "expected": "1612",
+            "actual": "1612",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n1 391\n",
+            "expected": "391",
+            "actual": "391",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n1 1904\n",
+            "expected": "1904",
+            "actual": "1904",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n1 12\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n1 455\n",
+            "expected": "455",
+            "actual": "455",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 6\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 6 7",
+            "actual": "1 3 6 7",
+            "stderr": "",
+            "runtime_ms": 46,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n1 2\n1 2\n1 1\n2 3 2\n",
+            "expected": "2 2 1",
+            "actual": "2 2 1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n1 61\n",
+            "expected": "61",
+            "actual": "61",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n1 3\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n1 107\n",
+            "expected": "107",
+            "actual": "107",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n1 537\n",
+            "expected": "537",
+            "actual": "537",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n1 520\n",
+            "expected": "520",
+            "actual": "520",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n1 72\n",
+            "expected": "72",
+            "actual": "72",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n1 415\n",
+            "expected": "415",
+            "actual": "415",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n1 639\n",
+            "expected": "639",
+            "actual": "639",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n1 705\n",
+            "expected": "705",
+            "actual": "705",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n1 34\n",
+            "expected": "34",
+            "actual": "34",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n1 42\n",
+            "expected": "42",
+            "actual": "42",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n1 91\n",
+            "expected": "91",
+            "actual": "91",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n1 123055\n",
+            "expected": "123055",
+            "actual": "123055",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "8\n2 1 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 3 7",
+        "actual": "1 3 3 7",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n1 1\n1 2\n1 1\n2 2 2\n",
+        "expected": "1 2 1",
+        "actual": "1 2 1",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 2\n2 1 3\n",
+        "expected": "3 2 2 3 2",
+        "actual": "3 2 2 3 2",
+        "stderr": "",
+        "runtime_ms": 51,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n1 50\n",
+        "expected": "50",
+        "actual": "50",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n1 114514\n",
+        "expected": "114514",
+        "actual": "114514",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n1 2002\n",
+        "expected": "2002",
+        "actual": "2002",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n1 500\n",
+        "expected": "500",
+        "actual": "500",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n1 28\n",
+        "expected": "28",
+        "actual": "28",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n1 2887\n",
+        "expected": "2887",
+        "actual": "2887",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n1 228\n",
+        "expected": "228",
+        "actual": "228",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n1 29\n",
+        "expected": "29",
+        "actual": "29",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n1 1270\n",
+        "expected": "1270",
+        "actual": "1270",
+        "stderr": "",
+        "runtime_ms": 50,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n1 182\n",
+        "expected": "182",
+        "actual": "182",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n1 2279\n",
+        "expected": "2279",
+        "actual": "2279",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n1 979\n",
+        "expected": "979",
+        "actual": "979",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n1 1719\n",
+        "expected": "1719",
+        "actual": "1719",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n1 1163\n",
+        "expected": "1163",
+        "actual": "1163",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n1 1134\n",
+        "expected": "1134",
+        "actual": "1134",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n1 2216\n",
+        "expected": "2216",
+        "actual": "2216",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n1 810\n",
+        "expected": "810",
+        "actual": "810",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n1 1162\n",
+        "expected": "1162",
+        "actual": "1162",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n1 8\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n1 176923\n",
+        "expected": "176923",
+        "actual": "176923",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n1 346\n",
+        "expected": "346",
+        "actual": "346",
+        "stderr": "",
+        "runtime_ms": 45,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 3 7",
+        "actual": "1 3 3 7",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n1 1\n1 2\n1 1\n2 3 2\n",
+        "expected": "1 2 1",
+        "actual": "1 2 1",
+        "stderr": "",
+        "runtime_ms": 47,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 1\n2 1 3\n",
+        "expected": "3 2 2 3 3",
+        "actual": "3 2 2 3 3",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n1 192\n",
+        "expected": "192",
+        "actual": "192",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n1 6\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n1 1566\n",
+        "expected": "1566",
+        "actual": "1566",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n1 1612\n",
+        "expected": "1612",
+        "actual": "1612",
+        "stderr": "",
+        "runtime_ms": 54,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n1 391\n",
+        "expected": "391",
+        "actual": "391",
+        "stderr": "",
+        "runtime_ms": 44,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n1 1904\n",
+        "expected": "1904",
+        "actual": "1904",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n1 12\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n1 455\n",
+        "expected": "455",
+        "actual": "455",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 6\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 6 7",
+        "actual": "1 3 6 7",
+        "stderr": "",
+        "runtime_ms": 46,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n1 2\n1 2\n1 1\n2 3 2\n",
+        "expected": "2 2 1",
+        "actual": "2 2 1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n1 61\n",
+        "expected": "61",
+        "actual": "61",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n1 3\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n1 107\n",
+        "expected": "107",
+        "actual": "107",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n1 537\n",
+        "expected": "537",
+        "actual": "537",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n1 520\n",
+        "expected": "520",
+        "actual": "520",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n1 72\n",
+        "expected": "72",
+        "actual": "72",
+        "stderr": "",
+        "runtime_ms": 69,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n1 415\n",
+        "expected": "415",
+        "actual": "415",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n1 639\n",
+        "expected": "639",
+        "actual": "639",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n1 705\n",
+        "expected": "705",
+        "actual": "705",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n1 34\n",
+        "expected": "34",
+        "actual": "34",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n1 42\n",
+        "expected": "42",
+        "actual": "42",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n1 91\n",
+        "expected": "91",
+        "actual": "91",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n1 123055\n",
+        "expected": "123055",
+        "actual": "123055",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.058903500000000004,
+  "total_latency_ms": 108501,
+  "iterations_used": null,
+  "early_stopped": null
+}

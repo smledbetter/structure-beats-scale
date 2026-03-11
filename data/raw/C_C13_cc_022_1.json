@@ -1,0 +1,2074 @@
+{
+  "study": "C",
+  "condition": "C13",
+  "task_id": "cc_022",
+  "replica": 1,
+  "strategy_family": "hybrid",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Actually, cell (r,c) is exitable iff it's empty AND (r=1 OR c=1 OR cell(r-1,c) is exitable OR cell(r,c-1) is exitable).\n\nThe exitability pattern E[r][c] = 1 if cell is exitable, 0 if not (filled or not reachable).\n\nFor the grid to be determinable: given E, we must be able to uniquely recover the filled/empty status.\n\nA cell is NOT exitable either because it's filled, or because it's empty but blocked. The grid is indeterminate if we can change some empty-but-blocked cell to filled without changing the exitability pattern.\n\nKey insight: If cell (r,c) is empty but not exitable (E[r][c]=0), it means both cell(r-1,c) and cell(r,c-1) are not exitable. If we fill cell (r,c), does it change any exitability? Cell (r,c) was already not exitable, and filling it can only block cells to the right/below. But those cells' exitability depends on paths through (r,c) - if (r,c) was empty but not exitable, it couldn't contribute to making right/below cells exitable anyway. So filling it doesn't change exitability!\n\nSo the grid is determinable iff there are NO empty-but-not-exitable cells. In other words, every non-exitable cell must be filled.\n\nFor a subgrid with columns [x1, x2]: a cell (r, c) with x1 \u2264 c \u2264 x2 is exitable in the subgrid if it's empty and can reach the left boundary (column x1) or top boundary (row 1) through empty cells within the subgrid.\n\nThe subgrid is NOT determinable iff there exists an empty cell that is not exitable in the subgrid.\n\nFor each column c, let's define for each row r: is cell (r,c) a \"problem\" for subgrid [x1,x2]? It's a problem if it's empty but not exitable in [x1,x2].\n\nLet me think about when an empty cell (r,c) is NOT exitable in subgrid [x1,x2]. It's not exitable if neither going left nor going up can reach the boundary within the subgrid while staying in empty cells.\n\nFor the subgrid [x1,x2], cell (r,c) is exitable iff it's empty and (c=x1 OR r=1 OR left neighbor exitable OR top neighbor exitable).\n\nThe subgrid is bad iff any empty cell is not exitable. \n\nFor each cell (r,c) that is empty, let me find the minimal x1 such that for any subgrid [x1, x2] with x2 \u2265 c, the cell (r,c) is exitable. \n\nActually, let me find for each empty cell (r,c): the set of x1 values for which it becomes non-exitable in [x1, x2] for some x2 \u2265 c. \n\nLet me define `reach[r][c]` = the leftmost column reachable from (r,c) going only up/left through empty cells (in the full grid). If reach[r][c] \u2264 x1, then in subgrid [x1,x2], (r,c) is exitable (since it can reach column reach[r][c] which is \u2264 x1, the left boundary). Wait, but the subgrid starts at x1, so columns < x1 don't exist. The cell is exitable in [x1,x2] if it can reach column x1 or row 1 within [x1,x2].\n\nLet me define `left_reach[r][c]` as the minimum column index reachable from (r,c) moving up/left through empty cells. If `left_reach[r][c] \u2264 x1` OR row 1 is reachable, then exitable.\n\nLet me implement this carefully.\n\n<br>\n\nimport sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    \n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    # For each empty cell (r,c), compute:\n    # top_reach[r][c] = can we reach row 0 (top boundary) going up/left through empty cells?\n    # left_reach[r][c] = minimum column reachable going up/left through empty cells\n    # \n    # Actually let's define:\n    # min_col[r][c] = minimum column index (0-based) reachable from (r,c) via up/left empty path\n    # top_reach[r][c] = True if row 0 reachable\n    \n    # For filled cells, they're not exitable regardless.\n    # For empty cell (r,c):\n    #   if r==0: top_reach=True, min_col=c\n    #   if c==0: top_reach = top_reach of cell above if r>0 else True; min_col=0\n    # \n    # min_col[r][c] = min(c if c==0 else INF, min_col[r-1][c] if r>0 and empty, min_col[r][c-1] if c>0 and empty)\n    # top_reach[r][c] = (r==0) or (r>0 and grid[r-1][c]=='.' and top_reach[r-1][c]) or (c>0 and grid[r][c-1]=='.' and top_reach[r][c-1])\n    \n    INF = m + 1\n    \n    # Use flat arrays\n    min_col = [INF] * (n * m)\n    top_reach = [False] * (n * m)\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                min_col[r*m+c] = INF\n                top_reach[r*m+c] = False\n            else:\n                mc = INF\n                tr = False\n                if r == 0:\n                    tr = True\n                    mc = c\n                else:\n                    if grid[r-1][c] == '.':\n                        if top_reach[(r-1)*m+c]:\n                            tr = True\n                        mc = min(mc, min_col[(r-1)*m+c])\n                if c == 0:\n                    mc = min(mc, 0)\n                else:\n                    if grid[r][c-1] == '.':\n                        if top_reach[r*m+c-1]:\n                            tr = True\n                        mc = min(mc, min_col[r*m+c-1])\n                if not tr and c == 0:\n                    # leftmost column, can exit left\n                    # Actually exiting left means reaching col boundary\n                    # c==0 means we're at leftmost, so min_col=0\n                    pass\n                min_col[r*m+c] = mc\n                top_reach[r*m+c] = tr\n    \n    # A subgrid [x1,x2] (1-indexed) is bad if there exists empty cell (r,c) with x1<=c<=x2 (0-indexed: x1-1<=c<=x2-1)\n    # such that cell is not exitable in subgrid.\n    # Cell (r,c) is exitable in subgrid [x1,x2] (0-indexed [l,r_col]) iff:\n    #   top_reach[r][c] OR min_col[r][c] <= l  (where l = x1-1)\n    # \n    # So cell (r,c) is NOT exitable in subgrid [l, r_col] iff:\n    #   grid[r][c]=='.' AND NOT top_reach[r][c] AND min_col[r][c] > l\n    #   i.e., min_col[r][c] > l, meaning l < min_col[r][c]\n    #   i.e., l <= min_col[r][c] - 1\n    #   And also c >= l and c <= r_col\n    #\n    # So subgrid [l, r_col] is bad iff exists empty cell (r,c) with:\n    #   l <= c <= r_col\n    #   NOT top_reach[r][c]\n    #   min_col[r][c] > l  =>  l < min_col[r][c]\n    #   Combined: l <= c and l < min_col[r][c]  => l <= min(c, min_col[r][c]-1)\n    #   And c <= r_col\n    #\n    # For a query [l, r_col], it's bad iff exists such cell with c in [l, r_col] and min_col[r][c] > l.\n    #\n    # For each column c (0-indexed), define:\n    #   bad_val[c] = min over all empty cells (r,c) with not top_reach[r][c] of min_col[r][c]\n    #   (the minimum min_col among problematic cells in column c)\n    #   If no such cell, bad_val[c] = INF\n    #\n    # Then subgrid [l, r_col] is bad iff exists c in [l, r_col] with bad_val[c] > l.\n    # i.e., exists c in [l, r_col] with bad_val[c] > l\n    # i.e., max(bad_val[c] for c in [l,r_col]) > l  ... no wait\n    # We need EXISTS c with bad_val[c] > l.\n    # bad_val[c] > l means the minimum min_col in column c (for problematic cells) is > l.\n    # But we need at least one cell with min_col > l, not necessarily the minimum.\n    #\n    # Hmm, let me reconsider. For column c, the problematic cells are empty cells with not top_reach.\n    # For a given l, column c contributes a bad cell iff there exists a problematic cell in column c with min_col[r][c] > l.\n    # The maximum min_col among problematic cells in column c being > l would mean such a cell exists.\n    # But actually even if max > l, we need to check.\n    # \n    # Let max_mc[c] = max over problematic cells in column c of min_col[r][c]\n    # Then column c has a bad cell for query l iff max_mc[c] > l.\n    # \n    # So subgrid [l, r_col] is bad iff exists c in [l, r_col] with max_mc[c] > l.\n    # \n    # For each query [l, r_col], answer is NO iff max(max_mc[c] for c in [l,r_col]) > l.\n    # i.e., range max query > l.\n    \n    # Compute max_mc[c] for each column c\n    max_mc = [0] * m  # 0 means no problematic cells (since min_col >= 0, if max_mc=0 and l>=0 always, hmm)\n    # Actually if no problematic cells, max_mc[c] = -INF (or 0, since l >= 0 always)\n    # We want: exists c in [l,r_col] with max_mc[c] > l\n    # If max_mc[c] = 0 and l >= 0, then 0 > l only if l < 0, which never happens.\n    # So initialize max_mc[c] = 0 (meaning no bad cells, since l >= 0 always means 0 <= l, not > l... wait 0 > l when l=0? No, 0 > 0 is false)\n    # Hmm, if l=0 and max_mc[c]=1, then 1>0 is true = bad.\n    # Initialize max_mc[c] = -1 to indicate no problematic cells.\n    \n    max_mc = [-1] * m\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not top_reach[r*m+c]:\n                mc = min_col[r*m+c]\n                if mc > max_mc[c]:\n                    max_mc[c] = mc\n    \n    # Build sparse table for range max queries\n    import math\n    LOG = max(1, m.bit_length())\n    sparse = [max_mc[:]]\n    for k in range(1, LOG+1):\n        prev = sparse[k-1]\n        length = 1 << k\n        curr = [0] * m\n        for i in range(m):\n            j = i + (1 << (k-1))\n            if j < m:\n                curr[i] = max(prev[i], prev[j])\n            else:\n                curr[i] = prev[i]\n        sparse.append(curr)\n    \n    def query_max(l, r):\n        if l > r:\n            return -1\n        k = (r - l + 1).bit_length() - 1\n        return max(sparse[k][l], sparse[k][r - (1<<k) + 1])\n    \n    q = int(input_data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        l = x1 - 1  # 0-indexed\n        r_col = x2 - 1\n        mx = query_max(l, r_col)\n        if mx > l:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nsolve()",
+      "input_tokens": 1168,
+      "output_tokens": 3757,
+      "cost_usd": 0.059859,
+      "latency_ms": 55848
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    # exitable[r][c] in full grid\n    # exit_up[r][c] = exitable considering only up direction (column c, rows 0..r)\n    # A cell is exitable if empty and (up neighbor exitable OR left neighbor exitable OR on boundary)\n    \n    exit_grid = [[False]*m for _ in range(n)]\n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                exit_grid[r][c] = False\n            else:\n                up = exit_grid[r-1][c] if r>0 else True\n                left = exit_grid[r][c-1] if c>0 else True\n                exit_grid[r][c] = up or left\n    \n    # For subgrid [x1,x2] (0-indexed: [x1,x2]), \n    # exitability changes only for cells in column x1 (left boundary)\n    # Actually all cells can change...\n    \n    # Let's think differently.\n    # exit_col[r][c] = can exit going only UP from (r,c) through empty cells\n    # = grid[r][c]=='.' and (r==0 or exit_col[r-1][c])\n    \n    exit_col = [[False]*m for _ in range(n)]\n    for c in range(m):\n        for r in range(n):\n            if grid[r][c] == '.':\n                exit_col[r][c] = (r==0) or exit_col[r-1][c]\n    \n    # exit_row[r][c] = can exit going only LEFT from (r,c) through empty cells\n    exit_row = [[False]*m for _ in range(n)]\n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.':\n                exit_row[r][c] = (c==0) or exit_row[r][c-1]\n    \n    # In subgrid [x1, x2] (0-indexed), a cell (r,c) is exitable iff:\n    # empty AND (exit_col[r][c] OR exit_row_subgrid[r][c])\n    # where exit_row_subgrid[r][c] = empty AND (c==x1 OR exit_row_subgrid[r][c-1])\n    # exit_row_subgrid[r][c] = exit_row[r][c] if no filled cell between x1 and c in row r\n    # Actually exit_row_subgrid[r][c] = exit_row[r][c] AND (leftmost filled in row r in [x1,c] doesn't exist)\n    # Hmm, exit_row_subgrid[r][c] = (grid[r][x1..c] all empty) = exit_row[r][c] and not exit_row[r][x1-1] ... no\n    \n    # exit_row[r][c] = all of row r from col 0 to c are empty\n    # exit_row_subgrid[r][c] (left boundary = x1) = all of row r from col x1 to c are empty\n    # = exit_row[r][c] AND (x1==0 OR NOT exit_row... no)\n    # = (no X in row r, cols x1..c)\n    # Let first_X_row[r] = first column with X in row r (or m if none)\n    # exit_row_subgrid[r][c] = (first_X_in_row_r >= x1 means... wait\n    # exit_row_subgrid[r][c] = grid[r][x1..c] all '.' = (first X in row r in range [x1,c] doesn't exist)\n    # = first_X_row[r] > c OR first_X_row[r] < x1\n    # Hmm need first X in [x1,c]: use prefix\n    \n    # Let me define:\n    # For each row r, let fx[r][c] = first X in row r at column <= c (or -1)\n    # exit_row_subgrid[r][c] given x1 = (no X in [x1,c]) = (fx[r][c] < x1 or fx[r][c] = -1... )\n    # Actually: no X in [x1,c] iff (first X in row r that is >= x1) > c\n    # Let nxt_X[r][c] = first X in row r at column >= c (or m if none)\n    # exit_row_subgrid[r][c] = nxt_X[r][x1] > c\n    \n    # So in subgrid [x1,x2], cell (r,c) is exitable iff:\n    # grid[r][c]=='.' AND (exit_col[r][c] OR nxt_X[r][x1] > c)\n    \n    # Cell (r,c) is BAD in subgrid [x1,x2] iff:\n    # grid[r][c]=='X' AND NOT exit_col[r][c] (up-neighbor not exitable, considering only up)\n    # Wait, up-neighbor exitable in subgrid = exit_col... no, exit_col doesn't depend on x1\n    # AND the cell would not be exitable even if empty:\n    # (if empty) exitable = exit_col[r][c] OR exit_row_subgrid[r][c]\n    # But exit_col[r][c]: if grid[r][c]='X', exit_col[r][c]=False, but if we make it '.':\n    # exit_col_if_empty[r][c] = (r==0) or exit_col[r-1][c]  -- since the cell above doesn't change\n    # Similarly exit_row_subgrid_if_empty[r][c] = nxt_X_after_x1_in_row_r > c, but since grid[r][c]=X,\n    # if we make it empty, nxt_X[r][x1] might change... \n    \n    # Hmm this is getting complicated. Let me reconsider.\n    \n    # The key insight: grid is not determinable iff there's a filled cell that is \"invisible\"\n    # i.e., making it empty doesn't change any cell's exitability.\n    \n    # Cell (r,c)='X' is invisible in subgrid [x1,x2] iff:\n    # In the subgrid, (r,c) would not be exitable even if empty.\n    # Because if it would be exitable if empty, then making it empty changes (r,c) from N to E.\n    # If it would not be exitable if empty, making it empty might still affect cells to the right/below.\n    # Wait, but we only move up and left, so (r,c) being empty/filled only affects cells (r,c), (r+1,c), (r,c+1), etc. (those that could use (r,c) as a stepping stone going up-left to exit).\n    \n    # Actually, exitability propagates: cell (r,c) is exitable => cell (r+1,c) might be exitable (if empty), cell (r,c+1) might be exitable.\n    # So if we change (r,c) from X to '.', it could make more cells exitable.\n    \n    # For the grid to be not determinable, we need two grids with same exitability pattern.\n    # One way: take the original grid, find a filled cell (r,c) such that flipping it to empty doesn't change exitability of ANY cell.\n    \n    # Cell (r,c)='X'. If we make it '.':\n    # - (r,c) itself: was N (not exitable as X), becomes exitable iff exit_col_if_empty OR exit_row_if_empty\n    #   So if it would NOT become exitable, exitability of (r,c) unchanged.\n    # - Other cells: only cells reachable from (r,c) going down/right could be affected.\n    #   But since we move up/left to exit, cell (r',c') with r'>=r, c'>=c could potentially use (r,c).\n    #   However, (r',c') is exitable through (r,c) only if there's a path from (r',c') to (r,c) going up/left,\n    #   then from (r,c) to exit. \n    \n    # For the flip to not change exitability of any cell:\n    # 1. (r,c) itself should not become exitable: NOT (exit_col_if_empty[r][c] OR exit_row_subgrid_if_empty[r][c])\n    # 2. No other cell's exitability changes.\n    \n    # If (r,c) doesn't become exitable, then no cell can use (r,c) as a path (since (r,c) is not exitable).\n    # So condition 1 is sufficient!\n    \n    # Wait, is that right? If (r,c) is not exitable (even as empty), then it can't serve as intermediate.\n    # Because to exit via (r,c), you'd need (r,c) to be exitable first. If it's not, no path goes through it.\n    \n    # So: cell (r,c)='X' is \"bad\" (makes grid not determinable) iff making it '.' leaves it non-exitable.\n    # i.e., exit_col_if_empty[r][c] = False AND exit_row_subgrid_if_empty[r][c] = False\n    \n    # exit_col_if_empty[r][c]: pretend (r,c)='.', can we exit going up?\n    # = (r==0) OR exit_col[r-1][c]  (since cells above (r,c) are unchanged)\n    # Note: exit_col[r-1][c] is computed with original grid, which doesn't include (r,c).\n    \n    # exit_row_subgrid_if_empty[r][c] given x1: pretend (r,c)='.', can we exit going left within subgrid?\n    # = (c==x1) OR (grid[r][c-1]=='.' AND exit_row_subgrid_if_empty[r][c-1])\n    # But exit_row_subgrid[r][c-1] doesn't involve (r,c), so it's just exit_row_subgrid[r][c-1].\n    # = (c==x1) OR exit_row_subgrid[r][c-1]\n    # = nxt_X[r][x1] >= c  (first X in row r from x1 onwards is at c or beyond, but we're pretending (r,c)='.')\n    # Hmm: exit_row_subgrid_if_empty[r][c] = no X in row r in [x1, c-1]\n    # = nxt_X_original[r][x1] >= c  where nxt_X_original uses original grid (including (r,c)='X')\n    # Wait: nxt_X[r][x1] = first X in row r at col >= x1.\n    # If grid[r][c]='X' and c >= x1, then nxt_X[r][x1] <= c.\n    # exit_row_subgrid_if_empty[r][c] = no X in [x1, c-1] = nxt_X[r][x1] >= c.\n    # (Since grid[r][c] itself is X but we pretend it's '.', we only care about [x1, c-1].)\n    \n    # So: cell (r,c)='X' is bad in subgrid [x1,x2] iff:\n    # NOT ((r==0) OR exit_col[r-1][c]) AND NOT (nxt_X[r][x1] >= c)\n    # = (r>0 AND NOT exit_col[r-1][c]) AND (nxt_X[r][x1] < c)\n    \n    # nxt_X[r][x1] < c means there's an X in row r between x1 and c-1 (inclusive).\n    # Since grid[r][c]='X', nxt_X[r][x1] <= c always (when c >= x1).\n    # nxt_X[r][x1] < c means nxt_X[r][x1] is strictly less than c, i.e., there's an X before c in [x1, c-1].\n    \n    # Also need: (r>0 AND NOT exit_col[r-1][c])\n    # exit_col[r-1][c] = can exit going up from (r-1,c) = all of col c from row 0 to r-1 are empty.\n    # NOT exit_col[r-1][c] = there's an X in col c at some row in [0, r-1].\n    # Let nxt_X_col[c][r] = first X in col c at row >= 0... let's define:\n    # has_X_above[r][c] = exists X in col c in rows [0, r-1] = NOT exit_col[r-1][c] (for r>0)\n    \n    # So bad condition: r>0 AND has_X_above[r][c] AND nxt_X[r][x1] < c\n    # (where nxt_X[r][x1] = first X in row r at col >= x1)\n    \n    # For a query [x1, x2], answer is NO iff exists (r,c) with x1<=c<=x2, grid[r][c]='X',\n    # r>0, has_X_above[r][c], nxt_X[r][x1] < c.\n    \n    # nxt_X[r][x1] < c means: first X in row r at col >= x1 is at some col c' < c.\n    # Since grid[r][c]='X' and c'=nxt_X[r][x1] <= c, this means c' < c, so there's another X before c.\n    \n    # Let me define for each 'X' cell (r,c) with r>0 and has_X_above[r][c]:\n    # Let p = nxt_X[r][x1]... wait x1 is query parameter.\n    # nxt_X[r][x1] < c iff the first X in row r at col >= x1 is before c.\n    # This equals: there exists X in row r at col in [x1, c-1].\n    # = prev_X_in_row[r][c] >= x1, where prev_X_in_row[r][c] = last X in row r at col < c (or -1).\n    \n    # Let prev_X[r][c] = largest col c' < c with grid[r][c']='X' (or -1 if none).\n    # nxt_X[r][x1] < c iff prev_X[r][c] >= x1 (there's an X in [x1, c-1]).\n    # (Since nxt_X[r][x1] = min X in [x1, inf), if that min < c, it's in [x1, c-1], \n    #  so prev_X[r][c] >= x1.)\n    \n    # So bad condition for cell (r,c)='X':\n    # r>0 AND has_X_above[r][c] AND prev_X[r][c] >= x1\n    # AND c <= x2 (cell is in subgrid) AND c >= x1\n    \n    # For query [x1, x2]: NO iff exists (r,c) with:\n    # grid[r][c]='X', r>0, has_X_above[r][c], x1 <= c <= x2, prev_X[r][c] >= x1\n    \n    # Since prev_X[r][c] < c, condition prev_X[r][c] >= x1 AND c >= x1 means x1 <= prev_X[r][c] < c <= x2.\n    \n    # So: NO iff exists X cell (r,c) with r>0, has_X_above[r][c], x1 <= prev_X[r][c] < c <= x2.\n    \n    # Let's define \"critical\" cells: X cells (r,c) with r>0, has_X_above[r][c], prev_X[r][c] != -1.\n    # For such a cell, let a = prev_X[r][c], b = c. We have a < b.\n    # Query [x1,x2] gets NO iff exists critical cell with x1 <= a and b <= x2.\n    # i.e., exists critical pair (a,b) with x1<=a and b<=x2.\n    \n    # So: for each query [x1,x2], answer is NO iff min_b over all critical (a,b) with a>=x1 and b<=x2 exists.\n    # Equivalently: among critical pairs with b <= x2, is there one with a >= x1?\n    # = max_a over critical pairs with b <= x2 >= x1?\n    \n    # We can precompute: for each b, the maximum a among critical pairs with that b.\n    # Then for query [x1,x2]: max over b in [1,x2] of max_a[b] >= x1?\n    # = prefix_max_a[x2] >= x1, where prefix_max_a[x2] = max of max_a[b] for b in [1..x2].\n    \n    # Let me implement this.\n    \n    q_count = int(input_data[idx]); idx+=1\n    \n    # Compute has_X_above[r][c]: exists X in col c, rows [0,r-1]\n    # = NOT exit_col[r-1][c] for r>0\n    # exit_col[r][c] = grid[r][c]=='.' and (r==0 or exit_col[r-1][c])\n    \n    # Compute prev_X[r][c] for each row r: last X before col c in row r\n    # For critical cells: X at (r,c), r>0, has_X_above, prev_X[r][c] != -1\n    # Record pair (prev_X[r][c], c) -> these are 1-indexed columns\n    \n    # max_a[b] = max a among critical pairs with second element = b (1-indexed)\n    max_a = [-1] * (m + 2)  # 1-indexed\n    \n    # Process grid\n    # exit_col_prev[c] = exit_col[r-1][c] (previous row's exit_col)\n    exit_col_cur = [False] * m\n    # Row 0:\n    for c in range(m):\n        exit_col_cur[c] = (grid[0][c] == '.')\n    \n    # prev_X in row: track last X position\n    # For row 0, compute prev_X\n    prev_x_row = [-1] * m\n    last_x = -1\n    for c in range(m):\n        if grid[0][c] == 'X':\n            prev_x_row[c] = last_x\n            last_x = c\n        else:\n            prev_x_row[c] = last_x\n    # Row 0: r=0, so r>0 is false, no critical cells from row 0.\n    \n    for r in range(1, n):\n        exit_col_prev = exit_col_cur\n        exit_col_cur = [False] * m\n        for c in range(m):\n            exit_col_cur[c] = (grid[r][c] == '.') and exit_col_prev[c]\n        \n        # Compute prev_X for row r\n        last_x = -1\n        for c in range(m):\n            if grid[r][c] == 'X':\n                px = last_x  # prev_X[r][c] (0-indexed)\n                # has_X_above[r][c] = not exit_col_prev[c] (exit_col[r-1][c])\n                # exit_col_prev[c] was computed as exit_col[r-1][c]... \n                # Wait: exit_col_cur after processing row r is exit_col[r][c].\n                # exit_col_prev is exit_col[r-1][c].\n                # has_X_above[r][c] = NOT exit_col[r-1][c] = NOT exit_col_prev[c]\n                # But exit_col_prev[c] = exit_col[r-1][c] which requires grid[r-1][c]=='.' and exit_col[r-2][c]\n                # Actually exit_col[r-1][c] = True iff all of col c rows 0..r-1 are empty.\n                # has_X_above = NOT exit_col_prev[c]... \n                # Hmm wait. exit_col[r][c] = True iff grid[r][c]='.' AND exit_col[r-1][c].\n                # So exit_col[r-1][c] = True iff grid[r-1][c]='.' AND exit_col[r-2][c] AND ... all empty.\n                # has_X_above[r][c] = there's X in col c in rows 0..r-1 = NOT (all empty in col c rows 0..r-1)\n                # = NOT (exit_col[r-1][c] if grid[r-1][c]='.' else False)\n                # Hmm, exit_col[r-1][c] is True only if grid[r-1][c]='.' AND all above empty.\n                # So exit_col[r-1][c]=True implies all of col c rows 0..r-1 empty.\n                # exit_col[r-1][c]=False could mean either grid[r-1][c]='X' or some row above has X.\n                # Actually: exit_col[r][c] = (grid[0][c]=='.' AND grid[1][c]=='.' AND ... AND grid[r][c]=='.')\n                # So exit_col_prev[c] = all of col c rows 0..r-1 empty.\n                # has_X_above[r][c] = NOT exit_col_prev[c]. Yes!\n                \n                if not exit_col_prev[c] and px != -1:\n                    # critical pair: a = px+1 (1-indexed), b = c+1 (1-indexed)\n                    a = px + 1\n                    b = c + 1\n                    if max_a[b] < a:\n                        max_a[b] = a\n                last_x = c\n    \n    # prefix_max_a[b] = max of max_a[1..b]\n    prefix_max_a = [0] * (m + 2)\n    for b in range(1, m + 1):\n        prefix_max_a[b] = max(prefix_max_a[b-1], max_a[b])\n    \n    out = []\n    for _ in range(q_count):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        # NO iff exists critical (a,b) with x1<=a, b<=x2\n        # = prefix_max_a[x2] >= x1\n        if prefix_max_a[x2] >= x1:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nsolve()",
+      "input_tokens": 1168,
+      "output_tokens": 8192,
+      "cost_usd": 0.126384,
+      "latency_ms": 112118
+    },
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "import sys\nfrom sys import stdin\n\ndef main():\n    input = stdin.readline\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(data[idx]); idx+=1\n    m = int(data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(data[idx].decode()); idx+=1\n    \n    # For subgrid [x1,x2] (1-indexed cols), it's non-determinable iff\n    # exists empty cell not exitable in subgrid.\n    # \n    # Let's precompute for each column c (1-indexed), the minimum x1 such that\n    # all empty cells in columns [x1..c] are exitable in subgrid [x1..c].\n    # Then query [x1,x2] is YES iff for all c in [x1,x2], min_x1[c] <= x1.\n    # i.e., max over c in [x1,x2] of min_x1[c] <= x1.\n    # \n    # We need prefix max of min_x1, then check prefix_max[x2] - but only from x1..x2.\n    # Use sparse table for range max queries.\n    \n    # For each cell (r,c): it's empty. In subgrid starting at col x1,\n    # it's exitable iff we can go up/left through empty cells to row 0 or col x1.\n    # \n    # The critical condition: cell (r,c) empty, not exitable in [x1,x2]:\n    # means every path up/left from (r,c) is blocked.\n    # This means: in original grid, the \"upper-left shadow\" of (r,c) \n    # (cells reachable by going up/left through empty) doesn't touch col <= x1 or row 1.\n    # \n    # For each empty cell (r,c), define reach(r,c) = minimum column index reachable\n    # going up/left through empty cells (in full grid, ignoring left boundary).\n    # Actually define left_reach(r,c) = min column of any cell reachable from (r,c)\n    # going up/left through empty cells.\n    # \n    # Then cell (r,c) is exitable in subgrid [x1,x2] iff:\n    # it's empty AND (left_reach(r,c) <= x1 OR top_reach(r,c) exists)\n    # where top_reach means can reach row 1.\n    # \n    # Let me define for each empty cell (r,c):\n    # can_top(r,c) = True if can reach row 1 going up/left through empty\n    # min_col(r,c) = minimum column reachable going up/left through empty\n    # \n    # Cell exitable in [x1,x2] iff empty AND (can_top OR min_col <= x1)\n    # \n    # For subgrid [x1,x2] determinable: for all empty (r,c) with c in [x1,x2]:\n    # can_top(r,c) OR min_col(r,c) <= x1\n    # \n    # Non-determinable: exists empty (r,c), c in [x1,x2], not can_top(r,c), min_col(r,c) > x1\n    # i.e., min_col(r,c) > x1\n    # \n    # So for each empty cell (r,c) with not can_top(r,c), it requires x1 >= min_col(r,c)... \n    # wait no: we need min_col(r,c) <= x1, so x1 >= min_col(r,c).\n    # But x1 <= c always. So if min_col(r,c) > x1, cell is not exitable.\n    # \n    # For query [x1,x2]: YES iff for all empty (r,c) with c in [x1,x2] and not can_top(r,c):\n    # min_col(r,c) <= x1.\n    # \n    # Equivalently: max over {min_col(r,c) : c in [x1,x2], empty, not can_top} <= x1\n    # \n    # For each column c, define bad(c) = max over rows r of min_col(r,c) \n    #   where cell (r,c) is empty and not can_top(r,c).\n    #   (if no such cell, bad(c) = 0 or -inf)\n    # \n    # Query [x1,x2] is YES iff max(bad(x1), ..., bad(x2)) <= x1\n    # i.e., range_max(bad, x1, x2) <= x1\n    \n    # Now compute can_top and min_col for each cell.\n    # \n    # Process row by row, col by col.\n    # For cell (r,c) empty:\n    #   if r==1: can_top=True, min_col=c\n    #   else: \n    #     from above: (r-1,c) if empty\n    #     from left: (r,c-1) if empty\n    #     can_top(r,c) = can_top(r-1,c) or can_top(r,c-1)\n    #     min_col(r,c) = min(min_col(r-1,c), min_col(r,c-1))\n    #     but only from empty neighbors\n    # \n    # Wait, but this is not quite right. The reachability is:\n    # from (r,c) you can go to (r-1,c) or (r,c-1) if they're empty.\n    # So can_top(r,c) = True if r==1, or (cell(r-1,c) empty and can_top(r-1,c)) or (cell(r,c-1) empty and can_top(r,c-1))\n    # min_col(r,c) = c if ... hmm, min_col should be the minimum column of any reachable cell.\n    # \n    # Actually reachable cells from (r,c) going up/left = {(r,c)} union reachable from (r-1,c) union reachable from (r,c-1)\n    # So min_col(r,c) = min(c, min_col(r-1,c) if (r-1,c) empty, min_col(r,c-1) if (r,c-1) empty)\n    # can_top(r,c) = (r==1) or (r>1 and (r-1,c) empty and can_top(r-1,c)) or (c>1 and (r,c-1) empty and can_top(r,c-1))\n    # \n    # This DP works! Process in order of increasing r and c.\n    \n    INF = float('inf')\n    \n    # 0-indexed internally\n    # can_top[r][c], min_col[r][c]\n    # But n*m <= 1e6, so we can store flat arrays\n    \n    can_top = [False] * (n * m)\n    min_col_arr = [INF] * (n * m)  # INF means filled or unreachable\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                continue\n            # empty cell\n            mc = c  # can always reach itself\n            ct = (r == 0)\n            if r > 0 and grid[r-1][c] == '.':\n                prev = (r-1)*m + c\n                mc = min(mc, min_col_arr[prev])\n                ct = ct or can_top[prev]\n            if c > 0 and grid[r][c-1] == '.':\n                prev = r*m + (c-1)\n                mc = min(mc, min_col_arr[prev])\n                ct = ct or can_top[prev]\n            can_top[r*m+c] = ct\n            min_col_arr[r*m+c] = mc\n    \n    # For each column c (0-indexed), compute bad[c]\n    bad = [0] * m  # 0 means no constraint (use 0 = no bad cell, since min_col >= 1 in 1-indexed)\n    # bad[c] = max min_col (1-indexed) over empty cells in col c that can't reach top\n    # If bad[c] <= x1 (1-indexed), that cell is exitable.\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not can_top[r*m+c]:\n                mc = min_col_arr[r*m+c]  # 0-indexed\n                # 1-indexed: mc+1\n                if mc + 1 > bad[c]:\n                    bad[c] = mc + 1\n    \n    # Query [x1, x2] (1-indexed): YES iff range_max(bad[x1-1..x2-1]) <= x1\n    # Build sparse table for range max on bad\n    \n    import math\n    LOG = max(1, m.bit_length())\n    sparse = [bad[:]]\n    for k in range(1, LOG+1):\n        prev = sparse[k-1]\n        curr = [0]*m\n        for i in range(m):\n            j = i + (1 << (k-1))\n            if j < m:\n                curr[i] = max(prev[i], prev[j])\n            else:\n                curr[i] = prev[i]\n        sparse.append(curr)\n        if (1 << k) > m:\n            break\n    \n    def range_max(l, r):\n        # 0-indexed [l, r]\n        if l > r:\n            return 0\n        k = (r - l + 1).bit_length() - 1\n        return max(sparse[k][l], sparse[k][r - (1<<k) + 1])\n    \n    q = int(data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(data[idx]); idx+=1\n        x2 = int(data[idx]); idx+=1\n        # range_max of bad[x1-1..x2-1] <= x1\n        rm = range_max(x1-1, x2-1)\n        if rm <= x1:\n            out.append(\"YES\")\n        else:\n            out.append(\"NO\")\n    \n    print('\\n'.join(out))\n\nmain()",
+      "input_tokens": 1168,
+      "output_tokens": 3839,
+      "cost_usd": 0.061089,
+      "latency_ms": 58767
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_gen0_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 3764,
+          "output_tokens": 0,
+          "cost_usd": 0.000941,
+          "latency_ms": 8192
+        },
+        {
+          "role": "generalist_gen0_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The DP that computes the minimum reachable column (min_col) initializes mc to INF for empty cells not on the top row, never setting it to the cell's own column index. Consequently, isolated empty cells (e.g., in a subgrid consisting of a single column that is not the first row) get min_col = INF, causing them to be considered non\u2011exitable even though they can exit left from the leftmost column of the subgrid. This leads to incorrect answers such as returning \"NO\" for a query like [5,5] in the sample.",
+              "line": 56,
+              "severity": "major",
+              "triggering_input": "4 5\n..XXX\n...X.\n...X.\n...X.\n1\n5 5"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The DP that computes the minimum reachable column (min_col) initializes mc to INF for empty cells not on the top row, never setting it to the cell's own column index. Consequently, isolated empty cells (e.g., in a subgrid consisting of a single column that is not the first row) get min_col = INF, causing them to be considered non\u2011exitable even though they can exit left from the leftmost column of the subgrid. This leads to incorrect answers such as returning \\\"NO\\\" for a query like [5,5] in the sample.\", \"line\": 56, \"severity\": \"major\", \"triggering_input\": \"4 5\\n..XXX\\n...X.\\n...X.\\n...X.\\n1\\n5 5\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The DP that computes the minimum reachable column (min_col) initializes mc to INF for empty cells not on the top row, never setting it to the cell's own column index. Consequently, isolated empty cells (e.g., in a subgrid consisting of a single column that is not the first row) get min_col = INF, causing them to be considered non\u2011exitable even though they can exit left from the leftmost column of the subgrid. This leads to incorrect answers such as returning \"NO\" for a query like [5,5] in the sample.",
+                "line": 56,
+                "severity": "major",
+                "triggering_input": "4 5\n..XXX\n...X.\n...X.\n...X.\n1\n5 5"
+              }
+            ]
+          },
+          "input_tokens": 3907,
+          "output_tokens": 173,
+          "cost_usd": 0.0011065,
+          "latency_ms": 7008
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    \n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    INF = m + 1\n    \n    min_col = [INF] * (n * m)\n    top_reach = [False] * (n * m)\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                min_col[r*m+c] = INF\n                top_reach[r*m+c] = False\n            else:\n                mc = c  # cell can reach its own column\n                tr = False\n                if r == 0:\n                    tr = True\n                else:\n                    if grid[r-1][c] == '.':\n                        if top_reach[(r-1)*m+c]:\n                            tr = True\n                        mc = min(mc, min_col[(r-1)*m+c])\n                if c == 0:\n                    mc = min(mc, 0)\n                else:\n                    if grid[r][c-1] == '.':\n                        if top_reach[r*m+c-1]:\n                            tr = True\n                        mc = min(mc, min_col[r*m+c-1])\n                min_col[r*m+c] = mc\n                top_reach[r*m+c] = tr\n    \n    max_mc = [-1] * m\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not top_reach[r*m+c]:\n                mc = min_col[r*m+c]\n                if mc > max_mc[c]:\n                    max_mc[c] = mc\n    \n    LOG = max(1, m.bit_length())\n    sparse = [max_mc[:]]\n    for k in range(1, LOG+1):\n        prev = sparse[k-1]\n        curr = [0] * m\n        for i in range(m):\n            j = i + (1 << (k-1))\n            if j < m:\n                curr[i] = max(prev[i], prev[j])\n            else:\n                curr[i] = prev[i]\n        sparse.append(curr)\n    \n    def query_max(l, r):\n        if l > r:\n            return -1\n        k = (r - l + 1).bit_length() - 1\n        return max(sparse[k][l], sparse[k][r - (1<<k) + 1])\n    \n    q = int(input_data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        l = x1 - 1\n        r_col = x2 - 1\n        mx = query_max(l, r_col)\n        if mx > l:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nsolve()",
+          "input_tokens": 4876,
+          "output_tokens": 1030,
+          "cost_usd": 0.030078,
+          "latency_ms": 11729
+        }
+      ],
+      "final_code": "import sys\nfrom sys import stdin\n\ndef solve():\n    input_data = stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    \n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    INF = m + 1\n    \n    min_col = [INF] * (n * m)\n    top_reach = [False] * (n * m)\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                min_col[r*m+c] = INF\n                top_reach[r*m+c] = False\n            else:\n                mc = c  # cell can reach its own column\n                tr = False\n                if r == 0:\n                    tr = True\n                else:\n                    if grid[r-1][c] == '.':\n                        if top_reach[(r-1)*m+c]:\n                            tr = True\n                        mc = min(mc, min_col[(r-1)*m+c])\n                if c == 0:\n                    mc = min(mc, 0)\n                else:\n                    if grid[r][c-1] == '.':\n                        if top_reach[r*m+c-1]:\n                            tr = True\n                        mc = min(mc, min_col[r*m+c-1])\n                min_col[r*m+c] = mc\n                top_reach[r*m+c] = tr\n    \n    max_mc = [-1] * m\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not top_reach[r*m+c]:\n                mc = min_col[r*m+c]\n                if mc > max_mc[c]:\n                    max_mc[c] = mc\n    \n    LOG = max(1, m.bit_length())\n    sparse = [max_mc[:]]\n    for k in range(1, LOG+1):\n        prev = sparse[k-1]\n        curr = [0] * m\n        for i in range(m):\n            j = i + (1 << (k-1))\n            if j < m:\n                curr[i] = max(prev[i], prev[j])\n            else:\n                curr[i] = prev[i]\n        sparse.append(curr)\n    \n    def query_max(l, r):\n        if l > r:\n            return -1\n        k = (r - l + 1).bit_length() - 1\n        return max(sparse[k][l], sparse[k][r - (1<<k) + 1])\n    \n    q = int(input_data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        l = x1 - 1\n        r_col = x2 - 1\n        mx = query_max(l, r_col)\n        if mx > l:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    print('\\n'.join(out))\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 33,
+        "failed": 17,
+        "errors": 0,
+        "pass_rate": 0.66,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1 1\n.\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+            "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "actual": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 29,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1 1\nX\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 28,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+            "actual": "NO\nNO\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES",
+            "actual": "YES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+            "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "actual": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 1,
+      "reviews": [
+        {
+          "role": "generalist_gen1_r0",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The algorithm incorrectly determines determinability. It only checks for any X cell that has any X above and any X to the left (not necessarily immediate) within the query range, whereas the correct condition requires a diagonal adjacency (an X at (r,c) and an X at (r-1,c-1)). This leads to false positives, e.g., a grid with X at (0,0) and (1,1) should be non-determinable for columns [1,2] but the code answers YES.",
+              "line": 112,
+              "severity": "critical",
+              "triggering_input": "2 2\nX.\n.X\n1\n1 2"
+            }
+          ],
+          "raw_response": "{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"The algorithm incorrectly determines determinability. It only checks for any X cell that has any X above and any X to the left (not necessarily immediate) within the query range, whereas the correct condition requires a diagonal adjacency (an X at (r,c) and an X at (r-1,c-1)). This leads to false positives, e.g., a grid with X at (0,0) and (1,1) should be non-determinable for columns [1,2] but the code answers YES.\", \"line\": 112, \"severity\": \"critical\", \"triggering_input\": \"2 2\\nX.\\n.X\\n1\\n1 2\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The algorithm incorrectly determines determinability. It only checks for any X cell that has any X above and any X to the left (not necessarily immediate) within the query range, whereas the correct condition requires a diagonal adjacency (an X at (r,c) and an X at (r-1,c-1)). This leads to false positives, e.g., a grid with X at (0,0) and (1,1) should be non-determinable for columns [1,2] but the code answers YES.",
+                "line": 112,
+                "severity": "critical",
+                "triggering_input": "2 2\nX.\n.X\n1\n1 2"
+              }
+            ]
+          },
+          "input_tokens": 5708,
+          "output_tokens": 148,
+          "cost_usd": 0.001538,
+          "latency_ms": 4663
+        },
+        {
+          "role": "generalist_gen1_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "Logic error: the condition used to detect non-determinable subgrids is incorrect. The code only marks a cell as \"critical\" when there is an X above it in the same column and an X to its left in the same row (lines where `if not exit_col_prev[c] and px != -1:`). The correct condition for ambiguity requires a diagonal pattern (an X at (r,c) and an X at (r\u20111,c\u20111)), which this implementation fails to detect. Consequently, queries that should be answered \"NO\" (e.g., a grid with X at (0,0) and X at (1,1)) are incorrectly answered \"YES\".",
+              "line": 71,
+              "severity": "critical",
+              "triggering_input": "2 2\nX.\n.X\n1\n1 2\n"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"Logic error: the condition used to detect non-determinable subgrids is incorrect. The code only marks a cell as \\\"critical\\\" when there is an X above it in the same column and an X to its left in the same row (lines where `if not exit_col_prev[c] and px != -1:`). The correct condition for ambiguity requires a diagonal pattern (an X at (r,c) and an X at (r\u20111,c\u20111)), which this implementation fails to detect. Consequently, queries that should be answered \\\"NO\\\" (e.g., a grid with X at (0,0) and X at (1,1)) are incorrectly answered \\\"YES\\\".\",\n      \"line\": 71,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"2 2\\nX.\\n.X\\n1\\n1 2\\n\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "Logic error: the condition used to detect non-determinable subgrids is incorrect. The code only marks a cell as \"critical\" when there is an X above it in the same column and an X to its left in the same row (lines where `if not exit_col_prev[c] and px != -1:`). The correct condition for ambiguity requires a diagonal pattern (an X at (r,c) and an X at (r\u20111,c\u20111)), which this implementation fails to detect. Consequently, queries that should be answered \"NO\" (e.g., a grid with X at (0,0) and X at (1,1)) are incorrectly answered \"YES\".",
+                "line": 71,
+                "severity": "critical",
+                "triggering_input": "2 2\nX.\n.X\n1\n1 2\n"
+              }
+            ]
+          },
+          "input_tokens": 5708,
+          "output_tokens": 196,
+          "cost_usd": 0.001574,
+          "latency_ms": 6554
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    max_a = [-1] * (m + 2)\n    \n    exit_col_prev = [False] * m\n    for c in range(m):\n        exit_col_prev[c] = (grid[0][c] == '.')\n    \n    for r in range(1, n):\n        exit_col_cur = [False] * m\n        for c in range(m):\n            exit_col_cur[c] = (grid[r][c] == '.') and exit_col_prev[c]\n        \n        last_x = -1\n        for c in range(m):\n            if grid[r][c] == 'X':\n                px = last_x\n                if not exit_col_prev[c] and px != -1:\n                    a = px + 1\n                    b = c + 1\n                    if max_a[b] < a:\n                        max_a[b] = a\n                last_x = c\n        \n        exit_col_prev = exit_col_cur\n    \n    prefix_max_a = [0] * (m + 2)\n    for b in range(1, m + 1):\n        prefix_max_a[b] = max(prefix_max_a[b-1], max_a[b])\n    \n    q_count = int(input_data[idx]); idx+=1\n    out = []\n    for _ in range(q_count):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        if prefix_max_a[x2] >= x1:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    sys.stdout.write('\\n'.join(out) + '\\n')\n\nsolve()",
+          "input_tokens": 7589,
+          "output_tokens": 1427,
+          "cost_usd": 0.044172,
+          "latency_ms": 21706
+        }
+      ],
+      "final_code": "import sys\n\ndef solve():\n    input_data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(input_data[idx]); idx+=1\n    m = int(input_data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(input_data[idx].decode()); idx+=1\n    \n    max_a = [-1] * (m + 2)\n    \n    exit_col_prev = [False] * m\n    for c in range(m):\n        exit_col_prev[c] = (grid[0][c] == '.')\n    \n    for r in range(1, n):\n        exit_col_cur = [False] * m\n        for c in range(m):\n            exit_col_cur[c] = (grid[r][c] == '.') and exit_col_prev[c]\n        \n        last_x = -1\n        for c in range(m):\n            if grid[r][c] == 'X':\n                px = last_x\n                if not exit_col_prev[c] and px != -1:\n                    a = px + 1\n                    b = c + 1\n                    if max_a[b] < a:\n                        max_a[b] = a\n                last_x = c\n        \n        exit_col_prev = exit_col_cur\n    \n    prefix_max_a = [0] * (m + 2)\n    for b in range(1, m + 1):\n        prefix_max_a[b] = max(prefix_max_a[b-1], max_a[b])\n    \n    q_count = int(input_data[idx]); idx+=1\n    out = []\n    for _ in range(q_count):\n        x1 = int(input_data[idx]); idx+=1\n        x2 = int(input_data[idx]); idx+=1\n        if prefix_max_a[x2] >= x1:\n            out.append(\"NO\")\n        else:\n            out.append(\"YES\")\n    \n    sys.stdout.write('\\n'.join(out) + '\\n')\n\nsolve()",
+      "test_results": {
+        "total": 50,
+        "passed": 22,
+        "failed": 28,
+        "errors": 0,
+        "pass_rate": 0.44,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "fail"
+          },
+          {
+            "test_index": 1,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 42,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1 1\n.\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 54,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 4,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+            "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 9,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 10,
+            "input": "1 1\nX\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nNO\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 15,
+            "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 20,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "fail"
+          },
+          {
+            "test_index": 21,
+            "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "fail"
+          },
+          {
+            "test_index": 22,
+            "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nNO\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 35,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 30,
+            "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 34,
+            "status": "fail"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 44,
+            "status": "fail"
+          },
+          {
+            "test_index": 32,
+            "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 33,
+            "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 45,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 38,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 31,
+            "status": "fail"
+          },
+          {
+            "test_index": 40,
+            "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES",
+            "actual": "YES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 41,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+            "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 42,
+            "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 32,
+            "status": "fail"
+          },
+          {
+            "test_index": 43,
+            "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 33,
+            "status": "fail"
+          },
+          {
+            "test_index": 45,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 47,
+            "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 48,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nNO\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 36,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "fail"
+          }
+        ]
+      }
+    },
+    {
+      "generation_index": 2,
+      "reviews": [
+        {
+          "role": "generalist_gen2_r0",
+          "model": "mercury-2",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "",
+          "parsed": null,
+          "input_tokens": 3097,
+          "output_tokens": 0,
+          "cost_usd": 0.00077425,
+          "latency_ms": 25218
+        },
+        {
+          "role": "generalist_gen2_r1",
+          "model": "mercury-2",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "The solution builds a full sparse table for range maximum queries on the array `bad`. For m up to 1e6, the table stores about (log2(m)+1) * m integers (~20 million integers). In Python each integer consumes ~28 bytes, leading to memory usage well over 500\u202fMB, which exceeds typical memory limits and will cause MLE. Additionally, constructing this table takes O(m log m) time, which may be too slow for the given constraints.",
+              "line": 78,
+              "severity": "critical",
+              "triggering_input": "n=1, m=1000000, grid of all '.' and q=1 with query 1 1000000"
+            }
+          ],
+          "raw_response": "{\n  \"verdict\": \"FAIL\",\n  \"bugs\": [\n    {\n      \"description\": \"The solution builds a full sparse table for range maximum queries on the array `bad`. For m up to 1e6, the table stores about (log2(m)+1) * m integers (~20 million integers). In Python each integer consumes ~28 bytes, leading to memory usage well over 500\u202fMB, which exceeds typical memory limits and will cause MLE. Additionally, constructing this table takes O(m log m) time, which may be too slow for the given constraints.\",\n      \"line\": 78,\n      \"severity\": \"critical\",\n      \"triggering_input\": \"n=1, m=1000000, grid of all '.' and q=1 with query 1 1000000\"\n    }\n  ]\n}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "The solution builds a full sparse table for range maximum queries on the array `bad`. For m up to 1e6, the table stores about (log2(m)+1) * m integers (~20 million integers). In Python each integer consumes ~28 bytes, leading to memory usage well over 500\u202fMB, which exceeds typical memory limits and will cause MLE. Additionally, constructing this table takes O(m log m) time, which may be too slow for the given constraints.",
+                "line": 78,
+                "severity": "critical",
+                "triggering_input": "n=1, m=1000000, grid of all '.' and q=1 with query 1 1000000"
+              }
+            ]
+          },
+          "input_tokens": 3132,
+          "output_tokens": 169,
+          "cost_usd": 0.00090975,
+          "latency_ms": 9295
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nimport math\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(data[idx]); idx+=1\n    m = int(data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(data[idx].decode()); idx+=1\n    \n    INF = float('inf')\n    \n    can_top = bytearray(n * m)\n    min_col_arr = [m] * (n * m)  # store 0-indexed, m means INF/filled\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                continue\n            mc = c\n            ct = 1 if (r == 0) else 0\n            if r > 0 and grid[r-1][c] == '.':\n                prev = (r-1)*m + c\n                if min_col_arr[prev] < mc:\n                    mc = min_col_arr[prev]\n                if can_top[prev]:\n                    ct = 1\n            if c > 0 and grid[r][c-1] == '.':\n                prev = r*m + (c-1)\n                if min_col_arr[prev] < mc:\n                    mc = min_col_arr[prev]\n                if can_top[prev]:\n                    ct = 1\n            can_top[r*m+c] = ct\n            min_col_arr[r*m+c] = mc\n    \n    bad = [0] * m\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not can_top[r*m+c]:\n                mc = min_col_arr[r*m+c]  # 0-indexed\n                val = mc + 1  # 1-indexed\n                if val > bad[c]:\n                    bad[c] = val\n    \n    # Sqrt decomposition for range max\n    block_size = max(1, int(math.sqrt(m)))\n    num_blocks = (m + block_size - 1) // block_size\n    block_max = [0] * num_blocks\n    \n    for i in range(m):\n        b = i // block_size\n        if bad[i] > block_max[b]:\n            block_max[b] = bad[i]\n    \n    def range_max(l, r):\n        # 0-indexed [l, r]\n        if l > r:\n            return 0\n        bl = l // block_size\n        br = r // block_size\n        if bl == br:\n            res = 0\n            for i in range(l, r+1):\n                if bad[i] > res:\n                    res = bad[i]\n            return res\n        # left partial block\n        res = 0\n        end_of_bl = (bl + 1) * block_size\n        for i in range(l, end_of_bl):\n            if bad[i] > res:\n                res = bad[i]\n        # full blocks\n        for b in range(bl+1, br):\n            if block_max[b] > res:\n                res = block_max[b]\n        # right partial block\n        start_of_br = br * block_size\n        for i in range(start_of_br, r+1):\n            if bad[i] > res:\n                res = bad[i]\n        return res\n    \n    q = int(data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(data[idx]); idx+=1\n        x2 = int(data[idx]); idx+=1\n        rm = range_max(x1-1, x2-1)\n        if rm <= x1:\n            out.append(\"YES\")\n        else:\n            out.append(\"NO\")\n    \n    sys.stdout.write('\\n'.join(out) + '\\n')\n\nmain()",
+          "input_tokens": 4034,
+          "output_tokens": 1164,
+          "cost_usd": 0.029562,
+          "latency_ms": 11449
+        }
+      ],
+      "final_code": "import sys\nimport math\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    n = int(data[idx]); idx+=1\n    m = int(data[idx]); idx+=1\n    grid = []\n    for i in range(n):\n        grid.append(data[idx].decode()); idx+=1\n    \n    INF = float('inf')\n    \n    can_top = bytearray(n * m)\n    min_col_arr = [m] * (n * m)  # store 0-indexed, m means INF/filled\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == 'X':\n                continue\n            mc = c\n            ct = 1 if (r == 0) else 0\n            if r > 0 and grid[r-1][c] == '.':\n                prev = (r-1)*m + c\n                if min_col_arr[prev] < mc:\n                    mc = min_col_arr[prev]\n                if can_top[prev]:\n                    ct = 1\n            if c > 0 and grid[r][c-1] == '.':\n                prev = r*m + (c-1)\n                if min_col_arr[prev] < mc:\n                    mc = min_col_arr[prev]\n                if can_top[prev]:\n                    ct = 1\n            can_top[r*m+c] = ct\n            min_col_arr[r*m+c] = mc\n    \n    bad = [0] * m\n    \n    for r in range(n):\n        for c in range(m):\n            if grid[r][c] == '.' and not can_top[r*m+c]:\n                mc = min_col_arr[r*m+c]  # 0-indexed\n                val = mc + 1  # 1-indexed\n                if val > bad[c]:\n                    bad[c] = val\n    \n    # Sqrt decomposition for range max\n    block_size = max(1, int(math.sqrt(m)))\n    num_blocks = (m + block_size - 1) // block_size\n    block_max = [0] * num_blocks\n    \n    for i in range(m):\n        b = i // block_size\n        if bad[i] > block_max[b]:\n            block_max[b] = bad[i]\n    \n    def range_max(l, r):\n        # 0-indexed [l, r]\n        if l > r:\n            return 0\n        bl = l // block_size\n        br = r // block_size\n        if bl == br:\n            res = 0\n            for i in range(l, r+1):\n                if bad[i] > res:\n                    res = bad[i]\n            return res\n        # left partial block\n        res = 0\n        end_of_bl = (bl + 1) * block_size\n        for i in range(l, end_of_bl):\n            if bad[i] > res:\n                res = bad[i]\n        # full blocks\n        for b in range(bl+1, br):\n            if block_max[b] > res:\n                res = block_max[b]\n        # right partial block\n        start_of_br = br * block_size\n        for i in range(start_of_br, r+1):\n            if bad[i] > res:\n                res = bad[i]\n        return res\n    \n    q = int(data[idx]); idx+=1\n    out = []\n    for _ in range(q):\n        x1 = int(data[idx]); idx+=1\n        x2 = int(data[idx]); idx+=1\n        rm = range_max(x1-1, x2-1)\n        if rm <= x1:\n            out.append(\"YES\")\n        else:\n            out.append(\"NO\")\n    \n    sys.stdout.write('\\n'.join(out) + '\\n')\n\nmain()",
+      "test_results": {
+        "total": 50,
+        "passed": 33,
+        "failed": 17,
+        "errors": 0,
+        "pass_rate": 0.66,
+        "pass_at_1": false,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 51,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 37,
+            "status": "fail"
+          },
+          {
+            "test_index": 2,
+            "input": "1 1\n.\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 82,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 40,
+            "status": "fail"
+          },
+          {
+            "test_index": 6,
+            "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 74,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+            "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "actual": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 47,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1 1\nX\n1\n1 1\n",
+            "expected": "YES",
+            "actual": "YES",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 38,
+            "status": "fail"
+          },
+          {
+            "test_index": 12,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "fail"
+          },
+          {
+            "test_index": 13,
+            "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 71,
+            "status": "fail"
+          },
+          {
+            "test_index": 14,
+            "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 97,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 39,
+            "status": "fail"
+          },
+          {
+            "test_index": 17,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 18,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 50,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "fail"
+          },
+          {
+            "test_index": 24,
+            "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 75,
+            "status": "fail"
+          },
+          {
+            "test_index": 26,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 27,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 114,
+            "status": "fail"
+          },
+          {
+            "test_index": 28,
+            "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+            "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+            "expected": "YES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nNO\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 78,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+            "actual": "NO\nNO\nYES\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 43,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+            "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 141,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 108,
+            "status": "fail"
+          },
+          {
+            "test_index": 36,
+            "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 104,
+            "status": "fail"
+          },
+          {
+            "test_index": 37,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 103,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 81,
+            "status": "fail"
+          },
+          {
+            "test_index": 39,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+            "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 85,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES",
+            "actual": "YES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 90,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+            "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "actual": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 93,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+            "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 106,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+            "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "fail"
+          },
+          {
+            "test_index": 44,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+            "stderr": "",
+            "runtime_ms": 88,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+            "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+            "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "fail"
+          },
+          {
+            "test_index": 46,
+            "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+            "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 111,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+            "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "actual": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+            "stderr": "",
+            "runtime_ms": 69,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+            "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+            "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+            "stderr": "",
+            "runtime_ms": 84,
+            "status": "fail"
+          },
+          {
+            "test_index": 49,
+            "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+            "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+            "stderr": "",
+            "runtime_ms": 107,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 33,
+    "failed": 17,
+    "errors": 0,
+    "pass_rate": 0.66,
+    "pass_at_1": false,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "4 5\n..XXX\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 41,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 2,
+        "input": "1 1\n.\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "YES",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n1 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "YES\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "3 3\nXXX\nXX.\nXX.\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "fail"
+      },
+      {
+        "test_index": 6,
+        "input": "3 3\n...\nX.X\n..X\n10\n2 3\n3 3\n2 3\n1 2\n3 3\n1 1\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "3 3\nXXX\nX..\nX..\n10\n2 2\n1 2\n2 2\n2 3\n2 2\n3 3\n1 1\n2 3\n2 2\n1 3\n",
+        "expected": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+        "actual": "YES\nNO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 29,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n1 2\n1 1\n2 3\n1 2\n2 3\n2 3\n1 3\n2 3\n3 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1 1\nX\n1\n1 1\n",
+        "expected": "YES",
+        "actual": "YES",
+        "stderr": "",
+        "runtime_ms": 31,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "3 3\nXX.\nXXX\nXX.\n10\n2 2\n3 3\n3 3\n2 3\n2 3\n1 2\n1 3\n1 1\n1 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 12,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 2\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "fail"
+      },
+      {
+        "test_index": 13,
+        "input": "3 3\nXX.\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nYES\nNO\nYES\nYES\nNO\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 28,
+        "status": "fail"
+      },
+      {
+        "test_index": 14,
+        "input": "3 3\n.X.\nX..\nX.X\n10\n1 2\n1 1\n2 3\n1 2\n2 2\n1 3\n1 2\n3 3\n2 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+        "actual": "NO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "3 3\nXX.\n...\n.XX\n10\n1 3\n1 3\n1 2\n1 2\n3 3\n1 3\n2 3\n3 3\n2 3\n2 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "3 3\nX.X\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "fail"
+      },
+      {
+        "test_index": 17,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "fail"
+      },
+      {
+        "test_index": 18,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 3\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 38,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "3 3\nX..\n..X\nXX.\n10\n1 3\n2 2\n1 2\n1 2\n2 3\n1 3\n1 1\n2 2\n1 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+        "actual": "NO\nYES\nYES\nYES\nNO\nNO\nYES\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "3 3\n..X\nX.X\n..X\n10\n2 3\n2 2\n3 3\n1 3\n1 1\n3 3\n3 3\n1 1\n1 2\n1 1\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 2\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "fail"
+      },
+      {
+        "test_index": 24,
+        "input": "3 3\n.XX\n..X\n.X.\n10\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "NO\nNO\nYES\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "3 3\n.XX\nXXX\n..X\n10\n1 2\n1 2\n2 3\n1 3\n1 1\n2 3\n1 3\n1 1\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 26,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 3\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nNO\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 27,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 3\n1 1\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "fail"
+      },
+      {
+        "test_index": 28,
+        "input": "3 3\n..X\nX..\n...\n10\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n2 2\n1 2\n3 3\n1 2\n1 2\n3 3\n1 1\n1 3\n2 3\n",
+        "expected": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "NO\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 34,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "4 5\n.XX.X\n...X.\n...X.\n...X.\n5\n1 3\n3 3\n4 5\n5 5\n1 5\n",
+        "expected": "YES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nNO\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 33,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 3\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "3 3\n.XX\n..X\n.X.\n6\n2 3\n1 3\n2 2\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nYES",
+        "actual": "NO\nNO\nYES\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 32,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "3 3\n..X\nX..\n...\n6\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "3 3\nXX.\nXX.\nX..\n10\n2 3\n2 2\n2 3\n2 3\n2 3\n1 1\n2 3\n1 2\n3 3\n2 3\n",
+        "expected": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 3\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 36,
+        "input": "3 3\n..X\n.XX\nXXX\n10\n1 2\n1 1\n2 2\n1 2\n1 2\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nYES\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "fail"
+      },
+      {
+        "test_index": 37,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 3\n1 3\n1 3\n1 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 39,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "3 3\n.XX\n.XX\n...\n10\n1 3\n1 2\n2 2\n2 3\n2 2\n3 3\n3 3\n1 3\n1 2\n1 3\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nYES\nNO\nYES\nNO",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 39,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 1\n2 2\n1 3\n2 2\n1 1\n1 3\n1 3\n2 3\n1 1\n",
+        "expected": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "3 3\n..X\nX..\n...\n3\n3 3\n1 2\n1 3\n3 3\n1 3\n2 3\n3 3\n3 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES",
+        "actual": "YES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "3 3\nX.X\nXX.\n..X\n10\n1 3\n1 2\n1 3\n3 3\n1 2\n1 2\n3 3\n1 2\n1 3\n2 3\n",
+        "expected": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "actual": "NO\nYES\nNO\nYES\nYES\nYES\nYES\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "3 3\nXX.\n..X\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n2 2\n1 2\n3 3\n1 2\n",
+        "expected": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "actual": "NO\nNO\nNO\nNO\nNO\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "3 3\nXXX\nXX.\n.XX\n10\n1 3\n1 2\n1 2\n1 3\n3 3\n2 2\n2 3\n2 3\n2 3\n2 2\n",
+        "expected": "NO\nNO\nNO\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 40,
+        "status": "fail"
+      },
+      {
+        "test_index": 44,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 2\n1 3\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nNO\nNO",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "3 3\nX.X\n..X\nXXX\n10\n3 3\n1 1\n3 3\n1 2\n1 3\n1 2\n1 1\n2 3\n2 3\n1 2\n",
+        "expected": "YES\nYES\nYES\nYES\nNO\nYES\nYES\nNO\nNO\nYES",
+        "actual": "YES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 37,
+        "status": "fail"
+      },
+      {
+        "test_index": 46,
+        "input": "3 3\n..X\n.X.\nX..\n10\n1 1\n1 3\n1 3\n2 3\n1 3\n1 2\n1 3\n2 2\n2 3\n2 2\n",
+        "expected": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "YES\nNO\nNO\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "3 3\nXX.\nX..\n.X.\n10\n2 3\n1 3\n2 3\n2 3\n1 3\n1 1\n1 2\n1 2\n3 3\n1 1\n",
+        "expected": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+        "actual": "YES\nNO\nYES\nYES\nNO\nYES\nNO\nNO\nYES\nYES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "3 3\n...\nXXX\nXX.\n10\n2 3\n1 2\n2 2\n1 3\n2 3\n1 2\n1 3\n1 1\n2 3\n1 1\n",
+        "expected": "NO\nNO\nYES\nNO\nNO\nNO\nNO\nYES\nNO\nYES",
+        "actual": "NO\nYES\nYES\nNO\nNO\nYES\nNO\nYES\nNO\nYES",
+        "stderr": "",
+        "runtime_ms": 36,
+        "status": "fail"
+      },
+      {
+        "test_index": 49,
+        "input": "3 3\n.XX\nX..\nXXX\n10\n2 2\n1 1\n1 2\n1 3\n1 3\n2 3\n1 2\n2 3\n1 1\n1 2\n",
+        "expected": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+        "actual": "YES\nYES\nNO\nNO\nNO\nYES\nNO\nYES\nYES\nNO",
+        "stderr": "",
+        "runtime_ms": 35,
+        "status": "pass"
+      }
+    ]
+  },
+  "total_cost_usd": 0.35798749999999996,
+  "total_latency_ms": 332547,
+  "iterations_used": null,
+  "early_stopped": null
+}

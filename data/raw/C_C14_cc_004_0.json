@@ -1,0 +1,1024 @@
+{
+  "study": "C",
+  "condition": "C14",
+  "task_id": "cc_004",
+  "replica": 0,
+  "strategy_family": "iterative",
+  "generations": [
+    {
+      "model": "claude-sonnet-4-6",
+      "code": "Better approach: maintain a mapping `val[v]` = current value of v. When we add x, we store x (its current mapped value at insertion time... wait no).\n\nActually: when we add x, the element's \"logical value\" at query time is what matters. We can store the original value added, and at the end, apply the chain of replacements.\n\nBut replacements happen over time. If we add x=1, then do 2 1 2, then add x=1 again, the first 1 becomes 2 but the second 1 also becomes 2 (until further replacements).\n\nKey insight: maintain a union-find or a mapping where `current[v]` = the current value that v maps to. When query \"2 x y\": set `current[x] = current[y]` (because any future lookup of x should give what y currently maps to, but wait - y might change later too).\n\nActually the standard trick: maintain `mapping[v]` where we want to find the \"current\" value of v. When we do \"2 x y\", we want x to become y. But future replacements of y should also affect x.\n\nSo we can use a pointer: `nxt[x] = y`. Then to find the current value of x, follow the chain. But chains can be long.\n\nBetter: `alias[x]` = the value x currently represents. When \"2 x y\": `alias[x] = alias[y]`. But if y changes later, x won't follow.\n\nWe need x to follow y's future changes. So store `alias[x] = y` (not alias[y]), and when looking up, follow the chain with path compression.\n\nWhen \"2 x y\": set `alias[x] = y`. \nTo find current value of x: follow alias chain until we find a fixed point (alias[v] = v).\nUse path compression.\n\nWhen \"1 x\": store x in the array (the original x).\nAt the end: for each stored x, find(x).\n\nBut wait: \"2 x y\" replaces x with y at that point in time. If later \"2 y z\", then x should also become z (since x\u2192y\u2192z). With the alias/find approach this works naturally with path compression.\n\nBut: when we do \"2 x y\", we set alias[x] = y. If x was previously pointed to by something else (say alias[w] = x), then w will now follow x\u2192y which is correct.\n\nLet me verify with example 1:\n- add 3, add 1\n- 2 1 2: alias[1]=2\n- add 2, add 1, add 2\n- 2 1 3: alias[1]=3... but alias[1] was 2, now alias[1]=3? No wait, \"2 1 3\" means replace 1 with 3. But 1 already maps to 2. Hmm.\n\nAfter \"2 1 2\": all 1s become 2. Array is [3,2].\nAfter \"2 1 3\": all 1s become 3. But there are no 1s currently... array has [3,2,2,1,2]. The 1 added after becomes 3.\n\nSo alias[1]=3 (overwrite). find(1)=3. The elements added as 1: first one maps to 3? But expected output shows it's 3 (the first element is 3 which was added as 3, second element added as 1 \u2192 should be 2 after first replacement, then... \n\nWait, \"2 1 3\" replaces current 1s with 3. The element added as 1 (index 1) was already replaced to 2 by \"2 1 2\". So it's now 2, not 3.\n\nThis means the alias approach doesn't work directly because we need to track what value an element had at the time of each replacement.\n\nThe correct approach: store the \"time\" of insertion for each element, and for each replacement query, record it with a timestamp. Then for each element, find the chain of replacements that apply after its insertion time.\n\nThis is more complex. Let me think of the approach with versioned mappings.\n\nFor each value v, maintain a list of (time, new_value) when v was replaced. For an element added at time t with value v, find the replacement of v that happened after t, then follow chains.\n\nimport sys\nfrom sys import stdin\n\ndef main():\n    input = stdin.readline\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx+=1\n    \n    # For each value, store list of (timestamp, replaced_by)\n    # When \"2 x y\" at time t: replacements[x].append((t, y))\n    # For element added at time t with value v:\n    #   find first replacement of v after time t -> get new value w at time t2\n    #   then find first replacement of w after time t2, etc.\n    \n    from collections import defaultdict\n    import bisect\n    \n    replacements = defaultdict(list)  # v -> sorted list of (time, new_val)\n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []  # (time, value)\n    \n    for t in range(q):\n        tp = data[idx]; idx+=1\n        if tp == b'1':\n            x = int(data[idx]); idx+=1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx+=1\n            y = int(data[idx]); idx+=1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    result = []\n    for (t, v) in elements:\n        cur_v = v\n        cur_t = t\n        while True:\n            times = repl_times[cur_v]\n            if not times:\n                break\n            pos = bisect.bisect_right(times, cur_t)\n            if pos == len(times):\n                break\n            new_t = times[pos]\n            new_v = repl_vals[cur_v][pos]\n            cur_t = new_t\n            cur_v = new_v\n        result.append(cur_v)\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+      "input_tokens": 701,
+      "output_tokens": 1614,
+      "cost_usd": 0.026313,
+      "latency_ms": 29647
+    }
+  ],
+  "pipelines": [
+    {
+      "generation_index": 0,
+      "reviews": [
+        {
+          "role": "generalist_iter1",
+          "model": "claude-opus-4-6",
+          "verdict": "FAIL",
+          "bugs_reported": 1,
+          "bugs": [
+            {
+              "description": "TLE: For each element, the chain-following loop can take O(q) steps in the worst case. With up to 5*10^5 elements each potentially following chains of length up to 5*10^5, the worst case is O(q^2) which is far too slow for q=5*10^5.",
+              "line": 67,
+              "severity": "critical",
+              "triggering_input": "Construct 250000 type-2 queries forming a long chain (2 1 2, 2 2 3, 2 3 4, ..., 2 250000 250001) followed by 250000 type-1 queries all adding value 1. Each element must traverse the entire chain."
+            }
+          ],
+          "raw_response": "Looking at this code, I need to analyze the algorithm's correctness and performance.\n\n**Algorithm Analysis:**\nFor each element added at time `t` with value `v`, it follows the chain of replacements: find the first replacement of `v` after time `t`, get new value `w` at time `t2`, then find first replacement of `w` after `t2`, etc.\n\n**Correctness Check with Example 1:**\n- t=0: add 3, t=1: add 1, t=2: 2 1 2, t=3: add 2, t=4: add 1, t=5: add 2, t=6: 2 1 3\n- Element (0,3): no replacements for 3 \u2192 3 \u2713\n- Element (1,1): repl_times[1]=[2,6], bisect_right([2,6],1)=0, get (2,2). Now cur_v=2, cur_t=2. repl_times[2]=[], break \u2192 2 \u2713\n- Element (3,2): repl_times[2]=[], \u2192 2 \u2713\n- Element (4,1): repl_times[1]=[2,6], bisect_right([2,6],4)=1, get (6,3). Now cur_v=3, cur_t=6. No replacements for 3 \u2192 3 \u2713\n- Element (5,2): repl_times[2]=[], \u2192 2 \u2713\n- Result: [3,2,2,3,2] \u2713\n\n**Performance Analysis (TLE Risk):**\nThe critical question is: how long can the chain be for each element? Each step in the chain moves to a strictly later timestamp. But consider a worst case:\n- 250000 queries of type \"2 1 2\", \"2 2 3\", \"2 3 4\", ... creating a chain of length 250000\n- Then \"1 1\" added at time 0\n\nFor this element, the while loop would follow 250000 steps. With potentially many elements, this could be O(q\u00b2) in the worst case.\n\nWith q = 5\u00d710\u2075, if we have ~250K replacements forming a chain and ~250K elements all needing to traverse the full chain, that's ~6.25\u00d710\u00b9\u2070 operations \u2014 clearly TLE.\n\nEven a single element traversing a chain of length 250K with 250K elements would be 250K \u00d7 250K = way too much.\n\nActually, even with just one element at time 0, a chain of 500K replacements means 500K iterations for that one element. With many such elements, it's worse. But even 500K per element \u00d7 500K elements = TLE.\n\nHowever, even the simpler case: many elements each following long chains. The lack of memoization/caching means repeated work.\n\n{\"verdict\": \"FAIL\", \"bugs\": [{\"description\": \"TLE: For each element, the chain-following loop can take O(q) steps in the worst case. With up to 5*10^5 elements each potentially following chains of length up to 5*10^5, the worst case is O(q^2) which is far too slow for q=5*10^5.\", \"line\": 67, \"severity\": \"critical\", \"triggering_input\": \"Construct 250000 type-2 queries forming a long chain (2 1 2, 2 2 3, 2 3 4, ..., 2 250000 250001) followed by 250000 type-1 queries all adding value 1. Each element must traverse the entire chain.\"}]}",
+          "parsed": {
+            "verdict": "FAIL",
+            "bugs": [
+              {
+                "description": "TLE: For each element, the chain-following loop can take O(q) steps in the worst case. With up to 5*10^5 elements each potentially following chains of length up to 5*10^5, the worst case is O(q^2) which is far too slow for q=5*10^5.",
+                "line": 67,
+                "severity": "critical",
+                "triggering_input": "Construct 250000 type-2 queries forming a long chain (2 1 2, 2 2 3, 2 3 4, ..., 2 250000 250001) followed by 250000 type-1 queries all adding value 1. Each element must traverse the entire chain."
+              }
+            ]
+          },
+          "input_tokens": 2313,
+          "output_tokens": 872,
+          "cost_usd": 0.100095,
+          "latency_ms": 15774
+        },
+        {
+          "role": "generalist_iter2",
+          "model": "claude-opus-4-6",
+          "verdict": "PASS",
+          "bugs_reported": 0,
+          "bugs": [],
+          "raw_response": "Looking at this solution, I need to trace through the logic carefully.\n\nThe approach: For each element added at time `t` with value `v`, find the first replacement of `v` after time `t`, follow the chain of replacements, and memoize results.\n\nLet me trace through Example 1:\n- t=0: add 3, t=1: add 1, t=2: replace 1\u21922, t=3: add 2, t=4: add 1, t=5: add 2, t=6: replace 1\u21923\n\nFor element (t=4, v=1): first replacement of 1 after t=4 is at t=6 (1\u21923). So resolve(1, 1) \u2192 new_v=3, cur_t=6. No replacements of 3 after t=6. Result=3. \u2713\n\nNow let me think about a tricky case: what if `2 x x` happens, or chains where x\u2192y and then y\u2192x?\n\nConsider the chain-following with **cycles**. If we have:\n- `2 1 2` at time 0\n- `2 2 1` at time 1\n- `2 1 3` at time 2\n\nFor an element with value 1 added before time 0: resolve(1, 0) \u2192 new_v=2, cur_t=0. Next replacement of 2 after time 0 is at time 1 (2\u21921). So resolve follows to (2, 0) \u2192 new_v=1, cur_t=1. Next replacement of 1 after time 1 is at time 2 (1\u21923). So follows to (1, 1) \u2192 new_v=3, no more replacements of 3. Result=3. This seems correct.\n\nWhat about `2 x x`? If we have `2 1 1` at time 0, then for value 1 before time 0: resolve(1, 0) \u2192 new_v=1, cur_t=0. Next replacement of 1 after time 0: pos = bisect_right(times, 0) where times=[0], so pos=1, which equals len(times). Result=1. \u2713\n\nWhat about consecutive `2 1 2` then `2 1 3`? repl_times[1]=[t0, t1]. For an element with value 1 before t0: resolve(1, 0) \u2192 new_v=2, cur_t=t0. Find replacement of 2 after t0... This correctly follows the chain.\n\nNow the **critical concern**: recursion depth / stack size with long chains. With up to 5\u00d710^5 queries, chains could be very long. But the `while True` loop with explicit stack handles this iteratively, so no recursion depth issue.\n\n**Performance concern**: Each unique (v, pos) pair is visited at most once due to memoization. The total number of (v, pos) pairs across all v is at most q (total number of type-2 queries). So the total work is O(q log q) which should be fine.\n\nLet me check Example 3 carefully:\n- t=0: replace 1\u21924, t=1: add 1, t=2: add 4, t=3: add 2, t=4: replace 2\u21924, t=5: replace 4\u21923, t=6: add 2, t=7: replace 2\u21927\n\nElement (t=1, v=1): repl_times[1]=[0], bisect_right([0], 1)=1=len \u2192 result=1 \u2713\nElement (t=2, v=4): repl_times[4]=[5], bisect_right([5], 2)=0, resolve(4,0) \u2192 new_v=3, cur_t=5, no replacements of 3 \u2192 result=3 \u2713\nElement (t=3, v=2): repl_times[2]=[4,7], bisect_right([4,7], 3)=0, resolve(2,0) \u2192 new_v=4, cur_t=4, repl_times[4]=[5], bisect_right([5],4)=0, resolve follows to (4,0) \u2192 3 \u2713\nElement (t=6, v=2): repl_times[2]=[4,7], bisect_right([4,7], 6)=1, resolve(2,1) \u2192 new_v=7, cur_t=7, no replacements of 7 \u2192 result=7 \u2713\n\nOutput: 1 3 3 7 \u2713\n\nAll examples check out. The algorithm and implementation appear correct.\n\n{\"verdict\": \"PASS\", \"bugs\": []}",
+          "parsed": {
+            "verdict": "PASS",
+            "bugs": []
+          },
+          "input_tokens": 1428,
+          "output_tokens": 1136,
+          "cost_usd": 0.10662,
+          "latency_ms": 18189
+        }
+      ],
+      "fixes": [
+        {
+          "model": "claude-sonnet-4-6",
+          "code": "import sys\nfrom collections import defaultdict\nimport bisect\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx += 1\n    \n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []\n    \n    for t in range(q):\n        tp = data[idx]; idx += 1\n        if tp == b'1':\n            x = int(data[idx]); idx += 1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx += 1\n            y = int(data[idx]); idx += 1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    # memo[(v, pos)] = final value when following chain starting from\n    # the pos-th replacement of v (i.e., after that replacement happens)\n    memo = {}\n    \n    def resolve(v, pos):\n        # pos is the index into repl_times[v] / repl_vals[v]\n        # This means: at time repl_times[v][pos], v was replaced by repl_vals[v][pos]\n        # We need to follow the chain from (new_v, time_of_this_replacement)\n        stack = []\n        cur_v = v\n        cur_pos = pos\n        \n        while True:\n            key = (cur_v, cur_pos)\n            if key in memo:\n                result = memo[key]\n                break\n            stack.append(key)\n            new_v = repl_vals[cur_v][cur_pos]\n            cur_t = repl_times[cur_v][cur_pos]\n            times = repl_times[new_v]\n            next_pos = bisect.bisect_right(times, cur_t)\n            if next_pos == len(times):\n                result = new_v\n                break\n            cur_v = new_v\n            cur_pos = next_pos\n        \n        for key in stack:\n            memo[key] = result\n        return result\n    \n    result = []\n    for (t, v) in elements:\n        times = repl_times[v]\n        if not times:\n            result.append(v)\n            continue\n        pos = bisect.bisect_right(times, t)\n        if pos == len(times):\n            result.append(v)\n            continue\n        result.append(resolve(v, pos))\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+          "input_tokens": 2412,
+          "output_tokens": 972,
+          "cost_usd": 0.021816,
+          "latency_ms": 12757
+        }
+      ],
+      "final_code": "import sys\nfrom collections import defaultdict\nimport bisect\n\ndef main():\n    data = sys.stdin.buffer.read().split()\n    idx = 0\n    q = int(data[idx]); idx += 1\n    \n    repl_times = defaultdict(list)\n    repl_vals = defaultdict(list)\n    \n    elements = []\n    \n    for t in range(q):\n        tp = data[idx]; idx += 1\n        if tp == b'1':\n            x = int(data[idx]); idx += 1\n            elements.append((t, x))\n        else:\n            x = int(data[idx]); idx += 1\n            y = int(data[idx]); idx += 1\n            repl_times[x].append(t)\n            repl_vals[x].append(y)\n    \n    # memo[(v, pos)] = final value when following chain starting from\n    # the pos-th replacement of v (i.e., after that replacement happens)\n    memo = {}\n    \n    def resolve(v, pos):\n        # pos is the index into repl_times[v] / repl_vals[v]\n        # This means: at time repl_times[v][pos], v was replaced by repl_vals[v][pos]\n        # We need to follow the chain from (new_v, time_of_this_replacement)\n        stack = []\n        cur_v = v\n        cur_pos = pos\n        \n        while True:\n            key = (cur_v, cur_pos)\n            if key in memo:\n                result = memo[key]\n                break\n            stack.append(key)\n            new_v = repl_vals[cur_v][cur_pos]\n            cur_t = repl_times[cur_v][cur_pos]\n            times = repl_times[new_v]\n            next_pos = bisect.bisect_right(times, cur_t)\n            if next_pos == len(times):\n                result = new_v\n                break\n            cur_v = new_v\n            cur_pos = next_pos\n        \n        for key in stack:\n            memo[key] = result\n        return result\n    \n    result = []\n    for (t, v) in elements:\n        times = repl_times[v]\n        if not times:\n            result.append(v)\n            continue\n        pos = bisect.bisect_right(times, t)\n        if pos == len(times):\n            result.append(v)\n            continue\n        result.append(resolve(v, pos))\n    \n    sys.stdout.write(' '.join(map(str, result)) + '\\n')\n\nmain()",
+      "test_results": {
+        "total": 50,
+        "passed": 50,
+        "failed": 0,
+        "errors": 0,
+        "pass_rate": 1.0,
+        "pass_at_1": true,
+        "details": [
+          {
+            "test_index": 0,
+            "input": "8\n2 1 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 3 7",
+            "actual": "1 3 3 7",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 1,
+            "input": "4\n1 1\n1 2\n1 1\n2 2 2\n",
+            "expected": "1 2 1",
+            "actual": "1 2 1",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 2,
+            "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 2\n2 1 3\n",
+            "expected": "3 2 2 3 2",
+            "actual": "3 2 2 3 2",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 3,
+            "input": "1\n1 50\n",
+            "expected": "50",
+            "actual": "50",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 4,
+            "input": "1\n1 114514\n",
+            "expected": "114514",
+            "actual": "114514",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 5,
+            "input": "1\n1 2002\n",
+            "expected": "2002",
+            "actual": "2002",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 6,
+            "input": "1\n1 500\n",
+            "expected": "500",
+            "actual": "500",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 7,
+            "input": "1\n1 28\n",
+            "expected": "28",
+            "actual": "28",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 8,
+            "input": "1\n1 2887\n",
+            "expected": "2887",
+            "actual": "2887",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 9,
+            "input": "1\n1 228\n",
+            "expected": "228",
+            "actual": "228",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 10,
+            "input": "1\n1 29\n",
+            "expected": "29",
+            "actual": "29",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 11,
+            "input": "1\n1 1270\n",
+            "expected": "1270",
+            "actual": "1270",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 12,
+            "input": "1\n1 182\n",
+            "expected": "182",
+            "actual": "182",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 13,
+            "input": "1\n1 2279\n",
+            "expected": "2279",
+            "actual": "2279",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 14,
+            "input": "1\n1 979\n",
+            "expected": "979",
+            "actual": "979",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 15,
+            "input": "1\n1 1719\n",
+            "expected": "1719",
+            "actual": "1719",
+            "stderr": "",
+            "runtime_ms": 60,
+            "status": "pass"
+          },
+          {
+            "test_index": 16,
+            "input": "1\n1 1163\n",
+            "expected": "1163",
+            "actual": "1163",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 17,
+            "input": "1\n1 1134\n",
+            "expected": "1134",
+            "actual": "1134",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 18,
+            "input": "1\n1 2216\n",
+            "expected": "2216",
+            "actual": "2216",
+            "stderr": "",
+            "runtime_ms": 53,
+            "status": "pass"
+          },
+          {
+            "test_index": 19,
+            "input": "1\n1 810\n",
+            "expected": "810",
+            "actual": "810",
+            "stderr": "",
+            "runtime_ms": 59,
+            "status": "pass"
+          },
+          {
+            "test_index": 20,
+            "input": "1\n1 1162\n",
+            "expected": "1162",
+            "actual": "1162",
+            "stderr": "",
+            "runtime_ms": 55,
+            "status": "pass"
+          },
+          {
+            "test_index": 21,
+            "input": "1\n1 8\n",
+            "expected": "8",
+            "actual": "8",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 22,
+            "input": "1\n1 176923\n",
+            "expected": "176923",
+            "actual": "176923",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 23,
+            "input": "1\n1 346\n",
+            "expected": "346",
+            "actual": "346",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 24,
+            "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 3 7",
+            "actual": "1 3 3 7",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 25,
+            "input": "4\n1 1\n1 2\n1 1\n2 3 2\n",
+            "expected": "1 2 1",
+            "actual": "1 2 1",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 26,
+            "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 1\n2 1 3\n",
+            "expected": "3 2 2 3 3",
+            "actual": "3 2 2 3 3",
+            "stderr": "",
+            "runtime_ms": 57,
+            "status": "pass"
+          },
+          {
+            "test_index": 27,
+            "input": "1\n1 192\n",
+            "expected": "192",
+            "actual": "192",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 28,
+            "input": "1\n1 6\n",
+            "expected": "6",
+            "actual": "6",
+            "stderr": "",
+            "runtime_ms": 65,
+            "status": "pass"
+          },
+          {
+            "test_index": 29,
+            "input": "1\n1 1566\n",
+            "expected": "1566",
+            "actual": "1566",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 30,
+            "input": "1\n1 1612\n",
+            "expected": "1612",
+            "actual": "1612",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 31,
+            "input": "1\n1 391\n",
+            "expected": "391",
+            "actual": "391",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 32,
+            "input": "1\n1 1904\n",
+            "expected": "1904",
+            "actual": "1904",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 33,
+            "input": "1\n1 12\n",
+            "expected": "12",
+            "actual": "12",
+            "stderr": "",
+            "runtime_ms": 68,
+            "status": "pass"
+          },
+          {
+            "test_index": 34,
+            "input": "1\n1 455\n",
+            "expected": "455",
+            "actual": "455",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 35,
+            "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 6\n2 4 3\n1 2\n2 2 7\n",
+            "expected": "1 3 6 7",
+            "actual": "1 3 6 7",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 36,
+            "input": "4\n1 2\n1 2\n1 1\n2 3 2\n",
+            "expected": "2 2 1",
+            "actual": "2 2 1",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 37,
+            "input": "1\n1 61\n",
+            "expected": "61",
+            "actual": "61",
+            "stderr": "",
+            "runtime_ms": 58,
+            "status": "pass"
+          },
+          {
+            "test_index": 38,
+            "input": "1\n1 3\n",
+            "expected": "3",
+            "actual": "3",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          },
+          {
+            "test_index": 39,
+            "input": "1\n1 107\n",
+            "expected": "107",
+            "actual": "107",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 40,
+            "input": "1\n1 537\n",
+            "expected": "537",
+            "actual": "537",
+            "stderr": "",
+            "runtime_ms": 52,
+            "status": "pass"
+          },
+          {
+            "test_index": 41,
+            "input": "1\n1 520\n",
+            "expected": "520",
+            "actual": "520",
+            "stderr": "",
+            "runtime_ms": 49,
+            "status": "pass"
+          },
+          {
+            "test_index": 42,
+            "input": "1\n1 72\n",
+            "expected": "72",
+            "actual": "72",
+            "stderr": "",
+            "runtime_ms": 48,
+            "status": "pass"
+          },
+          {
+            "test_index": 43,
+            "input": "1\n1 415\n",
+            "expected": "415",
+            "actual": "415",
+            "stderr": "",
+            "runtime_ms": 61,
+            "status": "pass"
+          },
+          {
+            "test_index": 44,
+            "input": "1\n1 639\n",
+            "expected": "639",
+            "actual": "639",
+            "stderr": "",
+            "runtime_ms": 62,
+            "status": "pass"
+          },
+          {
+            "test_index": 45,
+            "input": "1\n1 705\n",
+            "expected": "705",
+            "actual": "705",
+            "stderr": "",
+            "runtime_ms": 67,
+            "status": "pass"
+          },
+          {
+            "test_index": 46,
+            "input": "1\n1 34\n",
+            "expected": "34",
+            "actual": "34",
+            "stderr": "",
+            "runtime_ms": 66,
+            "status": "pass"
+          },
+          {
+            "test_index": 47,
+            "input": "1\n1 42\n",
+            "expected": "42",
+            "actual": "42",
+            "stderr": "",
+            "runtime_ms": 56,
+            "status": "pass"
+          },
+          {
+            "test_index": 48,
+            "input": "1\n1 91\n",
+            "expected": "91",
+            "actual": "91",
+            "stderr": "",
+            "runtime_ms": 64,
+            "status": "pass"
+          },
+          {
+            "test_index": 49,
+            "input": "1\n1 123055\n",
+            "expected": "123055",
+            "actual": "123055",
+            "stderr": "",
+            "runtime_ms": 63,
+            "status": "pass"
+          }
+        ]
+      }
+    }
+  ],
+  "selected_pipeline": 0,
+  "final_test_results": {
+    "total": 50,
+    "passed": 50,
+    "failed": 0,
+    "errors": 0,
+    "pass_rate": 1.0,
+    "pass_at_1": true,
+    "details": [
+      {
+        "test_index": 0,
+        "input": "8\n2 1 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 3 7",
+        "actual": "1 3 3 7",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 1,
+        "input": "4\n1 1\n1 2\n1 1\n2 2 2\n",
+        "expected": "1 2 1",
+        "actual": "1 2 1",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 2,
+        "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 2\n2 1 3\n",
+        "expected": "3 2 2 3 2",
+        "actual": "3 2 2 3 2",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 3,
+        "input": "1\n1 50\n",
+        "expected": "50",
+        "actual": "50",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 4,
+        "input": "1\n1 114514\n",
+        "expected": "114514",
+        "actual": "114514",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 5,
+        "input": "1\n1 2002\n",
+        "expected": "2002",
+        "actual": "2002",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 6,
+        "input": "1\n1 500\n",
+        "expected": "500",
+        "actual": "500",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 7,
+        "input": "1\n1 28\n",
+        "expected": "28",
+        "actual": "28",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 8,
+        "input": "1\n1 2887\n",
+        "expected": "2887",
+        "actual": "2887",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 9,
+        "input": "1\n1 228\n",
+        "expected": "228",
+        "actual": "228",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 10,
+        "input": "1\n1 29\n",
+        "expected": "29",
+        "actual": "29",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 11,
+        "input": "1\n1 1270\n",
+        "expected": "1270",
+        "actual": "1270",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 12,
+        "input": "1\n1 182\n",
+        "expected": "182",
+        "actual": "182",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 13,
+        "input": "1\n1 2279\n",
+        "expected": "2279",
+        "actual": "2279",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 14,
+        "input": "1\n1 979\n",
+        "expected": "979",
+        "actual": "979",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 15,
+        "input": "1\n1 1719\n",
+        "expected": "1719",
+        "actual": "1719",
+        "stderr": "",
+        "runtime_ms": 60,
+        "status": "pass"
+      },
+      {
+        "test_index": 16,
+        "input": "1\n1 1163\n",
+        "expected": "1163",
+        "actual": "1163",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 17,
+        "input": "1\n1 1134\n",
+        "expected": "1134",
+        "actual": "1134",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 18,
+        "input": "1\n1 2216\n",
+        "expected": "2216",
+        "actual": "2216",
+        "stderr": "",
+        "runtime_ms": 53,
+        "status": "pass"
+      },
+      {
+        "test_index": 19,
+        "input": "1\n1 810\n",
+        "expected": "810",
+        "actual": "810",
+        "stderr": "",
+        "runtime_ms": 59,
+        "status": "pass"
+      },
+      {
+        "test_index": 20,
+        "input": "1\n1 1162\n",
+        "expected": "1162",
+        "actual": "1162",
+        "stderr": "",
+        "runtime_ms": 55,
+        "status": "pass"
+      },
+      {
+        "test_index": 21,
+        "input": "1\n1 8\n",
+        "expected": "8",
+        "actual": "8",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 22,
+        "input": "1\n1 176923\n",
+        "expected": "176923",
+        "actual": "176923",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 23,
+        "input": "1\n1 346\n",
+        "expected": "346",
+        "actual": "346",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 24,
+        "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 4\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 3 7",
+        "actual": "1 3 3 7",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 25,
+        "input": "4\n1 1\n1 2\n1 1\n2 3 2\n",
+        "expected": "1 2 1",
+        "actual": "1 2 1",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 26,
+        "input": "7\n1 3\n1 1\n2 1 2\n1 2\n1 1\n1 1\n2 1 3\n",
+        "expected": "3 2 2 3 3",
+        "actual": "3 2 2 3 3",
+        "stderr": "",
+        "runtime_ms": 57,
+        "status": "pass"
+      },
+      {
+        "test_index": 27,
+        "input": "1\n1 192\n",
+        "expected": "192",
+        "actual": "192",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 28,
+        "input": "1\n1 6\n",
+        "expected": "6",
+        "actual": "6",
+        "stderr": "",
+        "runtime_ms": 65,
+        "status": "pass"
+      },
+      {
+        "test_index": 29,
+        "input": "1\n1 1566\n",
+        "expected": "1566",
+        "actual": "1566",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 30,
+        "input": "1\n1 1612\n",
+        "expected": "1612",
+        "actual": "1612",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 31,
+        "input": "1\n1 391\n",
+        "expected": "391",
+        "actual": "391",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 32,
+        "input": "1\n1 1904\n",
+        "expected": "1904",
+        "actual": "1904",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 33,
+        "input": "1\n1 12\n",
+        "expected": "12",
+        "actual": "12",
+        "stderr": "",
+        "runtime_ms": 68,
+        "status": "pass"
+      },
+      {
+        "test_index": 34,
+        "input": "1\n1 455\n",
+        "expected": "455",
+        "actual": "455",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 35,
+        "input": "8\n2 2 4\n1 1\n1 4\n1 2\n2 2 6\n2 4 3\n1 2\n2 2 7\n",
+        "expected": "1 3 6 7",
+        "actual": "1 3 6 7",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 36,
+        "input": "4\n1 2\n1 2\n1 1\n2 3 2\n",
+        "expected": "2 2 1",
+        "actual": "2 2 1",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 37,
+        "input": "1\n1 61\n",
+        "expected": "61",
+        "actual": "61",
+        "stderr": "",
+        "runtime_ms": 58,
+        "status": "pass"
+      },
+      {
+        "test_index": 38,
+        "input": "1\n1 3\n",
+        "expected": "3",
+        "actual": "3",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      },
+      {
+        "test_index": 39,
+        "input": "1\n1 107\n",
+        "expected": "107",
+        "actual": "107",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 40,
+        "input": "1\n1 537\n",
+        "expected": "537",
+        "actual": "537",
+        "stderr": "",
+        "runtime_ms": 52,
+        "status": "pass"
+      },
+      {
+        "test_index": 41,
+        "input": "1\n1 520\n",
+        "expected": "520",
+        "actual": "520",
+        "stderr": "",
+        "runtime_ms": 49,
+        "status": "pass"
+      },
+      {
+        "test_index": 42,
+        "input": "1\n1 72\n",
+        "expected": "72",
+        "actual": "72",
+        "stderr": "",
+        "runtime_ms": 48,
+        "status": "pass"
+      },
+      {
+        "test_index": 43,
+        "input": "1\n1 415\n",
+        "expected": "415",
+        "actual": "415",
+        "stderr": "",
+        "runtime_ms": 61,
+        "status": "pass"
+      },
+      {
+        "test_index": 44,
+        "input": "1\n1 639\n",
+        "expected": "639",
+        "actual": "639",
+        "stderr": "",
+        "runtime_ms": 62,
+        "status": "pass"
+      },
+      {
+        "test_index": 45,
+        "input": "1\n1 705\n",
+        "expected": "705",
+        "actual": "705",
+        "stderr": "",
+        "runtime_ms": 67,
+        "status": "pass"
+      },
+      {
+        "test_index": 46,
+        "input": "1\n1 34\n",
+        "expected": "34",
+        "actual": "34",
+        "stderr": "",
+        "runtime_ms": 66,
+        "status": "pass"
+      },
+      {
+        "test_index": 47,
+        "input": "1\n1 42\n",
+        "expected": "42",
+        "actual": "42",
+        "stderr": "",
+        "runtime_ms": 56,
+        "status": "pass"
+      },
+      {
+        "test_index": 48,
+        "input": "1\n1 91\n",
+        "expected": "91",
+        "actual": "91",
+        "stderr": "",
+        "runtime_ms": 64,
+        "status": "pass"
+      },
+      {
+        "test_index": 49,
+        "input": "1\n1 123055\n",
+        "expected": "123055",
+        "actual": "123055",
+        "stderr": "",
+        "runtime_ms": 63,
+        "status": "pass"
+      }
+    ]
+  },
+  "iteration_data": [
+    {
+      "iteration": 1,
+      "bugs_found": 1,
+      "pass_rate_before": 0.0,
+      "pass_rate_after": 1.0,
+      "cost_this_iteration": 0.121911,
+      "cumulative_cost": 0.148224
+    },
+    {
+      "iteration": 2,
+      "bugs_found": 0,
+      "pass_rate_before": 1.0,
+      "pass_rate_after": 1.0,
+      "cost_this_iteration": 0.10662,
+      "cumulative_cost": 0.254844
+    }
+  ],
+  "total_cost_usd": 0.254844,
+  "total_latency_ms": 76367,
+  "iterations_used": 2,
+  "early_stopped": true
+}
